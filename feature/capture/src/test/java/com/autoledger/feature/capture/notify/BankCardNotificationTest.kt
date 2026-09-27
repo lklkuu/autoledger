@@ -59,6 +59,18 @@ class BankCardNotificationTest {
     }
 
     @Test
+    fun `icbc 动账通知 merchant-with-digits is parsed with correct amount`() {
+        // 用户实报（截图）：工行动账通知——商户名"2zero首饰屋"含数字，不能干扰金额提取
+        val r = parser.parse(
+            "com.icbc", "动账通知",
+            "尾号6602卡9月27日23:52支出(消费财付通-2zero首饰屋)39.80元。请点击查看详情。",
+        )
+        assertNotNull(r, "工行动账通知必须能解析")
+        assertEquals(-3_980L, r.amountMinor, "金额必须是 39.80 元（不能被商户名里的数字 2 干扰）")
+        assertEquals(Direction.OUT, r.direction)
+    }
+
+    @Test
     fun `credit card available limit reminder is not parsed as spending`() {
         assertNull(parser.parse("cmb.pb", "招商银行", "您尾号1234信用卡可用额度为3000.00元"))
     }
