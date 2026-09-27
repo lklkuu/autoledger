@@ -1,0 +1,17 @@
+# 换行符规范：脚本类文件必须 LF，否则 shebang（#!/bin/sh）在 Linux / macOS / CI 上
+# 会因行尾的 CR 而失效（报 "/bin/sh^M: No such file or directory"）。
+gradlew text eol=lf
+*.sh text eol=lf
+
+# Windows 批处理保持 CRLF
+*.bat text eol=crlf
+
+# 其余文本文件交给 git 的 core.autocrlf 处理（仓库内统一存 LF）
+*.kt text
+*.kts text
+*.md text
+*.xml text
+*.yml text
+*.yaml text
+*.properties text
+*.toml text
