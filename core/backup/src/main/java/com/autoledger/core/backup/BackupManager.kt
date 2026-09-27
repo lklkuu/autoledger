@@ -49,8 +49,12 @@ class BackupManager(
 
     // ------------------------------------------------- 导出
 
-    suspend fun exportJson(appVersion: String, device: String): String {
-        val root = BackupEnvelope.wrap(buildPayload(), device, appVersion)
+    suspend fun exportJson(
+        appVersion: String,
+        device: String,
+        transform: (LedgerTransaction) -> LedgerTransaction = { it },
+    ): String {
+        val root = BackupEnvelope.wrap(buildPayload(transform), device, appVersion)
         return root.toString(2)
     }
 
@@ -69,9 +73,9 @@ class BackupManager(
         }.toString()
     }
 
-    private suspend fun buildPayload(): JSONObject {
+    private suspend fun buildPayload(transform: (LedgerTransaction) -> LedgerTransaction): JSONObject {
         val transactions = JSONArray().apply {
-            repo.listAll(includeTransfers = true).forEach { t -> put(t.toJson()) }
+            repo.listAll(includeTransfers = true).forEach { t -> put(transform(t).toJson()) }
         }
         val categories = JSONArray().apply {
             repo.listCategories().forEach { c ->
@@ -115,7 +119,11 @@ class BackupManager(
 
     // ------------------------------------------------- 导入
 
-    suspend fun import(raw: String, strategy: MergeStrategy): ImportOutcome {
+    suspend fun import(
+        raw: String,
+        strategy: MergeStrategy,
+        transform: (LedgerTransaction) -> LedgerTransaction = { it },
+    ): ImportOutcome {
         val root = JSONObject(raw)
 
         // 加密档案先解开
@@ -135,7 +143,7 @@ class BackupManager(
 
         if (strategy == MergeStrategy.REPLACE_ALL) repo.clearAllTransactions()
 
-        val txns = payload.optJSONArray("transactions")?.toTransactions().orEmpty()
+        val txns = payload.optJSONArray("transactions")?.toTransactions().orEmpty().map(transform)
         repo.upsertAll(txns)
 
         val cats = payload.optJSONArray("categories")?.let { arr ->

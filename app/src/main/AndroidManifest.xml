@@ -3,6 +3,17 @@
 
     <uses-permission android:name="android.permission.POST_NOTIFICATIONS" />
 
+    <!-- C4 换机迁移：拉起本地热点（LocalOnlyHotspot）+ 连接热点（WifiNetworkSpecifier） -->
+    <uses-permission android:name="android.permission.CHANGE_WIFI_STATE" />
+    <uses-permission android:name="android.permission.ACCESS_NETWORK_STATE" />
+    <!-- Android 10-12 连接热点需要位置权限；Android 13+ 用 NEARBY_WIFI_DEVICES 替代 -->
+    <uses-permission
+        android:name="android.permission.ACCESS_FINE_LOCATION"
+        android:maxSdkVersion="32" />
+    <uses-permission
+        android:name="android.permission.NEARBY_WIFI_DEVICES"
+        android:usesPermissionFlags="neverForLocation" />
+
     <application
         android:name=".LedgerApp"
         android:allowBackup="false"

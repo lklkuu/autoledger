@@ -40,7 +40,10 @@ class TransferClient(private val context: Context) {
 
     /** 连接热点 + 接收迁移数据。 */
     @RequiresApi(Build.VERSION_CODES.Q)
-    suspend fun receive(ticket: TransferTicket): Pair<ByteArray, TransferEnvelope> {
+    suspend fun receive(
+        ticket: TransferTicket,
+        onProgress: (received: Int, total: Int) -> Unit = { _, _ -> },
+    ): Pair<ByteArray, TransferEnvelope> {
         _state.value = State.Connecting
         return withContext(Dispatchers.IO) {
             try {
@@ -50,6 +53,7 @@ class TransferClient(private val context: Context) {
                 ) as Socket
                 val (payload, envelope) = TransferSession(socket).receive(ticket.token) { received, total ->
                     _state.value = State.Receiving(received, total)
+                    onProgress(received, total)
                 }
                 _state.value = State.Done(payload.size.toLong())
                 payload to envelope

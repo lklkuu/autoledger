@@ -53,7 +53,7 @@ class HotspotServer(private val context: Context) {
     }
 
     /** 等待新机连接并发送 payload（阻塞到发送完成或失败）。 */
-    suspend fun serve(payload: ByteArray, meta: TransferMeta) {
+    suspend fun serve(payload: ByteArray, meta: TransferMeta, onProgress: (sent: Int, total: Int) -> Unit = { _, _ -> }) {
         val server = serverSocket ?: run { _state.value = State.Failed("尚未启动"); return }
         val token = (_state.value as? State.Ready)?.ticket?.token ?: return
         withContext(Dispatchers.IO) {
@@ -61,6 +61,7 @@ class HotspotServer(private val context: Context) {
                 server.accept().use { socket ->
                     TransferSession(socket).serve(payload, token, meta) { sent, total ->
                         _state.value = State.Sending(sent, total)
+                        onProgress(sent, total)
                     }
                 }
                 _state.value = State.Done(payload.size.toLong())

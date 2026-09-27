@@ -26,6 +26,7 @@ import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.Switch
 import androidx.compose.material3.Text
 import androidx.compose.material3.TextButton
+import androidx.compose.material3.LinearProgressIndicator
 import android.net.Uri
 import androidx.compose.foundation.text.KeyboardOptions
 import androidx.compose.material3.OutlinedTextField
@@ -53,11 +54,13 @@ import com.autoledger.app.ui.components.TransactionRow
 import com.autoledger.app.ui.components.yuan
 import com.autoledger.app.ui.stores.CaptureStore
 import com.autoledger.app.ui.stores.SettingsStore
+import com.autoledger.app.ui.stores.TransferStore
 import com.autoledger.app.ui.theme.LedgerIcons
 import com.autoledger.app.ui.theme.LedgerPalette
 import com.autoledger.core.model.TxnStatus
 import com.autoledger.feature.capture.CaptureAction
 import com.autoledger.feature.capture.PermissionState
+import com.autoledger.feature.transfer.TransferTicket
 import kotlinx.coroutines.launch
 
 /**
@@ -206,6 +209,13 @@ fun SettingsScreen(container: AppContainer) {
 
     var showClearConfirm by remember { mutableStateOf(false) }
 
+    // C4：数据迁移（设备直连）
+    val transferStore = remember(container) { TransferStore(container) }
+    val transferState by transferStore.state.collectAsState()
+    var showTransferInput by remember { mutableStateOf(false) }
+    var transferTicketInput by remember { mutableStateOf("") }
+    DisposableEffect(transferStore) { onDispose { transferStore.close() } }
+
     LazyColumn(
         modifier = Modifier.fillMaxSize().padding(horizontal = 16.dp),
         verticalArrangement = Arrangement.spacedBy(14.dp),
@@ -243,6 +253,57 @@ fun SettingsScreen(container: AppContainer) {
                 }
                 state.message?.let {
                     Text(it, Modifier.padding(top = 10.dp), style = MaterialTheme.typography.bodyMedium, color = LedgerPalette.Positive)
+                }
+            }
+        }
+
+        item {
+            AppCard {
+                SectionTitle("数据迁移", "换新手机时，把账本整体搬到新机")
+                Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
+                    Button(
+                        onClick = { transferStore.startSend() },
+                        modifier = Modifier.weight(1f),
+                        colors = ButtonDefaults.buttonColors(containerColor = LedgerPalette.Positive),
+                    ) { Text("发起迁移（旧机）") }
+                    Button(
+                        onClick = { showTransferInput = true },
+                        modifier = Modifier.weight(1f),
+                        colors = ButtonDefaults.buttonColors(containerColor = LedgerPalette.Blue),
+                    ) { Text("接收迁移（新机）") }
+                }
+                when (val ts = transferState) {
+                    is TransferStore.State.ReadyToSend -> {
+                        Text(
+                            "旧机已就绪，请在新机点「接收迁移」并粘贴下面的配对信息：",
+                            Modifier.padding(top = 10.dp),
+                            style = MaterialTheme.typography.bodySmall,
+                        )
+                        Text(
+                            ts.ticket.encode(),
+                            Modifier.padding(top = 6.dp),
+                            style = MaterialTheme.typography.bodySmall,
+                            color = LedgerPalette.Blue,
+                        )
+                    }
+                    is TransferStore.State.Progress -> {
+                        Text(
+                            "传输中：${ts.done}/${ts.total} 块",
+                            Modifier.padding(top = 10.dp),
+                            style = MaterialTheme.typography.bodyMedium,
+                        )
+                        LinearProgressIndicator(
+                            progress = { if (ts.total == 0) 0f else ts.done.toFloat() / ts.total },
+                            modifier = Modifier.fillMaxWidth().padding(top = 6.dp),
+                        )
+                    }
+                    is TransferStore.State.Finished -> {
+                        Text(ts.summary, Modifier.padding(top = 10.dp), style = MaterialTheme.typography.bodyMedium, color = LedgerPalette.Positive)
+                    }
+                    is TransferStore.State.Failed -> {
+                        Text(ts.message, Modifier.padding(top = 10.dp), style = MaterialTheme.typography.bodyMedium, color = LedgerPalette.Danger)
+                    }
+                    else -> {}
                 }
             }
         }
@@ -412,6 +473,41 @@ fun SettingsScreen(container: AppContainer) {
             },
             dismissButton = {
                 TextButton(onClick = { encryptRequest = null; passphrase = "" }) { Text("取消") }
+            },
+        )
+    }
+
+    // C4：新机输入配对信息的对话框
+    if (showTransferInput) {
+        AlertDialog(
+            onDismissRequest = { showTransferInput = false },
+            title = { Text("接收迁移") },
+            text = {
+                Column {
+                    Text("请粘贴旧机显示的配对信息（形如 SSID|口令|token|端口）：")
+                    OutlinedTextField(
+                        value = transferTicketInput,
+                        onValueChange = { transferTicketInput = it },
+                        label = { Text("配对信息") },
+                        singleLine = true,
+                    )
+                }
+            },
+            confirmButton = {
+                TextButton(
+                    enabled = transferTicketInput.isNotBlank(),
+                    onClick = {
+                        val ticket = TransferTicket.decode(transferTicketInput.trim())
+                        if (ticket != null) {
+                            transferStore.startReceive(ticket)
+                            showTransferInput = false
+                            transferTicketInput = ""
+                        }
+                    },
+                ) { Text("确定") }
+            },
+            dismissButton = {
+                TextButton(onClick = { showTransferInput = false }) { Text("取消") }
             },
         )
     }
