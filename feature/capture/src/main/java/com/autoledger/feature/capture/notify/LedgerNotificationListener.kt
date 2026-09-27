@@ -28,23 +28,49 @@ class LedgerNotificationListener : NotificationListenerService() {
     private val scope = CoroutineScope(SupervisorJob() + Dispatchers.IO)
     private val parser by lazy { NotificationParser() }
 
+    override fun onListenerConnected() {
+        super.onListenerConnected()
+        NotificationDiag.setConnected(true)
+        NotificationDiag.record(
+            NotificationDiag.Entry(System.currentTimeMillis(), "", "系统", "通知监听服务已连接", "服务连接"),
+        )
+    }
+
+    override fun onListenerDisconnected() {
+        super.onListenerDisconnected()
+        NotificationDiag.setConnected(false)
+        NotificationDiag.record(
+            NotificationDiag.Entry(System.currentTimeMillis(), "", "系统", "通知监听服务已断开", "服务断开"),
+        )
+    }
+
     override fun onNotificationPosted(sbn: StatusBarNotification) {
         val notification = sbn.notification
-        // 常驻 / 进度类通知没有记账价值
-        if (notification.flags and Notification.FLAG_ONGOING_EVENT != 0) return
-        if (NotificationCompat.isGroupSummary(notification)) return
-
         val extras = notification.extras
         val title = extras.getCharSequence(Notification.EXTRA_TITLE)?.toString().orEmpty()
         val text = extras.getCharSequence(Notification.EXTRA_TEXT)?.toString().orEmpty()
         val bigText = extras.getCharSequence(Notification.EXTRA_BIG_TEXT)?.toString().orEmpty()
         val lines = extras.getCharSequenceArray(Notification.EXTRA_TEXT_LINES)
             ?.joinToString(" | ") { it.toString() }.orEmpty()
-
         val body = listOf(text, bigText, lines).filter { it.isNotBlank() }.toSet().joinToString(" | ")
-        if (body.isBlank() && title.isBlank()) return
 
-        val parsed = parser.parse(sbn.packageName, title, body) ?: return
+        // 每条通知都留痕（含被丢弃的），方便排查「为什么没记录」
+        fun diag(outcome: String) {
+            NotificationDiag.record(
+                NotificationDiag.Entry(System.currentTimeMillis(), sbn.packageName, title, body, outcome),
+            )
+        }
+
+        // 常驻 / 进度类通知没有记账价值
+        if (notification.flags and Notification.FLAG_ONGOING_EVENT != 0) return diag("跳过：常驻通知")
+        if (NotificationCompat.isGroupSummary(notification)) return diag("跳过：折叠摘要")
+        if (body.isBlank() && title.isBlank()) return diag("跳过：空内容")
+
+        val parsed = parser.parse(sbn.packageName, title, body) ?: return diag("未命中规则")
+        diag(
+            "命中：${parsed.ruleLabel}" +
+                (if (parsed.amountMinor == null) "（金额未识别 → 待确认）" else ""),
+        )
 
         val envelope = toRawEnvelope(
             sourceId = NotificationCaptureSource.ID,

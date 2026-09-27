@@ -60,6 +60,7 @@ import com.autoledger.app.ui.theme.LedgerPalette
 import com.autoledger.core.model.TxnStatus
 import com.autoledger.feature.capture.CaptureAction
 import com.autoledger.feature.capture.PermissionState
+import com.autoledger.feature.capture.notify.NotificationDiag
 import com.autoledger.feature.transfer.TransferTicket
 import kotlinx.coroutines.launch
 
@@ -71,6 +72,9 @@ import kotlinx.coroutines.launch
 fun CaptureScreen(container: AppContainer) {
     val store = remember(container) { CaptureStore(container) }
     val state by store.state.collectAsState()
+    // 通知采集诊断：监听服务状态 + 最近收到的通知（排查"为什么没记录"）
+    val diagConnected by NotificationDiag.connected.collectAsState()
+    val diagEntries by NotificationDiag.entries.collectAsState()
     val context = androidx.compose.ui.platform.LocalContext.current
     // remember 必须在组合阶段调用；回调只复用已创建的 scope。
     val scope = rememberCoroutineScope()
@@ -169,6 +173,37 @@ fun CaptureScreen(container: AppContainer) {
                             )
                         }
                     }
+                }
+            }
+        }
+
+        item {
+            AppCard {
+                SectionTitle("通知监听诊断", "排查「为什么没记录」：看通知有没有到 App")
+                Text(
+                    if (diagConnected) "监听服务：已连接" else "监听服务：未连接（可能未授权或被系统限制）",
+                    style = MaterialTheme.typography.bodyMedium,
+                    color = if (diagConnected) LedgerPalette.Positive else LedgerPalette.Warning,
+                )
+                if (diagEntries.isEmpty()) {
+                    EmptyHint("还没收到任何通知。请确认系统「通知使用权」已对本 App 开启。")
+                } else {
+                    diagEntries.take(6).forEach { e ->
+                        Column(Modifier.padding(vertical = 6.dp)) {
+                            Text(
+                                e.title.ifBlank { e.packageName },
+                                style = MaterialTheme.typography.bodySmall,
+                                color = MaterialTheme.colorScheme.onSurfaceVariant,
+                            )
+                            Text(e.body.take(80), style = MaterialTheme.typography.bodySmall)
+                            Text(e.outcome, style = MaterialTheme.typography.labelMedium, color = LedgerPalette.Blue)
+                        }
+                    }
+                    Button(
+                        onClick = { NotificationDiag.clear() },
+                        colors = ButtonDefaults.buttonColors(containerColor = LedgerPalette.Muted),
+                        modifier = Modifier.padding(top = 8.dp),
+                    ) { Text("清空诊断记录") }
                 }
             }
         }

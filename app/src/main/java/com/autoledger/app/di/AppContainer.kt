@@ -261,6 +261,8 @@ class AppContainer(context: Context) {
     }
 
     fun bootstrap() {
+        // 通知采集诊断：记录监听服务状态 + 最近收到的通知，供采集箱排查「为什么没记录」
+        com.autoledger.feature.capture.notify.NotificationDiag.init(applicationContext)
         appScope.launch {
             try {
                 // 后台预热：在 IO 线程先把加密库与设置建好，避免 UI 首次触碰时主线程兜底加载。
