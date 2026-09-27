@@ -9,7 +9,7 @@ import kotlin.math.roundToLong
  */
 data class WageProfile(
     /** 到手月薪（分） */
-    val monthlyNetSalaryMinor: Long = 1_380_000L,
+    val monthlyNetSalaryMinor: Long = 400_000L,
     val payMonthsPerYear: Int = 13,
     /** 每月为工作花的钱（分） */
     val monthlyWorkCostMinor: Long = 85_000L,
