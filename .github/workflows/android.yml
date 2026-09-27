@@ -22,6 +22,10 @@ jobs:
 
       - name: Set up Android SDK
         uses: android-actions/setup-android@v3
+        with:
+          # 显式指定要装的包，避免该 action 默认执行 `sdkmanager tools`——
+          # 而 `tools` 包名在新版 cmdline-tools 中已废弃（会报 "Failed to find package 'tools'" 导致 CI 失败）。
+          packages: 'platforms;android-35 build-tools;35.0.0'
 
       - name: Set up Python
         uses: actions/setup-python@v5
