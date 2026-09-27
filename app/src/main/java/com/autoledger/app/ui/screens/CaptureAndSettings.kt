@@ -216,6 +216,18 @@ fun SettingsScreen(container: AppContainer) {
     var transferTicketInput by remember { mutableStateOf("") }
     DisposableEffect(transferStore) { onDispose { transferStore.close() } }
 
+    // 外观：主题（夜间黑皮肤）+ 背景图
+    val darkTheme by container.darkTheme.collectAsState()
+    val backgroundPath by container.backgroundImagePath.collectAsState()
+    val backgroundLauncher = rememberLauncherForActivityResult(
+        ActivityResultContracts.GetContent()
+    ) { uri ->
+        if (uri != null) {
+            val path = copyImageToPrivate(container.applicationContext, uri)
+            if (path != null) container.setBackgroundImagePath(path)
+        }
+    }
+
     LazyColumn(
         modifier = Modifier.fillMaxSize().padding(horizontal = 16.dp),
         verticalArrangement = Arrangement.spacedBy(14.dp),
@@ -397,6 +409,37 @@ fun SettingsScreen(container: AppContainer) {
 
         item {
             AppCard {
+                SectionTitle("外观", "换个颜色，或放一张自己的背景")
+                Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
+                    FilterChip(
+                        selected = !darkTheme,
+                        onClick = { container.setDarkTheme(false) },
+                        label = { Text("浅色") },
+                    )
+                    FilterChip(
+                        selected = darkTheme,
+                        onClick = { container.setDarkTheme(true) },
+                        label = { Text("夜间黑皮肤") },
+                    )
+                }
+                Row(horizontalArrangement = Arrangement.spacedBy(8.dp), modifier = Modifier.padding(top = 8.dp)) {
+                    Button(
+                        onClick = { backgroundLauncher.launch("image/*") },
+                        modifier = Modifier.weight(1f),
+                    ) { Text("选择背景图") }
+                    if (backgroundPath != null) {
+                        Button(
+                            onClick = { container.setBackgroundImagePath(null) },
+                            modifier = Modifier.weight(1f),
+                            colors = ButtonDefaults.buttonColors(containerColor = LedgerPalette.Muted),
+                        ) { Text("清除背景") }
+                    }
+                }
+            }
+        }
+
+        item {
+            AppCard {
                 SectionTitle("隐私与安全")
                 BulletLine(
                     LedgerIcons.Lock,
@@ -520,3 +563,11 @@ private fun BulletLine(icon: androidx.compose.ui.graphics.vector.ImageVector, te
         Text(text, style = MaterialTheme.typography.bodyMedium)
     }
 }
+
+/** 把用户选择的背景图复制到私有目录，返回绝对路径（失败返回 null）。 */
+private fun copyImageToPrivate(context: Context, uri: android.net.Uri): String? = runCatching {
+    val input = context.contentResolver.openInputStream(uri) ?: return null
+    val file = java.io.File(context.filesDir, "background_image.jpg")
+    input.use { ins -> file.outputStream().use { outs -> ins.copyTo(outs) } }
+    file.absolutePath
+}.getOrNull()

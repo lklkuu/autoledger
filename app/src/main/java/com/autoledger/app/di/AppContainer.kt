@@ -40,6 +40,8 @@ import com.autoledger.feature.stats.MetricRegistry
 import com.autoledger.feature.stats.MonthlyTrendMetric
 import com.autoledger.feature.stats.TimeCostMetric
 import com.autoledger.app.notif.NotificationAccessGate
+import com.autoledger.app.notif.PermissionIntroGate
+import com.autoledger.app.notif.SmsAccessGate
 import kotlinx.coroutines.CoroutineExceptionHandler
 import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.Dispatchers
@@ -169,6 +171,32 @@ class AppContainer(context: Context) {
 
     /** 通知使用权引导状态机：负责"何时提示、何时闭嘴" */
     val notificationAccess: NotificationAccessGate by lazy { NotificationAccessGate(applicationContext) }
+
+    /** 短信读取权限引导（需求 1）：未授权时每次打开都提示。 */
+    val smsAccess: SmsAccessGate by lazy { SmsAccessGate(applicationContext) }
+
+    /** 首次启动权限说明（需求 2）：一次性说明各项权限用途。 */
+    val permissionIntro: PermissionIntroGate by lazy { PermissionIntroGate(applicationContext) }
+
+    // ---------------- UI 偏好（设备本地，不进备份） ----------------
+    // 主题模式（夜间黑皮肤）+ 自定义背景图路径。背景图是本地文件路径，换机后失效，
+    // 故用 SharedPreferences 而非 Room（不进账本备份）。
+    private val uiPrefs = applicationContext.getSharedPreferences("autoledger_ui", Context.MODE_PRIVATE)
+    private val _darkTheme = MutableStateFlow(uiPrefs.getBoolean("dark_theme", false))
+    val darkTheme: StateFlow<Boolean> = _darkTheme.asStateFlow()
+    private val _backgroundImagePath = MutableStateFlow<String?>(uiPrefs.getString("background_image", null))
+    val backgroundImagePath: StateFlow<String?> = _backgroundImagePath.asStateFlow()
+
+    fun setDarkTheme(enabled: Boolean) {
+        _darkTheme.value = enabled
+        uiPrefs.edit().putBoolean("dark_theme", enabled).apply()
+    }
+
+    fun setBackgroundImagePath(path: String?) {
+        _backgroundImagePath.value = path
+        if (path == null) uiPrefs.edit().remove("background_image").apply()
+        else uiPrefs.edit().putString("background_image", path).apply()
+    }
 
     val backupManager: BackupManager by lazy { BackupManager(database, repository) }
 

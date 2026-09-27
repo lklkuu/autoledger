@@ -1,5 +1,6 @@
 package com.autoledger.app.ui
 
+import android.Manifest
 import android.content.ClipData
 import android.content.ClipboardManager
 import android.content.Context
@@ -7,8 +8,10 @@ import android.os.Bundle
 import android.widget.Toast
 import androidx.activity.ComponentActivity
 import androidx.activity.compose.BackHandler
+import androidx.activity.compose.rememberLauncherForActivityResult
 import androidx.activity.compose.setContent
 import androidx.activity.enableEdgeToEdge
+import androidx.activity.result.contract.ActivityResultContracts
 import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.Column
 import androidx.compose.foundation.layout.Row
@@ -42,6 +45,9 @@ import androidx.compose.ui.Modifier
 import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.text.style.TextAlign
 import androidx.compose.ui.unit.dp
+import androidx.compose.foundation.Image
+import androidx.compose.ui.graphics.asImageBitmap
+import androidx.compose.ui.layout.ContentScale
 import com.autoledger.app.di.AppContainer
 import com.autoledger.app.LedgerApp
 import com.autoledger.app.ui.nav.Destination
@@ -70,13 +76,16 @@ class MainActivity : ComponentActivity() {
         super.onResume()
         // 回到前台时重新检测通知使用权，按冷却策略决定是否再次提示
         (application as LedgerApp).container.notificationAccess.onAppForeground()
+        // 短信权限：未授权时每次回到前台都提示（需求 1）
+        (application as LedgerApp).container.smsAccess.onAppForeground()
     }
 }
 
 @OptIn(ExperimentalMaterial3Api::class)
 @Composable
 fun AppContent(container: AppContainer) {
-    LedgerTheme(darkTheme = false) {
+    val darkTheme by container.darkTheme.collectAsState()
+    LedgerTheme(darkTheme = darkTheme) {
         AppShell(container)
     }
 }
@@ -96,50 +105,102 @@ fun AppShell(container: AppContainer) {
     // 存储状态告知：一旦"放弃加密、改用明文"，必须让用户看见（当初就是静默降级掩盖了缺陷）
     val storageNotice by container.storageNotice.collectAsState()
     var noticeDismissed by remember { mutableStateOf(false) }
-    if (storageNotice != null && !noticeDismissed) {
-        AlertDialog(
-            onDismissRequest = { noticeDismissed = true },
-            title = { Text(storageNotice!!.title) },
-            text = { Text(storageNotice!!.message, style = MaterialTheme.typography.bodyMedium) },
-            confirmButton = {
-                TextButton(onClick = { noticeDismissed = true }) { Text("我知道了") }
-            },
-        )
-    }
 
-    // 通知使用权引导弹窗（首次必弹；之后按冷却/不再提醒策略控制频率）
+    // 首次启动权限说明（需求 2）
+    val showPermissionIntro by container.permissionIntro.shouldShow.collectAsState()
+    // 通知使用权引导（首次必弹；之后按冷却/不再提醒策略控制频率）
     val notifContext = LocalContext.current
     val showNotifPrompt by container.notificationAccess.shouldShowPrompt.collectAsState()
-    if (showNotifPrompt) {
-        AlertDialog(
-            onDismissRequest = { container.notificationAccess.markPrompted() },
-            title = { Text("开启自动记账") },
-            text = {
-                Text(
-                    "开启「通知使用权」后，微信/支付宝的付款通知会自动进入账本，全程本地加密、不上传。该开关只在本机生效。",
-                    style = MaterialTheme.typography.bodyMedium,
-                )
-            },
-            confirmButton = {
-                TextButton(onClick = {
-                    val ok = container.notificationAccess.launchSettings()
-                    if (!ok) {
-                        Toast.makeText(
-                            notifContext,
-                            "无法自动打开，请到 设置 → 通知 → 通知使用权 手动开启",
-                            Toast.LENGTH_LONG,
-                        ).show()
+    // 短信授权（需求 1：未授权时每次打开都提示）
+    val showSmsPrompt by container.smsAccess.shouldShowPrompt.collectAsState()
+    val smsPermissionLauncher = rememberLauncherForActivityResult(
+        ActivityResultContracts.RequestPermission(),
+    ) { granted -> if (granted) container.smsAccess.markGranted() }
+
+    // 同一时刻只弹一个，优先级：存储告知 > 权限说明 > 通知使用权 > 短信授权
+    when {
+        storageNotice != null && !noticeDismissed -> {
+            AlertDialog(
+                onDismissRequest = { noticeDismissed = true },
+                title = { Text(storageNotice!!.title) },
+                text = { Text(storageNotice!!.message, style = MaterialTheme.typography.bodyMedium) },
+                confirmButton = {
+                    TextButton(onClick = { noticeDismissed = true }) { Text("我知道了") }
+                },
+            )
+        }
+
+        showPermissionIntro -> {
+            AlertDialog(
+                onDismissRequest = { container.permissionIntro.markSeen() },
+                title = { Text("开始前，说明一下权限") },
+                text = {
+                    Text(
+                        "本 App 会申请以下权限，全部只用于记账、不用于其它目的，数据一律本地加密、不上传：\n\n" +
+                            "· 通知使用权：读取微信/支付宝/银行 App 的支付通知，自动记一笔账（不读取其它通知内容）。\n" +
+                            "· 短信读取（可选）：扫描银行扣款短信补录，可随时关闭。\n" +
+                            "· 网络/热点（仅换机迁移时）：只在两台设备间直连传输你的账本。\n\n" +
+                            "以上权限都可拒绝，App 其余功能照常可用。",
+                        style = MaterialTheme.typography.bodyMedium,
+                    )
+                },
+                confirmButton = {
+                    TextButton(onClick = { container.permissionIntro.markSeen() }) { Text("知道了") }
+                },
+            )
+        }
+
+        showNotifPrompt -> {
+            AlertDialog(
+                onDismissRequest = { container.notificationAccess.markPrompted() },
+                title = { Text("开启自动记账") },
+                text = {
+                    Text(
+                        "开启「通知使用权」后，微信/支付宝/银行的付款通知会自动进入账本，全程本地加密、不上传。该开关只在本机生效。",
+                        style = MaterialTheme.typography.bodyMedium,
+                    )
+                },
+                confirmButton = {
+                    TextButton(onClick = {
+                        val ok = container.notificationAccess.launchSettings()
+                        if (!ok) {
+                            Toast.makeText(
+                                notifContext,
+                                "无法自动打开，请到 设置 → 通知 → 通知使用权 手动开启",
+                                Toast.LENGTH_LONG,
+                            ).show()
+                        }
+                        container.notificationAccess.markPrompted()
+                    }) { Text("去开启") }
+                },
+                dismissButton = {
+                    Row {
+                        TextButton(onClick = { container.notificationAccess.markPrompted() }) { Text("暂不") }
+                        TextButton(onClick = { container.notificationAccess.setNeverAsk() }) { Text("不再提醒") }
                     }
-                    container.notificationAccess.markPrompted()
-                }) { Text("去开启") }
-            },
-            dismissButton = {
-                Row {
-                    TextButton(onClick = { container.notificationAccess.markPrompted() }) { Text("暂不") }
-                    TextButton(onClick = { container.notificationAccess.setNeverAsk() }) { Text("不再提醒") }
-                }
-            },
-        )
+                },
+            )
+        }
+
+        showSmsPrompt -> {
+            AlertDialog(
+                onDismissRequest = { container.smsAccess.onAppForeground() },
+                title = { Text("开启短信识别") },
+                text = {
+                    Text(
+                        "开启「短信读取」后，银行扣款短信会自动补录成账（可选）。\n\n" +
+                            "若选择「不再提醒」，可随时到 采集箱 → 银行短信识别 手动授权。",
+                        style = MaterialTheme.typography.bodyMedium,
+                    )
+                },
+                confirmButton = {
+                    TextButton(onClick = { smsPermissionLauncher.launch(Manifest.permission.READ_SMS) }) { Text("去授权") }
+                },
+                dismissButton = {
+                    TextButton(onClick = { container.smsAccess.setNeverAsk() }) { Text("不再提醒") }
+                },
+            )
+        }
     }
 
     // 观察返回栈：stack 是 SnapshotStateList，改动即触发重组
@@ -149,8 +210,10 @@ fun AppShell(container: AppContainer) {
     // 返回栈里超过一屏时先返回上一屏；只有一屏时交给系统退出
     BackHandler(enabled = stackSize > 1) { nav.back() }
 
+    // 自定义背景图（低透明度，不干扰组件显示）
+    val backgroundPath by container.backgroundImagePath.collectAsState()
     Scaffold(
-        containerColor = MaterialTheme.colorScheme.background,
+        containerColor = MaterialTheme.colorScheme.background.copy(alpha = 0.9f),
         topBar = {
             TopAppBar(
                 title = { Text(current.label) },
@@ -183,6 +246,19 @@ fun AppShell(container: AppContainer) {
         },
     ) { padding ->
         Box(Modifier.padding(padding)) {
+            // 自定义背景图（低透明度，垫在最底层）
+            backgroundPath?.let { path ->
+                val bmp = remember(path) { runCatching { android.graphics.BitmapFactory.decodeFile(path) }.getOrNull() }
+                if (bmp != null) {
+                    Image(
+                        bitmap = bmp.asImageBitmap(),
+                        contentDescription = null,
+                        modifier = Modifier.fillMaxSize(),
+                        contentScale = ContentScale.Crop,
+                        alpha = 0.12f,
+                    )
+                }
+            }
             when (current) {
                 Destination.DASHBOARD -> DashboardScreen(container)
                 Destination.HOURLY -> HourlyScreen(container)

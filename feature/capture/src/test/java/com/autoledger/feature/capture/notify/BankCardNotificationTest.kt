@@ -49,6 +49,16 @@ class BankCardNotificationTest {
     }
 
     @Test
+    fun `credit card 消费抖音支付 notification is parsed`() {
+        // 用户实报：银行端文案为「消费抖音支付XXX」——"消费"与金额之间隔着"抖音支付"，
+        // 旧正则没有 [^\d]{0,6} 间隔，导致提取不到金额而漏记。
+        val r = parser.parse("cmb.pb", "招商银行", "您尾号1234信用卡消费抖音支付200.00元")
+        assertNotNull(r, "「消费抖音支付200元」必须能解析")
+        assertEquals(-20_000L, r.amountMinor)
+        assertEquals(Direction.OUT, r.direction)
+    }
+
+    @Test
     fun `credit card available limit reminder is not parsed as spending`() {
         assertNull(parser.parse("cmb.pb", "招商银行", "您尾号1234信用卡可用额度为3000.00元"))
     }
