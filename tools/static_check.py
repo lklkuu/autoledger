@@ -35,6 +35,7 @@ MODULE_PKGS = {
     "feature:dedup": "com.autoledger.feature.dedup",
     "feature:stats": "com.autoledger.feature.stats",
     "feature:refund": "com.autoledger.feature.refund",
+    "feature:transfer": "com.autoledger.feature.transfer",
     "app": "com.autoledger.app",
 }
 
