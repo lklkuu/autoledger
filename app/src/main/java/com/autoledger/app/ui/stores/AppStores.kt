@@ -595,6 +595,54 @@ class SettingsStore(private val container: AppContainer) {
         }
     }
 
+    /** 加密导出：口令派生密钥 + AES-GCM 密封，适合「存网盘 / 发别人」的场景。 */
+    fun exportEncrypted(uri: Uri, passphrase: CharArray) {
+        storeScope.launch {
+            _state.value = _state.value.copy(working = true, message = null)
+            catching {
+                withContext(Dispatchers.IO) {
+                    val json = container.backupManager.exportEncrypted("1.0.0", android.os.Build.MODEL, passphrase)
+                    container.applicationContext.contentResolver.openOutputStream(uri)?.use {
+                        it.write(json.toByteArray())
+                    } ?: error("无法写入文件")
+                }
+            }.onSuccess { _state.value = _state.value.copy(working = false, message = "加密导出成功") }
+                .onFailure { _state.value = _state.value.copy(working = false, message = "加密导出失败：${it.message}") }
+        }
+    }
+
+    /** 加密导入：先注入口令，再走统一导入管线；口令用完即弃，不落盘。 */
+    fun importEncrypted(uri: Uri, passphrase: CharArray) {
+        storeScope.launch {
+            _state.value = _state.value.copy(working = true, message = null)
+            catching {
+                withContext(Dispatchers.IO) {
+                    val text = container.applicationContext.contentResolver.openInputStream(uri)?.use {
+                        it.readBytes().toString(Charsets.UTF_8)
+                    } ?: error("无法读取文件")
+                    container.backupManager.currentPassphrase = passphrase
+                    try {
+                        container.backupManager.import(text, com.autoledger.core.backup.BackupManager.MergeStrategy.MERGE_BY_ID)
+                    } finally {
+                        container.backupManager.currentPassphrase = null
+                    }
+                }
+            }.onSuccess { outcome ->
+                _state.value = _state.value.copy(
+                    working = false,
+                    message = "加密导入成功：${outcome.transactionsUpserted} 笔流水",
+                )
+            }.onFailure { e ->
+                val msg = if (e is javax.crypto.AEADBadTagException || e.cause is javax.crypto.AEADBadTagException) {
+                    "口令错误，请重新输入"
+                } else {
+                    "导入失败：${e.message}"
+                }
+                _state.value = _state.value.copy(working = false, message = msg)
+            }
+        }
+    }
+
     fun clearAll() {
         storeScope.launch {
             catching { container.repository.clearAllTransactions() }

@@ -100,7 +100,7 @@ A 技术债清理（改造收尾）
 | 阶段 | 状态 |
 |---|---|
 | A 技术债清理 | ✅ 全部完成（W1–W6，经 QA 两轮复核 PASS） |
-| B 核心功能 | ⚠️ B1 / B2 / B3 完成；**B4 部分完成** —— 仅首页接入 Flow 实时刷新，其余 6 类页面（账单 / 采集箱 / 发现 / 自由 / 退款 / 分类管理）仍为手动 `load()` |
+| B 核心功能 | ✅ **B1 / B2 / B3 / B4 全部完成** —— B4 已把 6 个 Store（账单 / 记账 / 自由 / 发现 / 分类 / 退款 / 采集箱）改为 Room Flow 订阅；`SettingsStore` 因低频统计保留任务型（合理例外） |
 | C 增强功能 | ⚠️ **C5 退款与抵扣原路回退：已完成**；C1 仅"多账户"落地、**多币种未实现**；C2 云同步 / C3 加密备份 UI / C4 换机迁移 **未开始** |
 | D 发布开源 | 🔄 进行中（已补 Gradle wrapper、修 CI 全量测试、接入 release 签名、补齐 LICENSE / CONTRIBUTING / CHANGELOG / SECURITY） |
 
@@ -108,6 +108,6 @@ A 技术债清理（改造收尾）
 
 **未完成项分类**：
 
-- **可直接做（无阻塞）**：B4 实时刷新收口、C3 加密备份 UI 接线（`BackupManager.exportEncrypted` 已就绪）
+- **可直接做（无阻塞）**：C3 加密备份 UI 接线（`BackupManager.exportEncrypted` 已就绪）
 - **需产品决策**：C1 多币种（当前 `Model.kt` 硬编码 CNY，退款与备份路径同样写死）、C4 换机迁移
 - **需外部依赖**：C2 云同步（需要真实后端服务，目前仅 `CloudSyncClient` 接口 + `NoopCloudSyncClient`）

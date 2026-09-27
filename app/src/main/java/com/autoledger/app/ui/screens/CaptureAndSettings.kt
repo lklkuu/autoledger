@@ -26,6 +26,11 @@ import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.Switch
 import androidx.compose.material3.Text
 import androidx.compose.material3.TextButton
+import android.net.Uri
+import androidx.compose.foundation.text.KeyboardOptions
+import androidx.compose.material3.OutlinedTextField
+import androidx.compose.ui.text.input.KeyboardType
+import androidx.compose.ui.text.input.PasswordVisualTransformation
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.DisposableEffect
 import androidx.compose.runtime.LaunchedEffect
@@ -167,6 +172,12 @@ fun CaptureScreen(container: AppContainer) {
     }
 }
 
+/** C3：加密导出/导入的待处理请求 —— 先选文件，再输口令。 */
+private sealed interface EncryptRequest {
+    data class Export(val uri: Uri) : EncryptRequest
+    data class Import(val uri: Uri) : EncryptRequest
+}
+
 @Composable
 fun SettingsScreen(container: AppContainer) {
     val store = remember(container) { SettingsStore(container) }
@@ -180,6 +191,16 @@ fun SettingsScreen(container: AppContainer) {
     val importLauncher = rememberLauncherForActivityResult(
         ActivityResultContracts.GetContent()
     ) { uri -> if (uri != null) store.importJson(uri) }
+
+    // C3：加密导出/导入 —— 先选文件，再弹口令对话框
+    var encryptRequest by remember { mutableStateOf<EncryptRequest?>(null) }
+    var passphrase by remember { mutableStateOf("") }
+    val encryptExportLauncher = rememberLauncherForActivityResult(
+        ActivityResultContracts.CreateDocument("application/json")
+    ) { uri -> if (uri != null) encryptRequest = EncryptRequest.Export(uri) }
+    val encryptImportLauncher = rememberLauncherForActivityResult(
+        ActivityResultContracts.GetContent()
+    ) { uri -> if (uri != null) encryptRequest = EncryptRequest.Import(uri) }
 
     val autoMerge by container.settings.autoMerge.collectAsState()
 
@@ -203,6 +224,22 @@ fun SettingsScreen(container: AppContainer) {
                         modifier = Modifier.weight(1f),
                         colors = ButtonDefaults.buttonColors(containerColor = LedgerPalette.Blue),
                     ) { Icon(LedgerIcons.Download, null); Text(" 导入备份") }
+                }
+                // C3：加密导出/导入（口令保护，适合存网盘 / 发别人）
+                Row(
+                    horizontalArrangement = Arrangement.spacedBy(8.dp),
+                    modifier = Modifier.padding(top = 8.dp),
+                ) {
+                    Button(
+                        onClick = { encryptExportLauncher.launch("autoledger-backup-encrypted.json") },
+                        modifier = Modifier.weight(1f),
+                        colors = ButtonDefaults.buttonColors(containerColor = LedgerPalette.Positive),
+                    ) { Text(" 加密导出") }
+                    Button(
+                        onClick = { encryptImportLauncher.launch("application/json") },
+                        modifier = Modifier.weight(1f),
+                        colors = ButtonDefaults.buttonColors(containerColor = LedgerPalette.Positive),
+                    ) { Text(" 加密导入") }
                 }
                 state.message?.let {
                     Text(it, Modifier.padding(top = 10.dp), style = MaterialTheme.typography.bodyMedium, color = LedgerPalette.Positive)
@@ -337,6 +374,44 @@ fun SettingsScreen(container: AppContainer) {
             },
             dismissButton = {
                 TextButton(onClick = { showClearConfirm = false }) { Text("取消") }
+            },
+        )
+    }
+
+    // C3：加密导出/导入的口令对话框
+    encryptRequest?.let { request ->
+        AlertDialog(
+            onDismissRequest = { encryptRequest = null; passphrase = "" },
+            title = { Text(if (request is EncryptRequest.Export) "加密导出" else "加密导入") },
+            text = {
+                Column {
+                    Text("请输入口令（至少 6 位），用于加密 / 解密备份文件。请务必牢记，口令丢失无法找回。")
+                    OutlinedTextField(
+                        value = passphrase,
+                        onValueChange = { passphrase = it },
+                        label = { Text("口令") },
+                        singleLine = true,
+                        visualTransformation = PasswordVisualTransformation(),
+                        keyboardOptions = KeyboardOptions(keyboardType = KeyboardType.Password),
+                    )
+                }
+            },
+            confirmButton = {
+                TextButton(
+                    enabled = passphrase.length >= 6,
+                    onClick = {
+                        val pwd = passphrase.toCharArray()
+                        when (request) {
+                            is EncryptRequest.Export -> store.exportEncrypted(request.uri, pwd)
+                            is EncryptRequest.Import -> store.importEncrypted(request.uri, pwd)
+                        }
+                        encryptRequest = null
+                        passphrase = ""
+                    },
+                ) { Text("确定") }
+            },
+            dismissButton = {
+                TextButton(onClick = { encryptRequest = null; passphrase = "" }) { Text("取消") }
             },
         )
     }
