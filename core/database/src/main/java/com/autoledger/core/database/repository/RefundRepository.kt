@@ -9,6 +9,10 @@ import com.autoledger.core.model.refund.OrderRefundState
 import com.autoledger.core.model.refund.RefundLedgerMapper
 import com.autoledger.core.model.refund.RefundPlan
 import com.autoledger.core.model.refund.RefundStatus
+import kotlinx.coroutines.ExperimentalCoroutinesApi
+import kotlinx.coroutines.flow.Flow
+import kotlinx.coroutines.flow.flatMapLatest
+import kotlinx.coroutines.flow.flow
 
 /**
  * 退款的持久化层：把 [RefundPlan] 在**单个事务**内落库。
@@ -54,6 +58,13 @@ class RefundRepository(
     /** 全部订单（按时间倒序），供对账视图展示。 */
     suspend fun listOrders(): List<OrderRefundState> =
         orderDao.listAll().mapNotNull { loadState(it.id) }
+
+    /** B4：订单列表实时订阅（退款对账页）。 */
+    @OptIn(ExperimentalCoroutinesApi::class)
+    fun observeOrders(): Flow<List<OrderRefundState>> =
+        orderDao.observeAll().flatMapLatest { orders ->
+            flow { emit(orders.mapNotNull { loadState(it.id) }) }
+        }
 
     /** 登记/更新订单（订单来源可由采集侧或手动录入驱动）。 */
     suspend fun saveOrder(

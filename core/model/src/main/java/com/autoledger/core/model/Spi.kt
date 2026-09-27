@@ -176,6 +176,11 @@ interface LedgerRepository {
     fun observeRawCount(): Flow<Int>
 
     /**
+     * 实时订阅：全表「待确认(RAW)」流水（按时间倒序）。用于采集箱待确认队列（B4）。
+     */
+    fun observeRaw(): Flow<List<LedgerTransaction>>
+
+    /**
      * 实时订阅：全量流水（按时间倒序）。用于账单页的实时刷新（B4）。
      *
      * @param includeTransfers 语义同 [listSince]：`false` 会同时排除 TRANSFER 与 REFUND。

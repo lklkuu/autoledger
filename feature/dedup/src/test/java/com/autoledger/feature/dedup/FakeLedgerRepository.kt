@@ -99,6 +99,10 @@ class FakeLedgerRepository(
     override fun observeRawCount(): Flow<Int> =
         revision.map { store.values.count { it.status == TxnStatus.RAW } }
 
+    /** 语义对齐 Room.observeRaw：全表 RAW 流水（按时间倒序）。 */
+    override fun observeRaw(): Flow<List<LedgerTransaction>> =
+        revision.map { store.values.filter { it.status == TxnStatus.RAW }.sortedByDescending { it.occurredAtMillis } }
+
     /** 语义对齐 Room.observeAll：全量流水（排除 MERGED），按 includeTransfers 过滤。 */
     override fun observeAll(includeTransfers: Boolean): Flow<List<LedgerTransaction>> =
         revision.map { store.values.filter { it.status != TxnStatus.MERGED }.filterTypes(includeTransfers) }

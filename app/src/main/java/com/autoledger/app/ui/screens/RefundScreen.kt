@@ -18,6 +18,7 @@ import androidx.compose.material3.OutlinedTextField
 import androidx.compose.material3.Text
 import androidx.compose.material3.TextButton
 import androidx.compose.runtime.Composable
+import androidx.compose.runtime.DisposableEffect
 import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.collectAsState
 import androidx.compose.runtime.getValue
@@ -48,6 +49,7 @@ import com.autoledger.core.model.refund.RefundStatus
 fun RefundScreen(container: AppContainer) {
     val store = remember(container) { RefundStore(container) }
     LaunchedEffect(container) { store.load() }
+    DisposableEffect(store) { onDispose { store.close() } }
     val state by store.state.collectAsState()
     var showAdd by remember { mutableStateOf(false) }
 

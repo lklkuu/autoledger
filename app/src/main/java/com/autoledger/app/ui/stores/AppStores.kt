@@ -345,16 +345,41 @@ class CaptureStore(private val container: AppContainer) {
     private val _state = MutableStateFlow(State())
     val state: StateFlow<State> = _state.asStateFlow()
 
-    fun refresh(context: Context) {
+    // B4：rawQueue 用 observeRaw 订阅（待确认队列实时刷新）；rows 权限状态依赖 context，进入时刷新一次。
+    private val scope = CoroutineScope(SupervisorJob() + Dispatchers.Main.immediate + storeExceptionHandler)
+    private var observeJob: Job? = null
+
+    fun load(context: Context) {
+        observeJob?.cancel()
+        observeJob = scope.launch { observe() }
+        refreshRows(context)
+    }
+
+    fun close() {
+        observeJob?.cancel()
+        observeJob = null
+        scope.cancel()
+    }
+
+    /** 待确认队列实时订阅（写操作后自动刷新）。 */
+    private suspend fun observe() {
+        container.repository.observeRaw()
+            .flowOn(Dispatchers.Default)
+            .collect { raw ->
+                _state.value = _state.value.copy(
+                    rawQueue = raw.sortedByDescending { it.occurredAtMillis },
+                )
+            }
+    }
+
+    /** 渠道权限状态（依赖 context，非 Room 数据，进入页面时刷新一次即可）。 */
+    fun refreshRows(context: Context) {
         storeScope.launch {
             val rows = container.captureSources.map { source ->
                 val st = source.permissionState(context)
                 SourceRow(source, st, source.statusHint(st))
             }
-            val queue = catching { container.repository.listAll(includeTransfers = true) }.getOrDefault(emptyList())
-                .filter { it.status == TxnStatus.RAW }
-                .sortedByDescending { it.occurredAtMillis }
-            _state.value = _state.value.copy(rows = rows, rawQueue = queue)
+            _state.value = _state.value.copy(rows = rows)
         }
     }
 
@@ -386,7 +411,7 @@ class CaptureStore(private val container: AppContainer) {
             }.onFailure {
                 _state.value = _state.value.copy(working = false, message = "采集失败：${it.message}")
             }
-            refresh(context)
+            // B4：待确认队列由 observeRaw 自动刷新，无需手动 refresh。
         }
     }
 }
@@ -605,8 +630,27 @@ class RefundStore(private val container: AppContainer) {
 
     private val service = com.autoledger.app.refund.RefundService(container.refundRepository)
 
+    // B4：实例级作用域 + observeOrders 订阅（订单列表实时刷新）。
+    private val scope = CoroutineScope(SupervisorJob() + Dispatchers.Main.immediate + storeExceptionHandler)
+    private var observeJob: Job? = null
+
     fun load() {
-        storeScope.launch { refresh() }
+        observeJob?.cancel()
+        observeJob = scope.launch { observe() }
+    }
+
+    fun close() {
+        observeJob?.cancel()
+        observeJob = null
+        scope.cancel()
+    }
+
+    private suspend fun observe() {
+        container.refundRepository.observeOrders()
+            .flowOn(Dispatchers.Default)
+            .collect { orders ->
+                _state.value = _state.value.copy(loading = false, orders = orders)
+            }
     }
 
     fun select(orderId: String?) {
@@ -634,7 +678,7 @@ class RefundStore(private val container: AppContainer) {
                 refundNo = "R${System.currentTimeMillis()}",
             )
             _state.value = _state.value.copy(message = outcome.message, hint = outcome.hint)
-            refresh()
+            // B4：订单列表由 observeOrders 自动刷新；这里只需重新加载详情。
             select(order.orderId)
         }
     }
@@ -665,13 +709,8 @@ class RefundStore(private val container: AppContainer) {
                 container.refundRepository.saveDeductions(orderId, deductions)
             }.onFailure { _state.value = _state.value.copy(message = "登记失败：${it.message}", hint = "") }
                 .onSuccess { _state.value = _state.value.copy(message = "已登记订单 $orderNo", hint = "现在可以发起退款") }
-            refresh()
+            // B4：订单列表由 observeOrders 自动刷新。
         }
-    }
-
-    private suspend fun refresh() {
-        val orders = catching { container.refundRepository.listOrders() }.getOrDefault(emptyList())
-        _state.value = _state.value.copy(loading = false, orders = orders)
     }
 }
 

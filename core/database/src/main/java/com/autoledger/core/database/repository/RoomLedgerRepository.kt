@@ -87,6 +87,10 @@ class RoomLedgerRepository(private val db: LedgerDatabase) : LedgerRepository {
      */
     override fun observeRawCount(): Flow<Int> = txnDao.observeRawCount()
 
+    /** B4：待确认队列实时订阅。 */
+    override fun observeRaw(): Flow<List<LedgerTransaction>> =
+        txnDao.observeRaw().map { list -> list.map { it.toDomain() } }
+
     /** B4：全量流水实时订阅（账单页）。 */
     override fun observeAll(includeTransfers: Boolean): Flow<List<LedgerTransaction>> =
         txnDao.observeAll().map { list -> list.filterTypes(includeTransfers).map { it.toDomain() } }

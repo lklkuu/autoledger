@@ -27,6 +27,7 @@ import androidx.compose.material3.Switch
 import androidx.compose.material3.Text
 import androidx.compose.material3.TextButton
 import androidx.compose.runtime.Composable
+import androidx.compose.runtime.DisposableEffect
 import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.collectAsState
 import androidx.compose.runtime.getValue
@@ -65,11 +66,13 @@ fun CaptureScreen(container: AppContainer) {
     val context = androidx.compose.ui.platform.LocalContext.current
     // remember 必须在组合阶段调用；回调只复用已创建的 scope。
     val scope = rememberCoroutineScope()
-    LaunchedEffect(container) { store.refresh(context) }
+    LaunchedEffect(container) { store.load(context) }
+    // B4：离开页面时释放订阅（实例级作用域）。
+    DisposableEffect(store) { onDispose { store.close() } }
 
     val smsPermission = rememberLauncherForActivityResult(
         ActivityResultContracts.RequestPermission()
-    ) { store.refresh(context) }
+    ) { store.refreshRows(context) }
 
     var pendingPickSource by remember { mutableStateOf<String?>(null) }
     val pickFile = rememberLauncherForActivityResult(
@@ -152,7 +155,6 @@ fun CaptureScreen(container: AppContainer) {
                                     IconButton(onClick = {
                                         scope.launch {
                                             container.repository.markStatus(txn.id, TxnStatus.CONFIRMED)
-                                            store.refresh(context)
                                         }
                                     }) { Icon(LedgerIcons.Check, "确认入账") }
                                 },
