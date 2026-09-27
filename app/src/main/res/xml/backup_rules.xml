@@ -1,0 +1,18 @@
+<?xml version="1.0" encoding="utf-8"?>
+<!--
+  不许把数据库 / 保险箱 uploaded 到 Google 备份：
+  备份出去的明文不适用于增密历史日程约定（SQLCipher 口令在 Keystore 里，换机后解不开），
+  所以全量云端 backup 只会导致"恢复后一片空白"。
+  用户要迁移就用应用内的导出/导入，那是加密并且可控的。
+-->
+<full-backup-content>
+    <exclude
+        domain="database"
+        path="autoledger.db" />
+    <exclude
+        domain="sharedpref"
+        path="autoledger_vault.xml" />
+    <exclude
+        domain="file"
+        path="backups" />
+</full-backup-content>

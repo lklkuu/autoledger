@@ -1,0 +1,21 @@
+<?xml version="1.0" encoding="utf-8"?>
+<manifest xmlns:android="http://schemas.android.com/apk/res/android">
+
+    <!-- 通知读取：本 App 自动记账的主渠道，不需要 root、不需要侵入任意 App -->
+    <uses-permission android:name="android.permission.POST_NOTIFICATIONS" />
+
+    <!-- 银行短信识别：Google Play 对 SMS 权限政策严格，自签名/侧载场景使用最合适 -->
+    <uses-permission android:name="android.permission.READ_SMS" />
+
+    <application>
+        <service
+            android:name="com.autoledger.feature.capture.notify.LedgerNotificationListener"
+            android:exported="true"
+            android:label="@string/capture_service_label"
+            android:permission="android.permission.BIND_NOTIFICATION_LISTENER_SERVICE">
+            <intent-filter>
+                <action android:name="android.service.notification.NotificationListenerService" />
+            </intent-filter>
+        </service>
+    </application>
+</manifest>

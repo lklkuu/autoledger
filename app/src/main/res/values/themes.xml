@@ -1,0 +1,5 @@
+<?xml version="1.0" encoding="utf-8"?>
+<resources>
+    <!-- 应用自己的在线 Dash 需要脱离 Manifest 主题，否则 Material3 会套上 actionbar -->
+    <style name="Theme.AutoLedger" parent="android:Theme.Material.Light.NoActionBar" />
+</resources>

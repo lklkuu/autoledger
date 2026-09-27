@@ -1,0 +1,162 @@
+package com.autoledger.feature.capture.notify
+
+import com.autoledger.core.model.Direction
+import com.autoledger.core.model.TxnType
+
+/**
+ * 一条「通知 → 流水」的解析规则。
+ *
+ * 全部规则都是**数据**，没有任何一条被写进 if/else 分支：
+ * 想支持新的银行 App，只要在规则包里追加一条 [NotificationRule]（甚至将来改成从服务端下发 JSON），
+ * 解析器一行代码都不用动。
+ */
+data class NotificationRule(
+    val id: String,
+    val label: String,
+    /** null = 通用规则；命中包名优先走更具体的规则 */
+    val packageNames: Set<String>? = null,
+    val titleMustContainAny: List<String> = emptyList(),
+    val bodyMustContainAny: List<String> = emptyList(),
+    val bodyRejectAny: List<String> = emptyList(),
+    /** 按序尝试，第一个命中的生效；每条必须含且仅含一个捕获组，捕获组=金额（单位：元） */
+    val amountPatterns: List<String>,
+    /** 商户名提取pattern，捕获组 1 = 商户 */
+    val counterpartyPatterns: List<String> = emptyList(),
+    val direction: Direction = Direction.OUT,
+    /**
+     * 采集端已确定的账本类型，会作为 [com.autoledger.core.model.RawEnvelope.explicitType] 下发，
+     * 在流水中优先级最高，避免"退款金额是正数 → 被金额正负误判成 INCOME"。
+     *
+     * 缺省 null = 交由流水线按金额正负推断。**不要用 [direction] 推导**：
+     * `wechat_receive` / `sms_bank_in` 同样是 IN，但它们应是 INCOME，只有退款才是 REFUND。
+     */
+    val ledgerType: TxnType? = null,
+)
+
+/** 厂商与各银行的默认值，放在同一个地方便于 review 与增补。 */
+object DefaultNotificationRules {
+
+    const val PKG_WECHAT = "com.tencent.mm"
+    const val PKG_ALIPAY = "com.eg.android.AlipayGphone"
+
+    /** 退款金额提取：优先"退款金额/退款"后的数字，其次带币符、再次"xx元"。 */
+    private val REFUND_AMOUNT_PATTERNS = listOf(
+        """(?:退款金额|退款)[^\d]{0,8}([¥￥]?\s?\d+(?:,\d{3})*(?:\.\d{1,2})?)""",
+        """[¥￥]\s?(\d+(?:,\d{3})*(?:\.\d{1,2})?)""",
+        """(\d+(?:,\d{3})*(?:\.\d{1,2})?)\s?元""",
+    )
+
+    private val REFUND_COUNTERPARTY_PATTERNS = listOf(
+        """(?:商户名称|收款方|商家|商户)[^\S\n]{0,4}[:：]?\s?([^\s,，|]{2,24})""",
+        """向\s?([^\s,，|]{2,24})\s?(?:付款|转账)""",
+    )
+
+    val PACK: List<NotificationRule> = listOf(
+        // ---------------- 退款（必须排在付款规则之前：付款规则会主动排除退款文案） ----------------
+        NotificationRule(
+            id = "refund_wechat",
+            label = "微信退款到账",
+            packageNames = setOf(PKG_WECHAT),
+            bodyMustContainAny = listOf("退款", "已退款", "退款到账", "退款成功", "退回"),
+            // 排除"还没退成功"的文案，避免把申请中的退款记成到账；
+            // "退回"系一并排除：付款通知常带"如未收到可申请退回"，不能当成退款到账。
+            bodyRejectAny = listOf("退款失败", "退款申请", "正在退款", "退款中", "申请退款", "申请退回", "可退回", "退回申请"),
+            amountPatterns = REFUND_AMOUNT_PATTERNS,
+            counterpartyPatterns = REFUND_COUNTERPARTY_PATTERNS,
+            direction = Direction.IN,
+            ledgerType = TxnType.REFUND,
+        ),
+        NotificationRule(
+            id = "refund_alipay",
+            label = "支付宝退款到账",
+            packageNames = setOf(PKG_ALIPAY),
+            bodyMustContainAny = listOf("退款", "已退款", "退款成功", "退回"),
+            bodyRejectAny = listOf("退款失败", "退款申请", "正在退款", "退款中", "申请退款", "申请退回", "可退回", "退回申请"),
+            amountPatterns = REFUND_AMOUNT_PATTERNS,
+            counterpartyPatterns = REFUND_COUNTERPARTY_PATTERNS,
+            direction = Direction.IN,
+            ledgerType = TxnType.REFUND,
+        ),
+        NotificationRule(
+            id = "refund_generic",
+            label = "退款到账（银行 App / 短信）",
+            packageNames = null,
+            bodyMustContainAny = listOf("退款", "已退款", "退款到账", "退款入账", "原路退回", "冲正"),
+            bodyRejectAny = listOf("退款失败", "退款申请", "正在退款", "退款中", "申请退款", "申请退回", "可退回", "退回申请"),
+            amountPatterns = REFUND_AMOUNT_PATTERNS,
+            counterpartyPatterns = REFUND_COUNTERPARTY_PATTERNS,
+            direction = Direction.IN,
+            ledgerType = TxnType.REFUND,
+        ),
+        // ---------------- 微信支付（付款凭证 / 支付成功） ----------------
+        NotificationRule(
+            id = "wechat_pay",
+            label = "微信支付",
+            packageNames = setOf(PKG_WECHAT),
+            titleMustContainAny = listOf("微信支付", "微信支付凭证", "服务通知"),
+            bodyMustContainAny = listOf("付款金额", "支付金额", "微信支付凭证", "已支付", "支付成功"),
+            bodyRejectAny = listOf("收款成功", "收款到账", "转账到账通知", "已退款到"),
+            amountPatterns = listOf(
+                """(?:付款金额|支付金额)[^\d]{0,8}([¥￥]?\s?\d+(?:,\d{3})*(?:\.\d{1,2})?)""",
+                """[¥￥]\s?(\d+(?:,\d{3})*(?:\.\d{1,2})?)""",
+                """(\d+(?:,\d{3})*(?:\.\d{1,2})?)\s?元""",
+            ),
+            counterpartyPatterns = listOf(
+                """(?:商户名称|收款方|商家)[^\S\n]{0,4}[:：]?\s?([^\s,，|]{2,24})""",
+                """向\s?([^\s,，|]{2,24})\s?(?:付款|转账)""",
+            ),
+            direction = Direction.OUT,
+        ),
+        NotificationRule(
+            id = "wechat_receive",
+            label = "微信收款 / 转账收入",
+            packageNames = setOf(PKG_WECHAT),
+            bodyMustContainAny = listOf("收款成功", "收款到账", "转账到账通知", "已存入零钱"),
+            amountPatterns = listOf(
+                """(?:收款金额|转账金额)[^\d]{0,8}([¥￥]?\s?\d+(?:,\d{3})*(?:\.\d{1,2})?)""",
+                """[¥￥]\s?(\d+(?:,\d{3})*(?:\.\d{1,2})?)""",
+            ),
+            direction = Direction.IN,
+        ),
+        // ---------------- 支付宝 ----------------
+        NotificationRule(
+            id = "alipay_pay",
+            label = "支付宝付款",
+            packageNames = setOf(PKG_ALIPAY),
+            titleMustContainAny = listOf("支付宝", "交易提醒", "账单"),
+            bodyMustContainAny = listOf("成功付款", "付款成功", "已付款", "支付成功", "即时到账交易"),
+            bodyRejectAny = listOf("收款成功", "退款成功"),
+            amountPatterns = listOf(
+                """(?:成功付款|付款成功|已付款|支付成功)([¥￥]?\s?\d+(?:,\d{3})*(?:\.\d{1,2})?)""",
+                """[¥￥]\s?(\d+(?:,\d{3})*(?:\.\d{1,2})?)""",
+                """(\d+(?:,\d{3})*(?:\.\d{1,2})?)\s?元""",
+            ),
+            counterpartyPatterns = listOf(
+                """(?:收款方|商家|商户)[^\S\n]{0,4}[:：]?\s?([^\s,，|]{2,24})""",
+            ),
+            direction = Direction.OUT,
+        ),
+        // ---------------- 银行 App 通用 ----------------
+        NotificationRule(
+            id = "bank_generic_out",
+            label = "银行交易通知（支出）",
+            titleMustContainAny = listOf(),
+            bodyMustContainAny = listOf("消费", "支出", "扣款", "支付成功", "取款", "还款"),
+            bodyRejectAny = listOf("工资", "转入", "收入", "退款"),
+            amountPatterns = listOf(
+                """(?:消费|支出|扣款|支付|取款|还款)(?:人民币)?([¥￥]?\s?\d+(?:,\d{3})*(?:\.\d{1,2})?)""",
+                """[¥￥]\s?(\d+(?:,\d{3})*(?:\.\d{1,2})?)""",
+            ),
+            counterpartyPatterns = listOf("""(?:商户|收款方|收款人)[^\S\n]{0,4}[:：]?\s?([^\s,，|]{2,24})"""),
+            direction = Direction.OUT,
+        ),
+        // ---------------- 短信通道（银行下行短信） ----------------
+        NotificationRule(
+            id = "sms_bank_in",
+            label = "银行短信（收入）",
+            bodyMustContainAny = listOf("工资", "转入", "收入", "存入", "报销"),
+            amountPatterns = listOf("""(?:人民币|¥|￥)?\s?(\d+(?:,\d{3})*(?:\.\d{1,2})?)\s?元?"""),
+            direction = Direction.IN,
+        ),
+    )
+}

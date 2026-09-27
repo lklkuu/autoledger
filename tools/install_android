@@ -1,0 +1,70 @@
+#!/usr/bin/env bash
+# Android 构建环境安装（修正版：走可达镜像 + 容错解压）
+set -u
+BASE=/d/Android
+DL="$BASE/dl"
+mkdir -p "$DL"
+cd "$DL" || exit 1
+
+# ---------- 1) JDK 17（微软版，aka.ms 可达）----------
+echo "[1/4] JDK 17 ..."
+if [ ! -f "$BASE/jdk17/bin/java.exe" ]; then
+  for i in 1 2 3; do
+    curl -L --max-time 1800 --retry 3 --retry-all-errors --ssl-no-revoke \
+      -o jdk17.zip "https://aka.ms/download-jdk/microsoft-jdk-17-windows-x64.zip" && break
+    echo "  JDK 下载第 $i 次失败，重试..."
+  done
+  rm -rf "$BASE/jdk-tmp"
+  python3 -c "import zipfile;zipfile.ZipFile('jdk17.zip').extractall(r'$BASE/jdk-tmp')"
+  # 微软包的根目录名是 jdk-17.x.x+7
+  inner=$(ls -d "$BASE"/jdk-tmp/jdk-17* 2>/dev/null | head -1)
+  rm -rf "$BASE/jdk17"
+  mv "$inner" "$BASE/jdk17"
+fi
+export JAVA_HOME="$BASE/jdk17"
+export PATH="$JAVA_HOME/bin:$PATH"
+"$JAVA_HOME/bin/java" -version 2>&1 | head -1
+
+# ---------- 2) Android cmdline-tools ----------
+echo "[2/4] Android cmdline-tools ..."
+if [ ! -f "$BASE/cmdline-tools/latest/bin/sdkmanager.bat" ]; then
+  if [ ! -f cmdtools.zip ]; then
+    curl -L --max-time 1800 --retry 3 --retry-all-errors --ssl-no-revoke \
+      -o cmdtools.zip "https://dl.google.com/android/repository/commandlinetools-win-11076708_latest.zip"
+  fi
+  rm -rf "$BASE/ct-tmp"
+  python3 -c "import zipfile;zipfile.ZipFile('cmdtools.zip').extractall(r'$BASE/ct-tmp')"
+  # 不同版本的包根目录可能是 cmdline-tools/ 或直接是 bin/，两种都兼容
+  if [ -d "$BASE/ct-tmp/cmdline-tools" ]; then
+    mkdir -p "$BASE/cmdline-tools"
+    rm -rf "$BASE/cmdline-tools/latest"
+    mv "$BASE/ct-tmp/cmdline-tools" "$BASE/cmdline-tools/latest"
+  else
+    mkdir -p "$BASE/cmdline-tools/latest"
+    cp -r "$BASE/ct-tmp/." "$BASE/cmdline-tools/latest/"
+  fi
+fi
+ls "$BASE/cmdline-tools/latest/bin" | head -5
+
+# ---------- 3) SDK 组件 ----------
+echo "[3/4] SDK 授权与组件 ..."
+printf 'y\ny\ny\ny\ny\ny\ny\ny\ny\ny\n' | "$BASE/cmdline-tools/latest/bin/sdkmanager" \
+  --sdk_root="$BASE/sdk" --licenses > /dev/null 2>&1
+"$BASE/cmdline-tools/latest/bin/sdkmanager" --sdk_root="$BASE/sdk" \
+  "platform-tools" "platforms;android-35" "build-tools;35.0.0"
+echo "  SDK 安装退出码: $?"
+ls "$BASE/sdk" 2>/dev/null
+
+# ---------- 4) Gradle 8.9（官方站不可达，走腾讯镜像）----------
+echo "[4/4] Gradle 8.9 ..."
+if [ ! -f "$BASE/gradle-8.9/bin/gradle" ] && [ ! -f "$BASE/gradle-8.9/bin/gradle.bat" ]; then
+  rm -rf "$BASE/gradle-8.9"
+  curl -L --max-time 1800 --retry 3 --retry-all-errors --ssl-no-revoke \
+    -o gradle.zip "https://mirrors.cloud.tencent.com/gradle/gradle-8.9-bin.zip"
+  python3 -c "import zipfile;zipfile.ZipFile('gradle.zip').extractall(r'$BASE')"
+fi
+ls -d "$BASE/gradle-8.9/bin" 2>/dev/null
+
+echo "---- 环境就绪 ----"
+echo "JAVA_HOME=$JAVA_HOME"
+echo "INSTALL_DONE"

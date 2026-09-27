@@ -1,0 +1,123 @@
+package com.autoledger.core.model
+
+/** 一条（已经入账的）资金流水。 */
+enum class TxnType { EXPENSE, INCOME, TRANSFER, REFUND }
+
+/** 流水的处理状态：自动采集进来的默认是 RAW，需人工确认或规则自动放行后转为 CONFIRMED。 */
+enum class TxnStatus { RAW, CONFIRMED, MERGED, IGNORED }
+
+enum class Direction { OUT, IN }
+
+/**
+ * 资金流水领域模型。
+ *
+ * 结构版本号随实体一起落盘（[schemaVersion]），用于备份导入时选择迁移链路；
+ * 旧版本数据不会因为字段新增而读不出来。
+ */
+data class LedgerTransaction(
+    val id: String,
+    /** 有符号，单位「分」；负数为流出。 */
+    val amountMinor: Long,
+    val currency: String = Money.DEFAULT_CURRENCY,
+    val occurredAtMillis: Long,
+    val bookedAtMillis: Long = occurredAtMillis,
+    val type: TxnType,
+    val direction: Direction = if (amountMinor < 0) Direction.OUT else Direction.IN,
+    val counterparty: String = "",
+    val note: String? = null,
+    /** 来源采集插件 ID，见 CaptureSource.id */
+    val sourceId: String,
+    /** 渠道侧标识（通知 key / 短信 _id / CSV 行号），用于追溯与审计 */
+    val sourceRef: String,
+    val accountId: String? = null,
+    val categoryId: String? = null,
+    /** 被判定为内部划转时，成对的两笔共享同一个组 ID */
+    val transferGroupId: String? = null,
+    /** 跨渠道去重指纹 */
+    val fingerprint: String = "",
+    val status: TxnStatus = TxnStatus.CONFIRMED,
+    /** 命中分类规则的置信度，供「待确认」队列排序 */
+    val confidence: Float = 1f,
+    /**
+     * 原始通知/短信正文，**入库前必须用 core-crypto 的 AES-GCM 加密**（base64 密文）。
+     * 之所以单独再加密一次：整库已有 SQLCipher，这一层是防止「一旦有人把 db 文件导出 + 拿到口令」
+     * 后原文直接暴露，同时也是「日志/截图里不会误泄原文」的第二道保险。
+     */
+    val rawTextSealed: String? = null,
+    /**
+     * 扩展属性（JSON 字符串）。用于装标签、地点、票据、分期、报销状态等非索引维度，
+     * 避免每加一个属性都要改表结构。不参与 SQL 过滤/聚合。
+     */
+    val extras: String? = null,
+    /** 该流水归属的订单 ID（订单/退款场景使用） */
+    val orderId: String? = null,
+    /** 由退款产生时，指向退款单 ID */
+    val refundId: String? = null,
+    val schemaVersion: Int = LedgerSchema.CURRENT,
+)
+
+/** 分类归属：支出类目 / 收入类目。 */
+enum class CategoryKind { EXPENSE, INCOME }
+
+data class Category(
+    val id: String,
+    val name: String,
+    val iconKey: String,
+    val colorHex: String,
+    val parentId: String? = null,
+    val sortOrder: Int = 0,
+    val builtIn: Boolean = true,
+    val kind: CategoryKind = CategoryKind.EXPENSE,
+    /** 月度预算（分）；null 表示不设预算 */
+    val monthlyBudgetMinor: Long? = null,
+    val archived: Boolean = false,
+)
+
+enum class AccountKind { BANK_CARD, CREDIT_CARD, WECHAT, ALIPAY, CASH, OTHER }
+
+data class Account(
+    val id: String,
+    val name: String,
+    val kind: AccountKind,
+    val institution: String? = null,
+    /** 用于内部转账识别：卡号后四位 / 手机号 / 微信昵称 / 支付宝账号 */
+    val identifierHints: List<String> = emptyList(),
+    val archived: Boolean = false,
+)
+
+enum class RuleKind { MERCHANT_EXACT, KEYWORD, REGEX, AMOUNT_RANGE }
+
+/** 分类规则。learned=true 表示由用户纠正回流生成，优先级最高。 */
+data class ClassifierRule(
+    val id: String,
+    val kind: RuleKind,
+    val pattern: String,
+    val categoryId: String,
+    val priority: Int = 0,
+    val learned: Boolean = false,
+    val hitCount: Int = 0,
+    val createdAtMillis: Long = 0L,
+)
+
+/** 内部划转的类型。非 NONE 的一律不计入消费统计。 */
+enum class TransferKind { NONE, TOPUP, WITHDRAW, CREDIT_REPAYMENT, SELF_TRANSFER, REFUND }
+
+/**
+ * 接入采集渠道的原始数据信封。
+ * 归一化流水线把它解析成 [LedgerTransaction]，解析失败也不丢，进入待确认队列。
+ */
+data class RawEnvelope(
+    val envelopeId: String,
+    val sourceId: String,
+    val sourceRef: String,
+    val occurredAtMillis: Long,
+    val rawText: String,
+    val counterpartyHint: String? = null,
+    val amountHint: Long? = null,
+    val packageName: String? = null,
+    /**
+     * 显式类型提示：采集方已经知道这笔是什么类型时给出（手动录入退款、账单里带明确类型列）。
+     * 为空则按金额正负推断。优先级最高，但仍会被"内部划转识别"覆盖为 TRANSFER/REFUND。
+     */
+    val explicitType: TxnType? = null,
+)

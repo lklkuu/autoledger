@@ -1,0 +1,287 @@
+package com.autoledger.app.di
+
+import android.content.Context
+import com.autoledger.app.UserSettings
+import com.autoledger.core.backup.BackupManager
+import com.autoledger.core.crypto.CryptoBox
+import com.autoledger.core.crypto.KeystoreKeyProvider
+import com.autoledger.core.crypto.PassphraseVault
+import com.autoledger.core.crypto.SqlCipherSupport
+import com.autoledger.core.database.LedgerDatabase
+import com.autoledger.core.database.LedgerDatabaseFactory
+import com.autoledger.core.database.RoomRuleSource
+import com.autoledger.core.database.repository.RoomLedgerRepository
+import com.autoledger.core.database.DefaultSeed
+import com.autoledger.core.database.sync.CloudSyncClient
+import com.autoledger.core.database.sync.NoopCloudSyncClient
+import com.autoledger.core.model.LedgerRepository
+import com.autoledger.core.model.MetricProvider
+import com.autoledger.feature.capture.CaptureDispatcher
+import com.autoledger.feature.capture.CaptureRegistry
+import com.autoledger.feature.capture.CaptureSource
+import com.autoledger.feature.capture.IngestPipeline
+import com.autoledger.feature.capture.bill.BillImportCaptureSource
+import com.autoledger.feature.capture.manual.ManualCaptureSource
+import com.autoledger.feature.capture.notify.NotificationCaptureSource
+import com.autoledger.feature.capture.sms.SmsCaptureSource
+import com.autoledger.feature.classify.AmountHeuristicClassifier
+import com.autoledger.feature.classify.CompositeClassifier
+import com.autoledger.feature.classify.CorrectionLearner
+import com.autoledger.feature.classify.DefaultRulePack
+import com.autoledger.feature.classify.KeywordClassifier
+import com.autoledger.feature.classify.MemoryClassifier
+import com.autoledger.feature.dedup.DefaultTransferDetector
+import com.autoledger.feature.dedup.LedgerDuplicateResolver
+import com.autoledger.feature.dedup.TransferPairMatcher
+import com.autoledger.feature.stats.CategoryShareMetric
+import com.autoledger.feature.stats.ChannelShareMetric
+import com.autoledger.feature.stats.MerchantTopMetric
+import com.autoledger.feature.stats.MetricRegistry
+import com.autoledger.feature.stats.MonthlyTrendMetric
+import com.autoledger.feature.stats.TimeCostMetric
+import com.autoledger.app.notif.NotificationAccessGate
+import kotlinx.coroutines.CoroutineExceptionHandler
+import kotlinx.coroutines.CoroutineScope
+import kotlinx.coroutines.Dispatchers
+import kotlinx.coroutines.SupervisorJob
+import kotlinx.coroutines.flow.MutableStateFlow
+import kotlinx.coroutines.flow.StateFlow
+import kotlinx.coroutines.flow.asStateFlow
+import kotlinx.coroutines.launch
+
+/**
+ * 依赖装配中心（手动 DI）。
+ *
+ * 选用手动装配而不是 Hilt： codebase 多模块 + KSP(Room) + Compose 编译链路已经够复杂，
+ * 再叠 Hilt 只会增加"某两个插件版本不搭就整个工程编译不过"的概率，
+ * 而这里的**装配清单本身就是一份可读性最好的架构文档** —— 谁依赖谁、可以替换谁，一目了然。
+ */
+class AppContainer(context: Context) {
+
+    /** 启动错误：后台初始化失败时记录到这里，由 UI 渲染成友好错误页，而不是让进程崩溃。 */
+    data class StartupError(val message: String, val cause: Throwable? = null)
+
+    private val _startupError = MutableStateFlow<StartupError?>(null)
+    val startupError: StateFlow<StartupError?> = _startupError.asStateFlow()
+
+    /**
+     * 存储状态告知（**非阻塞**）：当"放弃加密、改用明文"时，必须让用户知道，
+     * 绝不再做「静默降级」——当初正是静默降级把"加密从未生效"掩盖了很久。
+     */
+    data class StorageNotice(val title: String, val message: String)
+
+    private val _storageNotice = MutableStateFlow<StorageNotice?>(null)
+    val storageNotice: StateFlow<StorageNotice?> = _storageNotice.asStateFlow()
+
+    // 后台协程异常兜底：任何未捕获异常都转为可见错误，绝不带崩进程。
+    private val exceptionHandler = CoroutineExceptionHandler { _, throwable ->
+        android.util.Log.e("AutoLedger", "后台任务异常", throwable)
+        _startupError.value = StartupError(throwable.message ?: "发生未知错误", throwable)
+    }
+
+    val appScope = CoroutineScope(SupervisorJob() + Dispatchers.Default + exceptionHandler)
+
+    /** 只保留 applicationContext，避免误持有 Activity */
+    val applicationContext: Context = context.applicationContext
+
+    // ---------------- 基础设施 ----------------
+    // 惰性初始化：Keystore 密钥生成 + 口令保险箱解封都有系统级 IO，
+    // 若在 Application.onCreate（主线程）里同步执行，冷启动可能 ANR、Keystore 异常时直接崩。
+    private val passphraseVault by lazy { PassphraseVault(applicationContext) }
+    val cryptoBox: CryptoBox by lazy { CryptoBox(KeystoreKeyProvider().masterKey()) }
+
+    /** true 时降级为明文库。只有用户在设置页明确允许才会变 */
+    @Volatile var plaintextFallback = false
+        private set
+
+    /** 当前数据库是否处于整库加密状态（供设置页展示真实的隐私状态）。 */
+    @Volatile var isEncryptedAtRest: Boolean = false
+        private set
+
+    val database: LedgerDatabase by lazy { openDatabase() }
+
+    /**
+     * 打开数据库，带**明确的降级策略**（不再静默）：
+     * - 已决定明文 → 直接明文库，并发布告知。
+     * - 需要加密：**最多尝试 [MAX_ENCRYPTION_ATTEMPTS] 次**；
+     *   每次成功后还要过「真的加密了吗」的运行期自检（防回归护栏）。
+     * - 曾加密过（有旧数据）→ 任何失败都必须显式报错，绝不降级（否则旧数据读不到 = 判死刑）。
+     * - 连续失败达上限 → 放弃加密、转明文，并**明确告知用户**：数据是明文存储，但原文已脱敏。
+     */
+    private fun openDatabase(): LedgerDatabase {
+        val wantEncryption = !PassphraseVault.isPlaintextFallback(applicationContext)
+        val hadEncryptedData = PassphraseVault.hasStoredPassphrase(applicationContext)
+
+        if (!wantEncryption) {
+            isEncryptedAtRest = false
+            _storageNotice.value = PLAINTEXT_NOTICE
+            return LedgerDatabaseFactory.create(applicationContext, null)
+        }
+
+        var lastError: Throwable? = null
+        var failures = 0
+        repeat(MAX_ENCRYPTION_ATTEMPTS) { attempt ->
+            try {
+                // 必须传 context：SQLCipher 要先 System.loadLibrary("sqlcipher")
+                val factory = SqlCipherSupport.openHelperFactory(applicationContext, passphraseVault.passphrase())
+                val db = LedgerDatabaseFactory.create(applicationContext, factory)
+
+                // 防回归护栏：光"没抛异常"不算数，必须验证文件头确实被加密了
+                if (SqlCipherSupport.isPlaintextDatabase(applicationContext)) {
+                    throw IllegalStateException("数据库文件实际为明文 —— SQLCipher 未真正接管（疑似静默降级）")
+                }
+
+                isEncryptedAtRest = true
+                PassphraseVault.clearEncryptionFailures(applicationContext)
+                _storageNotice.value = null
+                return db
+            } catch (e: Throwable) {
+                lastError = e
+                failures = PassphraseVault.recordEncryptionFailure(applicationContext)
+                android.util.Log.w("AutoLedger", "加密初始化失败（第 ${attempt + 1}/$MAX_ENCRYPTION_ATTEMPTS 次）", e)
+                if (hadEncryptedData) {
+                    // 曾经加密过：降级会读不到旧数据，必须显式报错，绝不静默破坏数据。
+                    throw DatabaseUnavailableException("无法解密本地数据（数据未被改动）：${e.message}", e)
+                }
+            }
+        }
+
+        // 连续失败已达上限：放弃加密。但**必须明确告知用户**，不再是静默降级。
+        android.util.Log.e("AutoLedger", "加密连续失败 $failures 次，放弃加密转为明文存储", lastError)
+        PassphraseVault.setPlaintextFallback(applicationContext, true)
+        isEncryptedAtRest = false
+        _storageNotice.value = PLAINTEXT_NOTICE
+        return LedgerDatabaseFactory.create(applicationContext, null)
+    }
+
+    val repository: RoomLedgerRepository by lazy { RoomLedgerRepository(database) }
+
+    /** 退款持久化（单事务落库 + 幂等 + CAS）；订单/退款子系统入口。 */
+    val refundRepository: com.autoledger.core.database.repository.RefundRepository by lazy {
+        com.autoledger.core.database.repository.RefundRepository(database, repository)
+    }
+
+    /** 设置：Room 单行存储，金额以「分」存，随账本备份导出。惰性初始化避免启动期触碰数据库。 */
+    val settings: UserSettings by lazy { UserSettings(database.settingsDao(), appScope).also { it.init() } }
+
+    /** 极简导航状态；放在容器里是为了让旋转／重建 Activity 后仍停在同一屏 */
+    val nav = com.autoledger.app.ui.nav.NavState()
+
+    /** 通知使用权引导状态机：负责"何时提示、何时闭嘴" */
+    val notificationAccess: NotificationAccessGate by lazy { NotificationAccessGate(applicationContext) }
+
+    val backupManager: BackupManager by lazy { BackupManager(database, repository) }
+
+    /** 云同步：现在是无操作的占位实现，换掉这一行即可接入真实后端 */
+    val cloudSyncClient: CloudSyncClient = NoopCloudSyncClient
+
+    // ---------------- 能力插件 ----------------
+    val captureSources: List<CaptureSource> = listOf(
+        NotificationCaptureSource(),
+        SmsCaptureSource(),
+        BillImportCaptureSource(),
+        ManualCaptureSource(),
+    )
+    val captureRegistry = CaptureRegistry(captureSources)
+
+    val channelNames: Map<String, String> = mapOf(
+        "notify" to "支付通知",
+        "sms" to "银行短信",
+        "bill_import" to "账单导入",
+        "manual" to "手动补记",
+    )
+
+    // 这些装配依赖 database/repository，必须惰性：否则会在 Application 构造期（主线程）触发
+    // 加密建库，Keystore/SQLCipher 任何异常都会导致"一打开就闪退"。
+    /** 规则读写入口：分类引擎只依赖 RuleSource 契约，实现可替换。 */
+    val ruleSource by lazy { RoomRuleSource(database.classifierRuleDao()) }
+
+    val classifier by lazy {
+        CompositeClassifier(
+            listOf(
+                MemoryClassifier(ruleSource),
+                KeywordClassifier(ruleSource),
+                AmountHeuristicClassifier(),
+            )
+        )
+    }
+
+    val transferDetector = DefaultTransferDetector()
+    val duplicateResolver by lazy { LedgerDuplicateResolver(repository) }
+    val correctionLearner by lazy { CorrectionLearner(ruleSource) }
+    val pairMatcher = TransferPairMatcher
+
+    val ingestPipeline: IngestPipeline by lazy {
+        IngestPipeline(
+            repository = repository as LedgerRepository,
+            duplicateResolver = duplicateResolver,
+            transferDetector = transferDetector,
+            classifier = classifier,
+            cryptoBox = cryptoBox,
+        )
+    }
+
+    val metricRegistry: MetricRegistry by lazy {
+        val providers: List<MetricProvider> = listOf(
+            TimeCostMetric { settings.wage.value },
+            CategoryShareMetric(),
+            MerchantTopMetric(),
+            MonthlyTrendMetric(),
+            ChannelShareMetric(channelNames),
+        )
+        MetricRegistry(providers)
+    }
+
+    fun bootstrap() {
+        appScope.launch {
+            try {
+                // 后台预热：在 IO 线程先把加密库与设置建好，避免 UI 首次触碰时主线程兜底加载。
+                runCatching { database }
+                runCatching { settings }
+                // 出厂分类与规则只在首次生效：upsert 是按主键覆盖，重复启动不会累加
+                repository.upsertCategories(DefaultSeed.categories())
+                ruleSource.upsertRules(DefaultRulePack.rules())
+                startCaptureLoop()
+            } catch (e: Throwable) {
+                // 初始化失败不崩进程，转为可见错误；用户可据此判断是加密库/存储问题。
+                _startupError.value = StartupError(e.message ?: "初始化失败", e)
+            }
+        }
+    }
+
+    /** 供 UI 在错误页点击「重试」时调用 */
+    fun retryInit() {
+        if (_startupError.value != null) {
+            _startupError.value = null
+            bootstrap()
+        }
+    }
+
+    /** 订阅采集总线：任何渠道来的信封都在这里进流水线 */
+    private fun startCaptureLoop() {
+        appScope.launch {
+            CaptureDispatcher.subscribe { envelope ->
+                runCatching { ingestPipeline.ingest(envelope) }
+            }
+        }
+    }
+
+    companion object {
+        /** 加密初始化最多尝试次数；超过则放弃加密并明确告知用户（不再静默降级）。 */
+        private const val MAX_ENCRYPTION_ATTEMPTS = 3
+
+        /**
+         * 放弃加密后的告知。措辞如实：库文件本身不加密，但通知/短信原文仍经 Keystore 密封存储。
+         */
+        private val PLAINTEXT_NOTICE = StorageNotice(
+            title = "本机数据以明文存储",
+            message = "加密初始化连续失败 3 次，已放弃加密：数据库文件本身不再加密。\n\n" +
+                "但通知 / 短信原文仍经系统密钥（Keystore）密封后存储，不会以明文出现在数据库里；" +
+                "商户名、金额、分类等账目字段则为明文。\n\n" +
+                "建议你：重要场景下改用应用内「导出 JSON（加密）」备份，并把备份文件另行保管。",
+        )
+    }
+}
+
+/** 加密存储/数据库不可用。携带可读原因，供 UI 展示与排查。 */
+class DatabaseUnavailableException(message: String, cause: Throwable?) : RuntimeException(message, cause)
