@@ -85,6 +85,8 @@ internal fun Account.toEntity(): AccountEntity = AccountEntity(
     archived = archived,
 )
 
-/** 供 finance 层复用的类型判定 */
+/** 供 finance 层复用的类型判定：被合并的、或被用户「忽略」的流水都不算消费。 */
 internal fun LedgerTransaction.isConsumption(): Boolean =
-    type == TxnType.EXPENSE && status != com.autoledger.core.model.TxnStatus.MERGED
+    type == TxnType.EXPENSE &&
+        status != com.autoledger.core.model.TxnStatus.MERGED &&
+        status != com.autoledger.core.model.TxnStatus.IGNORED

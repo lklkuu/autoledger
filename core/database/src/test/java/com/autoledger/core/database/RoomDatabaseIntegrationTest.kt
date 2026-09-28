@@ -109,6 +109,30 @@ class RoomDatabaseIntegrationTest {
     }
 
     @Test
+    fun `ignored rows disappear from every ledger view (real db)`() = runBlocking {
+        // P1：用户在待确认队列点「忽略这笔」后，该行必须从账单列表 / 时间窗口 / 订阅集合里消失。
+        // 只改 observeRaw（status='RAW'）是不够的 —— listAll / listSince / listRange /
+        // observeAll / observeSince 此前只排除 MERGED，被忽略的流水仍会被算进账单与统计。
+        val db = open()
+        try {
+            val dao = db.transactionDao()
+            val t0 = 1_700_000_000_000L
+            dao.upsert(txn("keep", t0, TxnStatus.CONFIRMED))
+            dao.upsert(txn("merged", t0 + 1, TxnStatus.MERGED))
+            dao.upsert(txn("ignored", t0 + 2, TxnStatus.IGNORED))
+
+            assertEquals(listOf("keep"), dao.listAll().map { it.id }, "被忽略的流水不得出现在账单列表")
+            assertEquals(listOf("keep"), dao.listSince(t0).map { it.id })
+            assertEquals(listOf("keep"), dao.listRange(t0, t0 + 100).map { it.id })
+            assertEquals(listOf("keep"), dao.observeAll().first().map { it.id })
+            assertEquals(listOf("keep"), dao.observeSince(t0).first().map { it.id })
+            assertEquals(listOf("keep"), dao.observeRange(t0, t0 + 100).first().map { it.id })
+        } finally {
+            db.close()
+        }
+    }
+
+    @Test
     fun `raw count flow emits again after a write on a real database`() = runBlocking {
         val db = open()
         try {

@@ -56,6 +56,21 @@ class ExpenseMathTest {
     }
 
     @Test
+    fun `ignored records are excluded from both sides`() {
+        // P1：「忽略这笔」= 这笔不算账。被忽略的流水必须从统计里消失，
+        // 而不只是移出待确认队列。
+        val list = listOf(
+            expense("e1", 10_000),
+            expense("e2", 99_000).copy(status = TxnStatus.IGNORED),
+            refund("r1", 4_000),
+            refund("r2", 88_000).copy(status = TxnStatus.IGNORED),
+        )
+        assertEquals(10_000L, ExpenseMath.grossExpenseMinor(list), "被忽略的支出不得计入毛支出")
+        assertEquals(4_000L, ExpenseMath.refundMinor(list), "被忽略的退款不得计入退款")
+        assertEquals(6_000L, ExpenseMath.netExpenseMinor(list))
+    }
+
+    @Test
     fun `net can go negative when refunds exceed expenses`() {
         val list = listOf(expense("e1", 1_000), refund("r1", 3_000))
         assertEquals(-2_000L, ExpenseMath.netExpenseMinor(list), "异常数据应暴露为负数，而不是被夹成 0")

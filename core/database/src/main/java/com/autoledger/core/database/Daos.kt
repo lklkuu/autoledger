@@ -11,6 +11,16 @@ import com.autoledger.core.model.refund.OrderStatus
 import com.autoledger.core.model.refund.RefundStatus
 import kotlinx.coroutines.flow.Flow
 
+/**
+ * 流水表访问。
+ *
+ * **状态过滤约定**：所有「流水集合」查询都排除 `MERGED`（已被合并，不重复计）
+ * 与 `IGNORED`（用户在待确认队列里点了「忽略这笔」= 这笔不算账）。
+ * 只排除 MERGED 是不够的 —— 被忽略的流水会从账单列表与支出统计里消失，
+ * 否则「忽略」就只是把它移出待确认队列，账单与汇总仍会把它算进去。
+ *
+ * 例外：`observeRaw` / `observeRawCount` 只看 `RAW`，天然不包含 IGNORED。
+ */
 @Dao
 interface TransactionDao {
 
@@ -26,7 +36,7 @@ interface TransactionDao {
     @Query(
         """
         SELECT * FROM transactions
-        WHERE occurredAtMillis >= :fromMillis AND status <> 'MERGED'
+        WHERE occurredAtMillis >= :fromMillis AND status <> 'MERGED' AND status <> 'IGNORED'
         ORDER BY occurredAtMillis DESC
         """
     )
@@ -35,23 +45,23 @@ interface TransactionDao {
     @Query(
         """
         SELECT * FROM transactions
-        WHERE occurredAtMillis >= :fromMillis AND status <> 'MERGED'
+        WHERE occurredAtMillis >= :fromMillis AND status <> 'MERGED' AND status <> 'IGNORED'
         ORDER BY occurredAtMillis DESC
         """
     )
     suspend fun listSince(fromMillis: Long): List<TransactionEntity>
 
-    @Query("SELECT * FROM transactions WHERE status <> 'MERGED' ORDER BY occurredAtMillis DESC")
+    @Query("SELECT * FROM transactions WHERE status <> 'MERGED' AND status <> 'IGNORED' ORDER BY occurredAtMillis DESC")
     suspend fun listAll(): List<TransactionEntity>
 
     /** B4：全量流水的实时订阅（账单页）。 */
-    @Query("SELECT * FROM transactions WHERE status <> 'MERGED' ORDER BY occurredAtMillis DESC")
+    @Query("SELECT * FROM transactions WHERE status <> 'MERGED' AND status <> 'IGNORED' ORDER BY occurredAtMillis DESC")
     fun observeAll(): Flow<List<TransactionEntity>>
 
     @Query(
         """
         SELECT * FROM transactions
-        WHERE occurredAtMillis BETWEEN :fromMillis AND :toMillis AND status <> 'MERGED'
+        WHERE occurredAtMillis BETWEEN :fromMillis AND :toMillis AND status <> 'MERGED' AND status <> 'IGNORED'
         ORDER BY occurredAtMillis DESC
         """
     )
@@ -61,7 +71,7 @@ interface TransactionDao {
     @Query(
         """
         SELECT * FROM transactions
-        WHERE occurredAtMillis BETWEEN :fromMillis AND :toMillis AND status <> 'MERGED'
+        WHERE occurredAtMillis BETWEEN :fromMillis AND :toMillis AND status <> 'MERGED' AND status <> 'IGNORED'
         ORDER BY occurredAtMillis DESC
         """
     )
@@ -78,6 +88,7 @@ interface TransactionDao {
           AND abs(occurredAtMillis - :anchor) <= :windowMillis
           AND id <> :excludeId
           AND status <> 'MERGED'
+          AND status <> 'IGNORED'
         """
     )
     suspend fun findByFingerprintNear(fingerprint: String, anchor: Long, windowMillis: Long, excludeId: String): List<TransactionEntity>

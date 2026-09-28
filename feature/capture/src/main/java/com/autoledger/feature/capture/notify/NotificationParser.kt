@@ -39,6 +39,7 @@ class NotificationParser(
                 else -> rule.packageNames == null
             }
         }
+        // haystack（title + 正文）：只用于**关键词命中与拒绝判定**。
         val haystack = "$title\n$body"
         val hit = candidates.firstOrNull { rule ->
             val bodyOk = rule.bodyMustContainAny.isEmpty() || rule.bodyMustContainAny.any { haystack.contains(it) }
@@ -47,7 +48,12 @@ class NotificationParser(
             bodyOk && titleOk && notRejected
         } ?: return null
 
-        val amount = extractFirst(hit.amountPatterns, haystack)?.toMinor()
+        // 金额**只从正文提取**，不看 title：
+        // 短信渠道传进来的 title 其实是**发件号码**（95555 / 95588 / 1069xxx），
+        // 一旦把 title 混入金额搜索范围，发件号码就会被当成金额（收入虚增约 19 倍）。
+        // 与之配套，各规则的金额正则也必须带明确上下文（见 DefaultNotificationRules 的注释）。
+        // 取不到金额时宁可为 null 进「待确认」，也绝不瞎猜 —— 符合本解析器的设计原则 1。
+        val amount = extractFirst(hit.amountPatterns, body)?.toMinor()
         val signed = when (hit.direction) {
             Direction.OUT -> amount?.let { -kotlin.math.abs(it) }
             Direction.IN -> amount?.let { kotlin.math.abs(it) }

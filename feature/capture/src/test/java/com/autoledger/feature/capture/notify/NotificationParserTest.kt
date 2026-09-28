@@ -143,4 +143,52 @@ class NotificationParserTest {
     fun `unrelated notification is not parsed`() {
         assertNull(parser.parse(DefaultNotificationRules.PKG_WECHAT, "微信", "你有一条新消息"))
     }
+
+    // ------------------------------------------------------------ 短信：金额不得取自发件号码 / 尾号
+
+    @Test
+    fun `salary sms amount comes from the body not the sender number`() {
+        // P0：短信渠道的 title 其实是发件号码（95555）。若把 title 混入金额搜索范围，
+        // 金额会被记成 95555.00（收入虚增约 19 倍）。
+        val r = parser.parse("sms:inbox", "95555", "工资入账 5000元")
+        assertNotNull(r)
+        assertEquals("sms_bank_in", r.ruleId)
+        assertEquals(500_000L, r.amountMinor, "必须取正文的 5000 元，而不是发件号码 95555")
+        assertEquals(Direction.IN, r.direction)
+    }
+
+    @Test
+    fun `salary sms with another sender and decimals is parsed correctly`() {
+        val r = parser.parse("sms:inbox", "95588", "工资入账5000.00元")
+        assertNotNull(r)
+        assertEquals("sms_bank_in", r.ruleId)
+        assertEquals(500_000L, r.amountMinor, "工行发件号码 95588 同样不得被当成金额")
+        assertEquals(Direction.IN, r.direction)
+    }
+
+    @Test
+    fun `sms card tail digits are not taken as the amount`() {
+        // 尾号 / 卡号数字极常见：金额正则必须带明确上下文（元 / 币符 / 收入关键词）。
+        val r = parser.parse("sms:inbox", "95555", "您尾号1234账户工资入账5000元")
+        assertNotNull(r)
+        assertEquals("sms_bank_in", r.ruleId)
+        assertEquals(500_000L, r.amountMinor, "必须取 5000，而不是尾号 1234")
+    }
+
+    @Test
+    fun `real expense sms still parses after the amount scope change`() {
+        val r = parser.parse("sms:inbox", "95555", "您尾号6602卡9月27日23:52支出(消费财付通-2zero首饰屋)39.80元")
+        assertNotNull(r, "真实消费短信不得被误伤")
+        assertEquals("bank_generic_out", r.ruleId)
+        assertEquals(-3_980L, r.amountMinor)
+    }
+
+    @Test
+    fun `real refund sms still parses after the amount scope change`() {
+        val r = parser.parse("sms:inbox", "95555", "退款到账 99元")
+        assertNotNull(r)
+        assertEquals("refund_generic", r.ruleId)
+        assertEquals(9_900L, r.amountMinor)
+        assertEquals(TxnType.REFUND, r.explicitType)
+    }
 }
