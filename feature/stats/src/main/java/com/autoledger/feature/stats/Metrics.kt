@@ -6,8 +6,10 @@ import com.autoledger.core.model.LedgerRepository
 import com.autoledger.core.model.LedgerTransaction
 import com.autoledger.core.model.MetricProvider
 import com.autoledger.core.model.MetricResult
+import com.autoledger.core.model.Money
 import com.autoledger.core.model.TimeRange
 import com.autoledger.core.model.WageProfile
+import com.autoledger.core.model.formatYuan
 import com.autoledger.core.model.platform.PlatformCatalog
 
 /**
@@ -158,7 +160,10 @@ class TimeCostMetric(private val profileProvider: () -> WageProfile) : MetricPro
             title = title,
             subtitle = "按真实时薪 ¥${"%.1f".format(profile.realHourly)}/时 换算",
             valueMinor = totalMinor,
-            secondaryText = "≈ $hoursText 小时工作时间",
+            // 主指标是「时间」而不是钱：这张卡片的灵魂是「这笔钱 = 你多少小时的人生」，
+            // 故大字显示工时，折算金额退到次要位置。
+            primaryText = "≈ $hoursText 小时",
+            secondaryText = "折合 ¥${Money(totalMinor).formatYuan(withSign = false)}",
             iconKey = "clock",
         )
     }

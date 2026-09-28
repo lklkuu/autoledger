@@ -214,8 +214,15 @@ class MetricsTest {
         ))
         val result = TimeCostMetric { profile }.compute(range(), r) as MetricResult.Scalar
         assertEquals(15_000L, result.valueMinor)
-        // 时薪 75 元 -> 150 元 = 2 小时
-        assertTrue(result.secondaryText!!.contains("2.0"), "150 元 @75元/时 应为 2.0 小时，实际 ${result.secondaryText}")
+        // 时薪 75 元 -> 150 元 = 2 小时。主指标是**时间**（大字显示），金额退到次要文本。
+        assertTrue(
+            result.primaryText!!.contains("2.0"),
+            "150 元 @75元/时 应为 2.0 小时，实际 ${result.primaryText}",
+        )
+        assertTrue(
+            result.secondaryText!!.contains("150"),
+            "折算金额应在次要文本里，实际 ${result.secondaryText}",
+        )
     }
 
     @Test
@@ -224,8 +231,8 @@ class MetricsTest {
         val r = FakeLedgerRepository(listOf(Fixtures.txn("a", -1_000, occurredAtMillis = t0)))
         val result = TimeCostMetric { idle }.compute(range(), r) as MetricResult.Scalar
         assertEquals(1_000L, result.valueMinor)
-        assertTrue(!result.secondaryText!!.contains("NaN"), "时薪为 0 时不得出现 NaN")
-        assertTrue(!result.secondaryText!!.contains("Infinity"))
+        assertTrue(!result.primaryText!!.contains("NaN"), "时薪为 0 时不得出现 NaN")
+        assertTrue(!result.primaryText!!.contains("Infinity"))
     }
 
     @Test

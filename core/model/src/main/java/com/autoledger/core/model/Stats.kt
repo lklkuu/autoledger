@@ -50,6 +50,13 @@ sealed interface MetricResult {
         override val title: String,
         override val subtitle: String? = null,
         val valueMinor: Long,
+        /**
+         * 主数值的展示文本，非空时**优先于** [valueMinor]。
+         *
+         * 用于「花掉的时间」这类**主指标不是金额**的卡片：用户要看的是「≈ 0.8 小时」，
+         * 而不是它折算出来的钱。金额退到 [secondaryText] 作为补充。
+         */
+        val primaryText: String? = null,
         val secondaryText: String? = null,
         val iconKey: String? = null,
     ) : MetricResult

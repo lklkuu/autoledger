@@ -166,13 +166,14 @@ fun EmptyHint(text: String, iconKey: String = "spark") {
 
 /** 一张统计卡片：Render 逻辑按 [MetricResult] 类型分发，新增维度类型时这里加一个分支即可 */
 @Composable
-fun MetricCard(result: MetricResult, modifier: Modifier = Modifier) {
+fun MetricCard(result: MetricResult, modifier: Modifier = Modifier.fillMaxWidth()) {
     AppCard(modifier) {
         when (result) {
             is MetricResult.Scalar -> {
                 Text(result.title, style = MaterialTheme.typography.titleMedium)
                 Text(
-                    "¥${result.valueMinor.yuan()}",
+                    // 主指标不一定是钱：「花掉的时间」要显示「≈ 0.8 小时」而非折算金额。
+                    result.primaryText ?: "¥${result.valueMinor.yuan()}",
                     style = MaterialTheme.typography.headlineSmall,
                     color = LedgerPalette.PositiveStrong,
                 )
