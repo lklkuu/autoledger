@@ -8,6 +8,7 @@ import com.autoledger.core.model.Category
 import com.autoledger.core.model.Direction
 import com.autoledger.core.model.LedgerTransaction
 import com.autoledger.core.model.TxnType
+import com.autoledger.core.model.platform.PlatformSource
 
 private const val HINT_SEP = "\u0001"
 
@@ -20,6 +21,9 @@ internal fun LedgerTransaction.toEntity(): TransactionEntity = TransactionEntity
     type = type,
     direction = if (amountMinor < 0) Direction.OUT else Direction.IN,
     counterparty = counterparty,
+    platformId = platformId,
+    platformConfidence = platformConfidence,
+    platformSource = platformSource.name,
     note = note,
     sourceId = sourceId,
     sourceRef = sourceRef,
@@ -45,6 +49,9 @@ internal fun TransactionEntity.toDomain(): LedgerTransaction = LedgerTransaction
     type = type,
     direction = direction,
     counterparty = counterparty,
+    platformId = platformId,
+    platformConfidence = platformConfidence,
+    platformSource = runCatching { PlatformSource.valueOf(platformSource) }.getOrDefault(PlatformSource.AUTO),
     note = note,
     sourceId = sourceId,
     sourceRef = sourceRef,

@@ -1,5 +1,8 @@
 package com.autoledger.core.model
 
+import com.autoledger.core.model.platform.PlatformCatalog
+import com.autoledger.core.model.platform.PlatformSource
+
 /** 一条（已经入账的）资金流水。 */
 enum class TxnType { EXPENSE, INCOME, TRANSFER, REFUND }
 
@@ -24,8 +27,26 @@ data class LedgerTransaction(
     val type: TxnType,
     val direction: Direction = if (amountMinor < 0) Direction.OUT else Direction.IN,
     val counterparty: String = "",
+    /**
+     * 消费平台（业务维度）：这笔消费发生在微信 / 支付宝 / 美团… 存**稳定 ID**，不存中文名。
+     * 展示名一律走 [com.autoledger.core.model.platform.PlatformCatalog.displayNameOf]。
+     */
+    val platformId: String = PlatformCatalog.UNKNOWN_ID,
+    /** 平台识别置信度 0~1，驱动 UI 的「不确定」角标。用户手选时置 1f。 */
+    val platformConfidence: Float = 0f,
+    /**
+     * 平台取值来源。[PlatformSource.USER] 是权威标记：
+     * 后续任何自动流程（重解析、合并继承、再次 ingest）**都不得改写 platformId**。
+     */
+    val platformSource: PlatformSource = PlatformSource.AUTO,
     val note: String? = null,
-    /** 来源采集插件 ID，见 CaptureSource.id */
+    /** 来源采集插件 ID，见 CaptureSource.id
+     *
+     * ⚠️ **这是「采集来源」技术追溯字段，不是消费平台（业务字段），勿混用。**
+     * 它回答的是「这条记录是怎么抓到的」（通知 / 短信 / 账单导入），
+     * 而「这笔钱花在哪个平台上」请看 [platformId]。
+     * 它只应在「排查为什么没记录」这类审计场景展示，不作为统计维度。
+     */
     val sourceId: String,
     /** 渠道侧标识（通知 key / 短信 _id / CSV 行号），用于追溯与审计 */
     val sourceRef: String,

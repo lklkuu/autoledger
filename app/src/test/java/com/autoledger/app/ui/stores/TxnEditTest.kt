@@ -3,6 +3,7 @@ package com.autoledger.app.ui.stores
 import com.autoledger.core.model.LedgerTransaction
 import com.autoledger.core.model.TxnStatus
 import com.autoledger.core.model.TxnType
+import com.autoledger.core.model.platform.PlatformSource
 import kotlin.test.Test
 import kotlin.test.assertEquals
 import kotlin.test.assertNull
@@ -66,5 +67,34 @@ class TxnEditTest {
         )
         assertEquals("fp:星巴克", edited.fingerprint, "补齐商户名后必须重算指纹")
         assertEquals("星巴克", seen?.counterparty, "指纹应基于编辑后的流水计算")
+    }
+
+    // ------------------------------------------------------------ 消费平台（用户手选 = 权威值）
+
+    @Test
+    fun `changing the platform marks it USER and raises confidence`() {
+        val original = txn(counterparty = "美团外卖").copy(
+            platformId = "unknown",
+            platformConfidence = 0f,
+            platformSource = PlatformSource.AUTO,
+        )
+        val edited = applyTxnEdit(original, "美团外卖", null, platformId = "meituan", fingerprintOf = { "fp" })
+
+        assertEquals("meituan", edited.platformId)
+        assertEquals(PlatformSource.USER, edited.platformSource, "用户改过 ⇒ 权威标记，自动流程不得覆盖")
+        assertEquals(1f, edited.platformConfidence)
+    }
+
+    @Test
+    fun `keeping the platform leaves its source untouched`() {
+        val original = txn(counterparty = "美团外卖").copy(
+            platformId = "meituan",
+            platformConfidence = 0.6f,
+            platformSource = PlatformSource.AUTO,
+        )
+        val edited = applyTxnEdit(original, "美团外卖", null, platformId = "meituan", fingerprintOf = { "fp" })
+
+        assertEquals(PlatformSource.AUTO, edited.platformSource, "没改平台就不该被标成 USER")
+        assertEquals(0.6f, edited.platformConfidence)
     }
 }

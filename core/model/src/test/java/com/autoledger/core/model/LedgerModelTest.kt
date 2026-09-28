@@ -60,7 +60,9 @@ class LedgerModelTest {
     @Test
     fun `schema versions are wired to the same constant`() {
         assertEquals(LedgerSchema.BACKUP_VERSION, LedgerSchema.CURRENT)
-        assertEquals(4, LedgerSchema.DATABASE_VERSION)
+        // v5 = 消费平台字段（platform_id / platform_confidence / platform_source）落地。
+        // 改这个值必须同时提供显式 Migration，否则会退回到 destructive fallback 清库。
+        assertEquals(5, LedgerSchema.DATABASE_VERSION)
         assertEquals("ledgerbak", LedgerSchema.BACKUP_EXTENSION)
     }
 

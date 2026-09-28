@@ -14,6 +14,7 @@ import com.autoledger.core.model.LedgerRepository
 import com.autoledger.core.model.LedgerTransaction
 import com.autoledger.core.model.TxnStatus
 import com.autoledger.core.model.TxnType
+import com.autoledger.core.model.platform.PlatformSource
 import java.util.UUID
 import kotlinx.coroutines.flow.Flow
 import kotlinx.coroutines.flow.map
@@ -51,6 +52,15 @@ class RoomLedgerRepository(private val db: LedgerDatabase) : LedgerRepository {
     override suspend fun assignCategory(id: String, categoryId: String, confidence: Float) = db.withTransaction {
         txnDao.updateCategory(id, categoryId, confidence)
         enqueue("transaction", id, "CATEGORY:$categoryId")
+    }
+
+    /**
+     * 用户手选消费平台。写 `USER` 源 + 满置信度：
+     * `USER` 是权威标记，后续任何自动流程（重解析 / 合并继承 / 再次 ingest）都不得再改写。
+     */
+    override suspend fun assignPlatform(id: String, platformId: String) = db.withTransaction {
+        txnDao.updatePlatform(id, platformId, 1f, PlatformSource.USER.name)
+        enqueue("transaction", id, "PLATFORM:$platformId")
     }
 
     /** 配对待定转账：把 discoveredPaired 的两笔打上同一个 transferGroupId */

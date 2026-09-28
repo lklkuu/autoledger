@@ -1,5 +1,6 @@
 package com.autoledger.core.database
 
+import androidx.room.ColumnInfo
 import androidx.room.Entity
 import androidx.room.Index
 import androidx.room.PrimaryKey
@@ -21,6 +22,9 @@ import com.autoledger.core.model.refund.RefundStatus
         Index(value = ["fingerprint"]),
         Index(value = ["status"]),
         Index(value = ["type"]),
+        // 消费平台：支撑「按平台筛选 / 分组」（PlatformShareMetric 目前走内存聚合，
+        // 但索引先建好，将来 DAO 侧加 WHERE platform_id IN (...) 无需再迁移）
+        Index(value = ["platform_id"]),
     ],
 )
 data class TransactionEntity(
@@ -32,6 +36,11 @@ data class TransactionEntity(
     val type: TxnType,
     val direction: Direction,
     val counterparty: String,
+    /** 消费平台稳定 ID，见 PlatformCatalog；NOT NULL，由 Migration 的 DEFAULT 保证。 */
+    @ColumnInfo(name = "platform_id") val platformId: String,
+    @ColumnInfo(name = "platform_confidence") val platformConfidence: Float,
+    /** 存 PlatformSource 枚举的 name()（AUTO / USER）。NOT NULL，由 Migration 的 DEFAULT 保证。 */
+    @ColumnInfo(name = "platform_source") val platformSource: String,
     val note: String?,
     val sourceId: String,
     val sourceRef: String,

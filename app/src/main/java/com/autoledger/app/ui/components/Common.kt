@@ -296,6 +296,15 @@ fun TransactionRow(
             )
             Text(
                 buildList {
+                    // 消费平台（业务维度）：自动识别不确定时带「?」，提示用户点开修正。
+                    val platformLabel =
+                        com.autoledger.core.model.platform.PlatformCatalog.displayNameOf(txn.platformId)
+                    val platformUncertain =
+                        txn.platformSource == com.autoledger.core.model.platform.PlatformSource.AUTO &&
+                            txn.platformConfidence <
+                            com.autoledger.core.model.platform.PlatformResolver.CONFIRM_THRESHOLD
+                    add(if (platformUncertain) "$platformLabel?" else platformLabel)
+
                     add(category?.name ?: "未分类")
                     // timeOnRight 时工时已占据右侧，副标题不再重复。
                     if (!timeOnRight) workText?.let { add("≈ $it") }

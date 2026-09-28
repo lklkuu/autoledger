@@ -162,6 +162,25 @@ fun ExpensesScreen(container: AppContainer) {
                     label = { Text("显示内部划转与退款") },
                     modifier = Modifier.padding(top = 8.dp),
                 )
+                // 消费平台筛选：点即筛选（再点取消）；「未知」用于集中补全历史/识别失败的流水
+                Text(
+                    "消费平台",
+                    Modifier.padding(top = 10.dp),
+                    style = MaterialTheme.typography.labelMedium,
+                )
+                FlowRow(
+                    Modifier.fillMaxWidth().padding(top = 4.dp),
+                    horizontalArrangement = Arrangement.spacedBy(6.dp),
+                    verticalArrangement = Arrangement.spacedBy(4.dp),
+                ) {
+                    com.autoledger.core.model.platform.PlatformCatalog.all().forEach { entry ->
+                        FilterChip(
+                            selected = state.platformFilter == entry.id,
+                            onClick = { store.setPlatformFilter(entry.id) },
+                            label = { Text(entry.displayName) },
+                        )
+                    }
+                }
                 val tags = store.allTags()
                 if (tags.isNotEmpty()) {
                     FlowRow(
@@ -238,10 +257,14 @@ fun ExpensesScreen(container: AppContainer) {
         }
     }
 
-    // 修正对话框：允许补全 / 修改商户名与备注。
+    // 修正对话框：允许补全 / 修改商户名、消费平台与备注。
     editing?.let { txn ->
         var name by remember(txn.id) { mutableStateOf(txn.counterparty) }
         var noteText by remember(txn.id) { mutableStateOf(txn.note.orEmpty()) }
+        var platformId by remember(txn.id) { mutableStateOf(txn.platformId) }
+        // 自动识别且置信度不足 ⇒ 提示用户确认（用户手选后即变 USER 源，不再提示）
+        val platformUncertain = txn.platformSource == com.autoledger.core.model.platform.PlatformSource.AUTO &&
+            txn.platformConfidence < com.autoledger.core.model.platform.PlatformResolver.CONFIRM_THRESHOLD
         AlertDialog(
             onDismissRequest = { editing = null },
             title = { Text("修正这笔流水") },
@@ -262,7 +285,21 @@ fun ExpensesScreen(container: AppContainer) {
                         modifier = Modifier.fillMaxWidth().padding(top = 8.dp),
                     )
                     Text(
-                        "自动抓取的商户名经常缺失，在这里补上即可。",
+                        "消费平台",
+                        Modifier.padding(top = 12.dp),
+                        style = MaterialTheme.typography.labelMedium,
+                    )
+                    PlatformPicker(selected = platformId, onSelect = { platformId = it })
+                    if (platformUncertain) {
+                        Text(
+                            "自动识别不确定，请确认平台是否正确。",
+                            Modifier.padding(top = 6.dp),
+                            style = MaterialTheme.typography.bodySmall,
+                            color = LedgerPalette.Warning,
+                        )
+                    }
+                    Text(
+                        "自动抓取的商户名 / 消费平台常缺失或不准，在这里补上即可；改过之后不会再被自动识别覆盖。",
                         Modifier.padding(top = 8.dp),
                         style = MaterialTheme.typography.bodySmall,
                         color = MaterialTheme.colorScheme.onSurfaceVariant,
@@ -271,7 +308,7 @@ fun ExpensesScreen(container: AppContainer) {
             },
             confirmButton = {
                 TextButton(onClick = {
-                    store.updateCounterparty(txn, name, noteText)
+                    store.updateCounterparty(txn, name, noteText, platformId)
                     editing = null
                 }) { Text("保存") }
             },
@@ -279,6 +316,25 @@ fun ExpensesScreen(container: AppContainer) {
                 TextButton(onClick = { editing = null }) { Text("取消") }
             },
         )
+    }
+}
+
+/** 消费平台选择器：内置平台 + 未知，流式排列。 */
+@OptIn(ExperimentalLayoutApi::class)
+@Composable
+private fun PlatformPicker(selected: String, onSelect: (String) -> Unit) {
+    FlowRow(
+        horizontalArrangement = Arrangement.spacedBy(8.dp),
+        verticalArrangement = Arrangement.spacedBy(4.dp),
+        modifier = Modifier.fillMaxWidth().padding(top = 6.dp),
+    ) {
+        com.autoledger.core.model.platform.PlatformCatalog.all().forEach { entry ->
+            FilterChip(
+                selected = entry.id == selected,
+                onClick = { onSelect(entry.id) },
+                label = { Text(entry.displayName) },
+            )
+        }
     }
 }
 

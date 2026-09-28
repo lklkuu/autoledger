@@ -34,6 +34,7 @@ include(":feature:classify") // 消费分类插件
 include(":feature:dedup")    // 转账识别 + 跨渠道去重（纯 JVM）
 include(":feature:stats")    // 统计维度插件
 include(":feature:refund")   // 退款分摊与抵扣原路回退引擎（纯 JVM）
+include(":feature:platform") // 消费平台识别引擎（纯 JVM）
 include(":feature:transfer") // 换机数据迁移（设备直连 + 加密重封装）
 
 // ---------- 宿主 ----------

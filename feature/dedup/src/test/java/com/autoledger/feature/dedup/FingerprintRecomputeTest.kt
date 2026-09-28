@@ -160,4 +160,34 @@ class FingerprintRecomputeTest {
             "空白商户需纳入 sourceRef，避免同金额真实消费被静默合并",
         )
     }
+
+    // ------------------------------------------------------------ B5：消费平台**不参与**指纹（本次改造的关键护栏）
+
+    @Test
+    fun `B5 - platform does NOT participate in the fingerprint so cross-channel dedup survives`() {
+        // 同一笔「美团下单」消费会同时产生：
+        //   ① 美团 App 通知 —— 识别出 platform = meituan
+        //   ② 银行短信     —— 短信不写"美团"，识别不出 ⇒ platform = unknown
+        // 两者金额与商户相同。**若平台进了指纹**，两条指纹就会不同 ⇒
+        // 跨渠道去重直接失效 ⇒ 一笔消费被记两次。
+        // 本用例是「平台绝不进指纹」的锁：一旦有人把 platformId 加进 fingerprintOf，它必须失败。
+        val notify = txn("n", -4500, "美团外卖", sourceId = "notify")
+            .copy(platformId = "meituan", platformConfidence = 0.95f)
+        val sms = txn("s", -4500, "美团外卖", sourceId = "sms")
+            .copy(platformId = "unknown")
+
+        assertEquals(
+            resolver.fingerprintOf(notify),
+            resolver.fingerprintOf(sms),
+            "平台不同（meituan vs unknown）但金额+商户相同 ⇒ 指纹必须相同，否则跨渠道去重失效",
+        )
+
+        // 再验一层：平台取任意值都不改变指纹（它根本不是指纹材料）。
+        val editedPlatform = notify.copy(platformId = "taobao", platformConfidence = 1f)
+        assertEquals(
+            resolver.fingerprintOf(notify),
+            resolver.fingerprintOf(editedPlatform),
+            "用户改平台不改变指纹 —— 这是刻意设计（否则编辑一次就会与同笔的对侧失配）",
+        )
+    }
 }

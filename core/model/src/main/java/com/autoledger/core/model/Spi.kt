@@ -148,6 +148,14 @@ interface LedgerRepository {
     ): List<LedgerTransaction>
     suspend fun markStatus(id: String, status: TxnStatus)
     suspend fun assignCategory(id: String, categoryId: String, confidence: Float)
+
+    /**
+     * 用户手选消费平台（与 [assignCategory] 对称）。
+     *
+     * 实现必须同时写入「用户源」标记：被标记为 USER 的行，
+     * 后续任何自动流程（重解析 / 合并继承 / 再次 ingest）都**不得**再改写其平台。
+     */
+    suspend fun assignPlatform(id: String, platformId: String)
     suspend fun listAccounts(): List<Account>
     suspend fun listCategories(): List<Category>
 

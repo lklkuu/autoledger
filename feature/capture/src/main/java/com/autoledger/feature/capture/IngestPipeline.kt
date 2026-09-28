@@ -12,6 +12,9 @@ import com.autoledger.core.model.TransferKind
 import com.autoledger.core.model.TransactionClassifier
 import com.autoledger.core.model.TxnStatus
 import com.autoledger.core.model.TxnType
+import com.autoledger.core.model.platform.PlatformContext
+import com.autoledger.core.model.platform.PlatformResolver
+import com.autoledger.core.model.platform.PlatformSource
 import java.util.UUID
 
 /**
@@ -30,6 +33,8 @@ class IngestPipeline(
     private val transferDetector: TransferDetector,
     private val classifier: TransactionClassifier,
     private val cryptoBox: CryptoBox,
+    /** 消费平台识别（纯 JVM 引擎，串在解析之后，**不改动 NotificationParser**）。 */
+    private val platformResolver: PlatformResolver,
     /** 置信度高于此值 + 无重复 => 自动入账，否则进「待确认」 */
     private val autoConfirmThreshold: Float = 0.75f,
     /** 跨渠道重复是否自动合并（关掉则全部进入人工确认） */
@@ -48,12 +53,26 @@ class IngestPipeline(
         val counterparty = envelope.counterpartyHint.orEmpty()
         val id = UUID.randomUUID().toString()
 
+        // 消费平台识别：与「是不是一笔钱」正交，故串在解析之后，不影响金额/商户判定。
+        // 识别不出就落 unknown（由 UI 打角标让用户确认），绝不硬塞一个看起来差不多的平台。
+        val platform = platformResolver.resolve(
+            PlatformContext(
+                rawText = envelope.rawText,
+                counterparty = counterparty.takeIf { it.isNotBlank() },
+                packageName = envelope.packageName,
+                sourceId = envelope.sourceId,
+            )
+        )
+
         val draft = LedgerTransaction(
             id = id,
             amountMinor = amount ?: 0L,
             occurredAtMillis = envelope.occurredAtMillis,
             type = resolveInitialType(envelope.explicitType, amount),
             counterparty = counterparty,
+            platformId = platform.platformId,
+            platformConfidence = platform.confidence,
+            platformSource = PlatformSource.AUTO,
             note = null,
             sourceId = envelope.sourceId,
             sourceRef = envelope.sourceRef,

@@ -18,6 +18,8 @@ import com.autoledger.core.model.RuleKind
 import com.autoledger.core.model.TxnStatus
 import com.autoledger.core.model.TxnType
 import com.autoledger.core.model.WageProfile
+import com.autoledger.core.model.platform.PlatformCatalog
+import com.autoledger.core.model.platform.PlatformSource
 import org.json.JSONArray
 import org.json.JSONObject
 
@@ -211,46 +213,7 @@ class BackupManager(
     /** 解密导入时用的口令，UI 通过赋值给它来注入（用完即弃，不落盘） */
     @Volatile var currentPassphrase: CharArray? = null
 
-    private fun JSONArray.toTransactions(): List<LedgerTransaction> = (0 until length()).map { i ->
-        val o = getJSONObject(i)
-        LedgerTransaction(
-            id = o.getString("id"),
-            amountMinor = o.getLong("amountMinor"),
-            currency = o.optString("currency", "CNY"),
-            occurredAtMillis = o.getLong("occurredAtMillis"),
-            bookedAtMillis = o.optLong("bookedAtMillis", o.getLong("occurredAtMillis")),
-            type = runCatching { TxnType.valueOf(o.getString("type")) }.getOrDefault(TxnType.EXPENSE),
-            direction = runCatching { Direction.valueOf(o.optString("direction", "OUT")) }.getOrDefault(Direction.OUT),
-            counterparty = o.optString("counterparty", ""),
-            note = o.optString("note").takeIf { it.isNotBlank() },
-            sourceId = o.optString("sourceId", "manual"),
-            sourceRef = o.optString("sourceRef", ""),
-            accountId = o.optString("accountId").takeIf { it.isNotBlank() },
-            categoryId = o.optString("categoryId").takeIf { it.isNotBlank() },
-            transferGroupId = o.optString("transferGroupId").takeIf { it.isNotBlank() },
-            fingerprint = o.optString("fingerprint", ""),
-            status = runCatching { TxnStatus.valueOf(o.optString("status", "CONFIRMED")) }.getOrDefault(TxnStatus.CONFIRMED),
-            confidence = o.optDouble("confidence", 1.0).toFloat(),
-            rawTextSealed = o.optString("rawTextSealed").takeIf { it.isNotBlank() },
-            extras = o.optString("extras").takeIf { it.isNotBlank() },
-            orderId = o.optString("orderId").takeIf { it.isNotBlank() },
-            refundId = o.optString("refundId").takeIf { it.isNotBlank() },
-            schemaVersion = o.optInt("schemaVersion", com.autoledger.core.model.LedgerSchema.CURRENT),
-        )
-    }
-
-    private fun LedgerTransaction.toJson(): JSONObject = JSONObject().apply {
-        put("id", id); put("amountMinor", amountMinor); put("currency", currency)
-        put("occurredAtMillis", occurredAtMillis); put("bookedAtMillis", bookedAtMillis)
-        put("type", type.name); put("direction", direction.name)
-        put("counterparty", counterparty); put("note", note)
-        put("sourceId", sourceId); put("sourceRef", sourceRef)
-        put("accountId", accountId); put("categoryId", categoryId)
-        put("transferGroupId", transferGroupId); put("fingerprint", fingerprint)
-        put("status", status.name); put("confidence", confidence)
-        put("rawTextSealed", rawTextSealed); put("extras", extras); put("schemaVersion", schemaVersion)
-        put("orderId", orderId); put("refundId", refundId)
-    }
+    // 流水的备份 JSON 编解码已抽到顶层纯函数（见 TxnJson.kt）：便于不经 Room 直接单测。
 
     private fun AppSettings.toJson(): JSONObject = JSONObject().apply {
         put("wage", JSONObject().apply {

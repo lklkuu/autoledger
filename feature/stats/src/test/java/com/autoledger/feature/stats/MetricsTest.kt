@@ -149,27 +149,28 @@ class MetricsTest {
         assertTrue(result.slices.all { it.colorHex.startsWith("#") })
     }
 
-    // ------------------------------------------------------------ 渠道分布
+    // ------------------------------------------------------------ 消费平台分布
 
     @Test
-    fun `channel share aggregates by source id and maps display names`() = runBlocking {
+    fun `platform share aggregates by platform id and maps display names`() = runBlocking {
         val r = FakeLedgerRepository(listOf(
-            Fixtures.txn("a", -1_000, sourceId = "notify", occurredAtMillis = t0),
-            Fixtures.txn("b", -2_000, sourceId = "notify", occurredAtMillis = t0),
-            Fixtures.txn("c", -500, sourceId = "sms", occurredAtMillis = t0),
+            Fixtures.txn("a", -1_000, occurredAtMillis = t0).copy(platformId = "wechat"),
+            Fixtures.txn("b", -2_000, occurredAtMillis = t0).copy(platformId = "wechat"),
+            Fixtures.txn("c", -500, occurredAtMillis = t0).copy(platformId = "alipay"),
         ))
-        val names = mapOf("notify" to "支付通知", "sms" to "银行短信")
-        val result = ChannelShareMetric(names).compute(range(), r) as MetricResult.Breakdown
+        val result = PlatformShareMetric().compute(range(), r) as MetricResult.Breakdown
         assertEquals(2, result.slices.size)
-        assertEquals("支付通知", result.slices.first().label)
+        assertEquals("微信", result.slices.first().label)
         assertEquals(3_000L, result.slices.first().minor)
     }
 
     @Test
-    fun `channel share falls back to raw id when name unknown`() = runBlocking {
-        val r = FakeLedgerRepository(listOf(Fixtures.txn("a", -100, sourceId = "manual", occurredAtMillis = t0)))
-        val result = ChannelShareMetric(emptyMap()).compute(range(), r) as MetricResult.Breakdown
-        assertEquals("manual", result.slices.first().label)
+    fun `platform share labels unknown platform and hints how many need fixing`() = runBlocking {
+        val r = FakeLedgerRepository(listOf(Fixtures.txn("a", -100, occurredAtMillis = t0)))
+        val result = PlatformShareMetric().compute(range(), r) as MetricResult.Breakdown
+        // 默认 platformId = unknown -> 展示名「未知」，并在副标题提示待补笔数
+        assertEquals("未知", result.slices.first().label)
+        assertTrue(result.subtitle!!.contains("1"), "应提示有 1 笔平台未知，实际 ${result.subtitle}")
     }
 
     // ------------------------------------------------------------ 月度趋势
@@ -252,7 +253,7 @@ class MetricsTest {
     fun `provider ids are stable constants`() {
         assertEquals("category_share", CategoryShareMetric.CATEGORY_ID)
         assertEquals("merchant_top", MerchantTopMetric.MERCHANT_ID)
-        assertEquals("channel_share", ChannelShareMetric.CHANNEL_ID)
+        assertEquals("platform_share", PlatformShareMetric.PLATFORM_ID)
         assertEquals("monthly_trend", MonthlyTrendMetric.TREND_ID)
         assertEquals("time_cost", TimeCostMetric.TIME_COST_ID)
     }

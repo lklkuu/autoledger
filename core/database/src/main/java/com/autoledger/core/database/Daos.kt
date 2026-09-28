@@ -99,6 +99,21 @@ interface TransactionDao {
     @Query("UPDATE transactions SET categoryId = :categoryId, confidence = :confidence WHERE id = :id")
     suspend fun updateCategory(id: String, categoryId: String, confidence: Float)
 
+    /**
+     * 用户手选消费平台（与 [updateCategory] 对称）。
+     *
+     * 由调用方负责写入 `confidence = 1f` / `source = 'USER'` ——
+     * `USER` 是权威标记，后续自动流程不得再改写该行的平台。
+     */
+    @Query(
+        """
+        UPDATE transactions
+        SET platform_id = :platformId, platform_confidence = :confidence, platform_source = :source
+        WHERE id = :id
+        """,
+    )
+    suspend fun updatePlatform(id: String, platformId: String, confidence: Float, source: String)
+
     @Query("UPDATE transactions SET transferGroupId = :groupId WHERE id = :id")
     suspend fun updateTransferGroup(id: String, groupId: String)
 

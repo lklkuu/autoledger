@@ -40,7 +40,9 @@ import com.autoledger.feature.dedup.DefaultTransferDetector
 import com.autoledger.feature.dedup.LedgerDuplicateResolver
 import com.autoledger.feature.dedup.TransferPairMatcher
 import com.autoledger.feature.stats.CategoryShareMetric
-import com.autoledger.feature.stats.ChannelShareMetric
+import com.autoledger.feature.stats.PlatformShareMetric
+import com.autoledger.core.model.platform.PlatformResolver
+import com.autoledger.feature.platform.KeywordPlatformResolver
 import com.autoledger.feature.stats.MerchantTopMetric
 import com.autoledger.feature.stats.MetricRegistry
 import com.autoledger.feature.stats.MonthlyTrendMetric
@@ -227,12 +229,9 @@ class AppContainer(context: Context) {
     )
     val captureRegistry = CaptureRegistry(captureSources)
 
-    val channelNames: Map<String, String> = mapOf(
-        "notify" to "支付通知",
-        "sms" to "银行短信",
-        "bill_import" to "账单导入",
-        "manual" to "手动补记",
-    )
+    // 注：原先的 channelNames（采集方式 → 中文名）已删除。
+    // 采集方式（sourceId：通知 / 短信 / 账单导入 / 手动）是**技术追溯**字段，不是业务维度；
+    // 业务维度只有「消费平台」与「商户」两个，见 core:model 的 PlatformCatalog。
 
     // 这些装配依赖 database/repository，必须惰性：否则会在 Application 构造期（主线程）触发
     // 加密建库，Keystore/SQLCipher 任何异常都会导致"一打开就闪退"。
@@ -254,6 +253,9 @@ class AppContainer(context: Context) {
     val correctionLearner by lazy { CorrectionLearner(ruleSource) }
     val pairMatcher = TransferPairMatcher
 
+    /** 消费平台识别引擎（纯 JVM）。 */
+    val platformResolver: PlatformResolver = KeywordPlatformResolver()
+
     val ingestPipeline: IngestPipeline by lazy {
         IngestPipeline(
             repository = repository as LedgerRepository,
@@ -261,6 +263,7 @@ class AppContainer(context: Context) {
             transferDetector = transferDetector,
             classifier = classifier,
             cryptoBox = cryptoBox,
+            platformResolver = platformResolver,
         )
     }
 
@@ -270,7 +273,7 @@ class AppContainer(context: Context) {
             CategoryShareMetric(),
             MerchantTopMetric(),
             MonthlyTrendMetric(),
-            ChannelShareMetric(channelNames),
+            PlatformShareMetric(),
         )
         MetricRegistry(providers)
     }

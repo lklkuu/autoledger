@@ -86,4 +86,39 @@ class BankCardNotificationTest {
             "营销短信不得被记为消费",
         )
     }
+
+    // ------------------------------------------------------------ 商户名抽取（含银行短信兜底）
+
+    @Test
+    fun `bank sms merchant right after the verb is extracted without a prefix`() {
+        // 用户实报：工行短信「…支出(消费财付通-2zero首饰屋)39.80元。」
+        // 没有「商户」前缀，商户紧跟在交易动词之后 —— 兜底正则应抽出它，并剔除通道词「财付通」。
+        val r = parser.parse("sms:inbox", "95588", "您尾号6602卡9月27日23:52支出(消费财付通-2zero首饰屋)39.80元")
+        assertNotNull(r)
+        assertEquals(-3_980L, r.amountMinor)
+        assertEquals("2zero首饰屋", r.counterparty, "应剔除支付通道词，只保留商户")
+    }
+
+    @Test
+    fun `explicit merchant prefix still wins over the fallback`() {
+        val r = parser.parse("sms:inbox", "95588", "您尾号1234卡消费 398.00元，商户：星巴克")
+        assertNotNull(r)
+        assertEquals("星巴克", r.counterparty)
+    }
+
+    @Test
+    fun `plain merchant after the verb is extracted`() {
+        val r = parser.parse("sms:inbox", "95588", "您尾号1234卡消费 星巴克 398.00元")
+        assertNotNull(r)
+        assertEquals("星巴克", r.counterparty)
+    }
+
+    @Test
+    fun `amount-only statement does not produce a bogus merchant`() {
+        // 噪声护栏：只有金额、没有商户的账单明细，不得把「1,280.00元」当成商户名。
+        val r = parser.parse("sms:inbox", "95555", "您尾号1234卡消费 1,280.00元，余额 8,000元")
+        assertNotNull(r)
+        assertEquals(-128_000L, r.amountMinor)
+        assertNull(r.counterparty, "抽不到商户就返回空，绝不塞噪声")
+    }
 }

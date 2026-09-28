@@ -20,7 +20,7 @@ import com.autoledger.core.model.refund.OrderRefundState
 import com.autoledger.core.model.refund.OrderStatus
 import com.autoledger.feature.capture.CaptureSource
 import com.autoledger.feature.capture.PermissionState
-import com.autoledger.feature.stats.ChannelShareMetric
+import com.autoledger.feature.stats.PlatformShareMetric
 import kotlinx.coroutines.CancellationException
 import kotlinx.coroutines.CoroutineExceptionHandler
 import kotlinx.coroutines.CoroutineScope
@@ -174,7 +174,7 @@ class HomeStore(private val container: AppContainer) {
         val today = TimeRange.today(now)
         val todayTxns = monthTransactions.filter { it.occurredAtMillis in today.startMillis..today.endInclusiveMillis }
         val metrics = container.metricRegistry.providers()
-            .filter { it.id != ChannelShareMetric.CHANNEL_ID }
+            .filter { it.id != PlatformShareMetric.PLATFORM_ID }
             .map { it.compute(month, container.repository) }
         State(
             loading = false,
@@ -205,6 +205,8 @@ class LedgerStore(private val container: AppContainer) {
         val query: String = "",
         val showTransfers: Boolean = false,
         val tagFilter: String? = null,
+        /** 消费平台筛选：null = 全部；[PlatformCatalog.UNKNOWN_ID] = 只看未识别（便于集中补全）。 */
+        val platformFilter: String? = null,
     )
 
     private val _state = MutableStateFlow(State())
@@ -247,6 +249,7 @@ class LedgerStore(private val container: AppContainer) {
                     query = s.query,
                     showTransfers = s.showTransfers,
                     tagFilter = s.tagFilter,
+                    platformFilter = s.platformFilter,
                 )
             }
     }
@@ -262,6 +265,13 @@ class LedgerStore(private val container: AppContainer) {
     /** 切换标签筛选（再点一次同一标签 = 取消筛选）。 */
     fun setTagFilter(tag: String) {
         _state.value = _state.value.copy(tagFilter = if (_state.value.tagFilter == tag) null else tag)
+    }
+
+    /** 切换消费平台筛选（再点一次同一平台 = 取消；「未知」同样可筛，便于集中补全）。 */
+    fun setPlatformFilter(platformId: String) {
+        _state.value = _state.value.copy(
+            platformFilter = if (_state.value.platformFilter == platformId) null else platformId,
+        )
     }
 
     /** 全部已用标签（按出现频次降序），供筛选栏展示。 */
@@ -288,15 +298,27 @@ class LedgerStore(private val container: AppContainer) {
     }
 
     /**
-     * 修正流水：改商户名 / 备注。
-     * 自动抓取的商户名经常缺失（显示「未知名交易」），用户需要能在这里补全。
-     * 走 [applyTxnEdit] 统一处理（去空白 + 重算去重指纹），复用既有 `upsert` 写回。
+     * 修正流水：改商户名 / 消费平台 / 备注。
+     * - 自动抓取的商户名经常缺失（显示「未知名交易」），用户需要能补全；
+     * - 平台识别可能不准或缺失，用户改过后以 `USER` 源为准（自动流程不得覆盖）。
+     * 走 [applyTxnEdit] 统一处理（去空白 + 重算指纹），复用既有 `upsert` 写回。
      */
-    fun updateCounterparty(txn: LedgerTransaction, counterparty: String, note: String?) {
+    fun updateCounterparty(
+        txn: LedgerTransaction,
+        counterparty: String,
+        note: String?,
+        platformId: String = txn.platformId,
+    ) {
         storeScope.launch {
             catching {
                 container.repository.upsert(
-                    applyTxnEdit(txn, counterparty, note, container.duplicateResolver::fingerprintOf),
+                    applyTxnEdit(
+                        txn = txn,
+                        counterparty = counterparty,
+                        note = note,
+                        platformId = platformId,
+                        fingerprintOf = container.duplicateResolver::fingerprintOf,
+                    ),
                 )
             }
         }
@@ -336,6 +358,12 @@ class LedgerStore(private val container: AppContainer) {
             }
         }
         s.tagFilter?.let { tag -> list = list.filter { tag in it.txnExtras.tags } }
+        // 消费平台筛选：空串按「未知」处理（历史数据与识别失败都落 unknown）
+        s.platformFilter?.let { pid ->
+            list = list.filter {
+                it.platformId.ifBlank { com.autoledger.core.model.platform.PlatformCatalog.UNKNOWN_ID } == pid
+            }
+        }
         return list
     }
 }
@@ -545,7 +573,7 @@ class InsightsStore(private val container: AppContainer) {
                 )
                 val metrics = container.metricRegistry.providers().filter {
                     it.id == com.autoledger.feature.stats.MerchantTopMetric.MERCHANT_ID ||
-                        it.id == ChannelShareMetric.CHANNEL_ID ||
+                        it.id == PlatformShareMetric.PLATFORM_ID ||
                         it.id == com.autoledger.feature.stats.TimeCostMetric.TIME_COST_ID
                 }.map { it.compute(month, container.repository) }
                 _state.value = State(loading = false, facts = facts, metrics = metrics)

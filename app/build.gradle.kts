@@ -97,6 +97,7 @@ dependencies {
     implementation(project(":feature:dedup"))
     implementation(project(":feature:stats"))
     implementation(project(":feature:refund"))
+    implementation(project(":feature:platform"))
     implementation(project(":feature:transfer"))
 
     implementation(libs.androidx.core.ktx)

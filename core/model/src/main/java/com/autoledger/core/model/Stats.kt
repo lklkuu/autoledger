@@ -9,7 +9,7 @@ import java.time.ZoneId
  * 仪表盘不写死任何一张图：它会遍历注册进来的 [MetricProvider]，按顺序渲染卡片。
  * 想加「按星期分布」「按城市分布」这类新维度，新增一个实现类注册进来即可。
  */
-enum class Dimension { CATEGORY, MERCHANT, CHANNEL, ACCOUNT, TIME }
+enum class Dimension { CATEGORY, MERCHANT, PLATFORM, ACCOUNT, TIME }
 
 sealed interface MetricResult {
     val providerId: String

@@ -8,6 +8,7 @@ import com.autoledger.core.model.MetricProvider
 import com.autoledger.core.model.MetricResult
 import com.autoledger.core.model.TimeRange
 import com.autoledger.core.model.WageProfile
+import com.autoledger.core.model.platform.PlatformCatalog
 
 /**
  * 统计维度插件集合（工程要求 1：统计维度模块化可插拔）。
@@ -71,24 +72,44 @@ class MerchantTopMetric(private val topN: Int = 8) : MetricProvider {
     companion object { const val MERCHANT_ID = "merchant_top" }
 }
 
-/** 渠道占比 —— 用来核对「某个渠道是不是漏抓了」*/
-class ChannelShareMetric(private val channelNames: Map<String, String>) : MetricProvider {
-    override val id: String = CHANNEL_ID
-    override val title: String = "采集渠道分布"
-    override val dimension: Dimension = Dimension.CHANNEL
+/**
+ * 消费平台分布 —— 与 [MerchantTopMetric] 构成「消费平台 / 商户」两个并列的业务维度。
+ *
+ * 与「采集来源」的区别：[LedgerTransaction.sourceId]（通知 / 短信 / 账单导入）是**技术追溯**字段，
+ * 不是业务维度，因此不再作为统计口径（原 `ChannelShareMetric` 已删除）。
+ */
+class PlatformShareMetric(private val topN: Int = 8) : MetricProvider {
+    override val id: String = PLATFORM_ID
+    override val title: String = "消费平台分布"
+    override val dimension: Dimension = Dimension.PLATFORM
     override val order: Int = 30
 
     override suspend fun compute(range: TimeRange, repo: LedgerRepository): MetricResult {
         val txns = repo.listRange(range.startMillis, range.endInclusiveMillis)
-        val buckets = ExpenseMath.netBy(txns) { it.sourceId }
-        val slices = buckets.entries.sortedByDescending { it.value }.map { (rawKey, minor) ->
-            val key = rawKey.orEmpty()
-            MetricResult.Breakdown.Slice(key, channelNames[key] ?: key, minor, "#5C88B8")
+        val buckets = ExpenseMath.netBy(txns) { it.platformId }
+        val ranked = buckets.entries.sortedByDescending { it.value }.take(topN)
+        val slices = ranked.mapIndexed { i, (rawKey, minor) ->
+            val key = rawKey.orEmpty().ifBlank { PlatformCatalog.UNKNOWN_ID }
+            MetricResult.Breakdown.Slice(
+                key = key,
+                label = PlatformCatalog.displayNameOf(key),
+                minor = minor,
+                colorHex = PLATFORM_PALETTE[i % PLATFORM_PALETTE.size],
+            )
         }
-        return MetricResult.Breakdown(CHANNEL_ID, title, null, buckets.values.sum(), slices)
+        // 「未知」笔数单独提示：让用户一眼看出还有多少笔待补平台，形成修正闭环。
+        val unknownCount = txns.count {
+            it.platformId.isBlank() || it.platformId == PlatformCatalog.UNKNOWN_ID
+        }
+        val subtitle = if (unknownCount > 0) "其中 $unknownCount 笔平台未知，可在账单页筛选后补全" else null
+        return MetricResult.Breakdown(PLATFORM_ID, title, subtitle, buckets.values.sum(), slices)
     }
 
-    companion object { const val CHANNEL_ID = "channel_share" }
+    companion object {
+        const val PLATFORM_ID = "platform_share"
+        private val PLATFORM_PALETTE =
+            listOf("#16856F", "#5C88B8", "#F6C95F", "#D95F5F", "#9B6AD0", "#116B5B", "#708786", "#163B3D")
+    }
 }
 
 /** 近 6 个月趋势 */

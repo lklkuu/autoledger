@@ -4,6 +4,7 @@ import com.autoledger.core.model.Account
 import com.autoledger.core.model.AccountKind
 import com.autoledger.core.model.Category
 import com.autoledger.core.model.LedgerRepository
+import com.autoledger.core.model.platform.PlatformSource
 import com.autoledger.core.model.LedgerTransaction
 import com.autoledger.core.model.TxnStatus
 import com.autoledger.core.model.TxnType
@@ -118,6 +119,18 @@ class FakeLedgerRepository(
 
     override suspend fun assignCategory(id: String, categoryId: String, confidence: Float) {
         store[id]?.let { store[id] = it.copy(categoryId = categoryId, confidence = confidence) }
+        touch()
+    }
+
+    override suspend fun assignPlatform(id: String, platformId: String) {
+        // 与真实实现对齐：用户指定 ⇒ 满置信度 + USER 源
+        store[id]?.let {
+            store[id] = it.copy(
+                platformId = platformId,
+                platformConfidence = 1f,
+                platformSource = PlatformSource.USER,
+            )
+        }
         touch()
     }
 
