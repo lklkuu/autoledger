@@ -287,6 +287,21 @@ class LedgerStore(private val container: AppContainer) {
         storeScope.launch { catching { container.repository.delete(id) } }
     }
 
+    /**
+     * 修正流水：改商户名 / 备注。
+     * 自动抓取的商户名经常缺失（显示「未知名交易」），用户需要能在这里补全。
+     * 走 [applyTxnEdit] 统一处理（去空白 + 重算去重指纹），复用既有 `upsert` 写回。
+     */
+    fun updateCounterparty(txn: LedgerTransaction, counterparty: String, note: String?) {
+        storeScope.launch {
+            catching {
+                container.repository.upsert(
+                    applyTxnEdit(txn, counterparty, note, container.duplicateResolver::fingerprintOf),
+                )
+            }
+        }
+    }
+
     /** 用户纠正分类：写回 + 存入学习记忆 */
     fun correctCategory(txn: LedgerTransaction, category: Category) {
         storeScope.launch {

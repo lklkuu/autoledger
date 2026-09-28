@@ -258,6 +258,11 @@ fun TransactionRow(
     txn: LedgerTransaction,
     category: Category?,
     workText: String? = null,
+    /**
+     * true 时右侧以「折算工时」替代金额 —— 用于「刚刚花掉的时光」这类**强调时间成本**的场景；
+     * 金额不再重复展示，工时不重复出现在副标题里。
+     */
+    timeOnRight: Boolean = false,
     modifier: Modifier = Modifier,
     trailing: (@Composable () -> Unit)? = null,
     onClick: (() -> Unit)? = null,
@@ -292,7 +297,8 @@ fun TransactionRow(
             Text(
                 buildList {
                     add(category?.name ?: "未分类")
-                    workText?.let { add("≈ $it") }
+                    // timeOnRight 时工时已占据右侧，副标题不再重复。
+                    if (!timeOnRight) workText?.let { add("≈ $it") }
                     if (txn.type == com.autoledger.core.model.TxnType.TRANSFER) add("已识别为内部划转")
                     if (txn.status == com.autoledger.core.model.TxnStatus.RAW) add("待确认")
                 }.joinToString(" · "),
@@ -301,11 +307,20 @@ fun TransactionRow(
                 maxLines = 1,
             )
         }
-        Text(
-            "¥${txn.amountMinor.yuan()}",
-            style = MaterialTheme.typography.titleMedium,
-            color = if (txn.amountMinor < 0) MaterialTheme.colorScheme.onSurface else LedgerPalette.Positive,
-        )
+        if (timeOnRight && workText != null) {
+            // 突出「花掉的时间」而非金额：时间尺度上的痛感是这个 App 的灵魂。
+            Text(
+                workText,
+                style = MaterialTheme.typography.titleMedium,
+                color = LedgerPalette.PositiveStrong,
+            )
+        } else {
+            Text(
+                "¥${txn.amountMinor.yuan()}",
+                style = MaterialTheme.typography.titleMedium,
+                color = if (txn.amountMinor < 0) MaterialTheme.colorScheme.onSurface else LedgerPalette.Positive,
+            )
+        }
         trailing?.invoke()
     }
 }

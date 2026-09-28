@@ -110,7 +110,7 @@ fun DashboardScreen(container: AppContainer) {
 
         item {
             AppCard {
-                SectionTitle("刚刚花掉的时光", "最近 4 笔")
+                SectionTitle("刚刚花掉的时光", "最近 ${state.recent.size} 笔")
                 if (state.recent.isEmpty()) {
                     EmptyHint("还没有流水，去「记账」tab 记第一笔吧")
                 } else {
@@ -119,6 +119,8 @@ fun DashboardScreen(container: AppContainer) {
                             txn = txn,
                             category = state.categories[txn.categoryId],
                             workText = "${hoursOf(container, txn.amountMinor)} 小时",
+                            // 这张卡片突出「花掉的时间」，右侧显示工时而非金额。
+                            timeOnRight = true,
                         )
                     }
                 }

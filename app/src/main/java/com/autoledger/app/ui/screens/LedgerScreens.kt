@@ -11,6 +11,7 @@ import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.lazy.LazyColumn
 import androidx.compose.foundation.lazy.items
 import androidx.compose.foundation.text.KeyboardOptions
+import androidx.compose.material3.AlertDialog
 import androidx.compose.material3.Button
 import androidx.compose.material3.ButtonDefaults
 import androidx.compose.material3.FilterChip
@@ -19,6 +20,7 @@ import androidx.compose.material3.IconButton
 import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.OutlinedTextField
 import androidx.compose.material3.Text
+import androidx.compose.material3.TextButton
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.DisposableEffect
 import androidx.compose.runtime.LaunchedEffect
@@ -48,6 +50,7 @@ import com.autoledger.app.ui.stores.LedgerStore
 import com.autoledger.app.ui.theme.LedgerIcons
 import com.autoledger.app.ui.theme.LedgerPalette
 import com.autoledger.core.model.ExpenseMath
+import com.autoledger.core.model.LedgerTransaction
 import com.autoledger.core.model.TxnType
 import com.autoledger.core.model.txnExtras
 import com.autoledger.core.model.MetricResult
@@ -74,6 +77,8 @@ fun ExpensesScreen(container: AppContainer) {
     var note by remember { mutableStateOf("") }
     var expandedId by remember { mutableStateOf<String?>(null) }
     var isRefund by remember { mutableStateOf(false) }
+    // 正在编辑（改商户名 / 备注）的流水；null = 关闭对话框。
+    var editing by remember { mutableStateOf<LedgerTransaction?>(null) }
 
     LazyColumn(
         modifier = Modifier.fillMaxSize().padding(horizontal = 16.dp),
@@ -189,10 +194,17 @@ fun ExpensesScreen(container: AppContainer) {
                 TransactionRow(
                     txn = txn,
                     category = category,
-                    onClick = { expandedId = if (expandedId == txn.id) null else txn.id },
+                    // 点整行 → 弹「修正商户名 / 备注」对话框（自动抓取的商户名经常缺失）。
+                    onClick = { editing = txn },
                     trailing = {
-                        IconButton(onClick = { store.delete(txn.id) }) {
-                            Icon(LedgerIcons.Delete, "删除")
+                        Row(verticalAlignment = Alignment.CenterVertically) {
+                            // 原「点行展开分类」入口改到独立按钮，避免与编辑动作冲突。
+                            IconButton(onClick = { expandedId = if (expandedId == txn.id) null else txn.id }) {
+                                Icon(LedgerIcons.Category, "纠正分类")
+                            }
+                            IconButton(onClick = { store.delete(txn.id) }) {
+                                Icon(LedgerIcons.Delete, "删除")
+                            }
                         }
                     },
                 )
@@ -224,6 +236,49 @@ fun ExpensesScreen(container: AppContainer) {
                 }
             }
         }
+    }
+
+    // 修正对话框：允许补全 / 修改商户名与备注。
+    editing?.let { txn ->
+        var name by remember(txn.id) { mutableStateOf(txn.counterparty) }
+        var noteText by remember(txn.id) { mutableStateOf(txn.note.orEmpty()) }
+        AlertDialog(
+            onDismissRequest = { editing = null },
+            title = { Text("修正这笔流水") },
+            text = {
+                Column {
+                    OutlinedTextField(
+                        value = name,
+                        onValueChange = { name = it },
+                        label = { Text("商户名") },
+                        singleLine = true,
+                        modifier = Modifier.fillMaxWidth(),
+                    )
+                    OutlinedTextField(
+                        value = noteText,
+                        onValueChange = { noteText = it },
+                        label = { Text("备注") },
+                        singleLine = true,
+                        modifier = Modifier.fillMaxWidth().padding(top = 8.dp),
+                    )
+                    Text(
+                        "自动抓取的商户名经常缺失，在这里补上即可。",
+                        Modifier.padding(top = 8.dp),
+                        style = MaterialTheme.typography.bodySmall,
+                        color = MaterialTheme.colorScheme.onSurfaceVariant,
+                    )
+                }
+            },
+            confirmButton = {
+                TextButton(onClick = {
+                    store.updateCounterparty(txn, name, noteText)
+                    editing = null
+                }) { Text("保存") }
+            },
+            dismissButton = {
+                TextButton(onClick = { editing = null }) { Text("取消") }
+            },
+        )
     }
 }
 

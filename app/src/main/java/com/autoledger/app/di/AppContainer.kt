@@ -1,6 +1,11 @@
 package com.autoledger.app.di
 
+import android.app.NotificationChannel
+import android.app.NotificationManager
 import android.content.Context
+import android.os.Build
+import androidx.core.app.NotificationCompat
+import androidx.core.app.NotificationManagerCompat
 import com.autoledger.app.UserSettings
 import com.autoledger.core.backup.BackupManager
 import com.autoledger.core.crypto.CryptoBox
@@ -16,6 +21,7 @@ import com.autoledger.core.database.sync.CloudSyncClient
 import com.autoledger.core.database.sync.NoopCloudSyncClient
 import com.autoledger.core.model.LedgerRepository
 import com.autoledger.core.model.MetricProvider
+import com.autoledger.core.model.RawEnvelope
 import com.autoledger.feature.capture.CaptureDispatcher
 import com.autoledger.feature.capture.CaptureRegistry
 import com.autoledger.feature.capture.CaptureSource
@@ -187,6 +193,10 @@ class AppContainer(context: Context) {
     private val _backgroundImagePath = MutableStateFlow<String?>(uiPrefs.getString("background_image", null))
     val backgroundImagePath: StateFlow<String?> = _backgroundImagePath.asStateFlow()
 
+    /** 「记账时弹通知」开关：开启后每次自动记录一笔账都发一条系统通知。设备本地偏好，不进备份。 */
+    private val _notifyOnRecord = MutableStateFlow(uiPrefs.getBoolean("notify_on_record", false))
+    val notifyOnRecord: StateFlow<Boolean> = _notifyOnRecord.asStateFlow()
+
     fun setDarkTheme(enabled: Boolean) {
         _darkTheme.value = enabled
         uiPrefs.edit().putBoolean("dark_theme", enabled).apply()
@@ -196,6 +206,11 @@ class AppContainer(context: Context) {
         _backgroundImagePath.value = path
         if (path == null) uiPrefs.edit().remove("background_image").apply()
         else uiPrefs.edit().putString("background_image", path).apply()
+    }
+
+    fun setNotifyOnRecord(enabled: Boolean) {
+        _notifyOnRecord.value = enabled
+        uiPrefs.edit().putBoolean("notify_on_record", enabled).apply()
     }
 
     val backupManager: BackupManager by lazy { BackupManager(database, repository) }
@@ -291,14 +306,67 @@ class AppContainer(context: Context) {
     private fun startCaptureLoop() {
         appScope.launch {
             CaptureDispatcher.subscribe { envelope ->
-                runCatching { ingestPipeline.ingest(envelope) }
+                val outcome = runCatching { ingestPipeline.ingest(envelope) }.getOrNull()
+                // 有结果 = 确实写入了流水（自动入账 / 待确认 / 合并），按开关决定是否提醒。
+                if (outcome != null) notifyRecorded(envelope)
             }
+        }
+    }
+
+    /** 通知 id 自增序号，避免后一条覆盖前一条。 */
+    private val recordNotifySeq = java.util.concurrent.atomic.AtomicInteger(0)
+
+    /**
+     * 「记账时弹通知」：开启后每自动记录一笔账发一条系统通知。
+     *
+     * 采集是后台路径：无通知权限 / 渠道创建失败一律**静默跳过**，绝不因此崩溃。
+     */
+    private fun notifyRecorded(envelope: RawEnvelope) {
+        if (!_notifyOnRecord.value) return
+        val ctx = applicationContext
+        val manager = NotificationManagerCompat.from(ctx)
+        if (!manager.areNotificationsEnabled()) return
+        runCatching {
+            ensureRecordChannel(ctx)
+            val amountText = envelope.amountHint
+                ?.let { "¥${"%.2f".format(kotlin.math.abs(it) / 100.0)}" }
+                ?: "金额待确认"
+            val who = envelope.counterpartyHint?.takeIf { it.isNotBlank() } ?: "一笔新流水"
+            val notification = NotificationCompat.Builder(ctx, RECORD_CHANNEL_ID)
+                .setSmallIcon(android.R.drawable.ic_dialog_info)
+                .setContentTitle("已自动记一笔账")
+                .setContentText("$who · $amountText")
+                .setAutoCancel(true)
+                .setPriority(NotificationCompat.PRIORITY_DEFAULT)
+                .build()
+            manager.notify(RECORD_NOTIFY_BASE_ID + recordNotifySeq.getAndIncrement(), notification)
+        }
+    }
+
+    /** Android 8+ 必须先把通知渠道建好，否则 notify 会被系统静默丢弃。 */
+    private fun ensureRecordChannel(ctx: Context) {
+        if (Build.VERSION.SDK_INT < Build.VERSION_CODES.O) return
+        val mgr = ctx.getSystemService(Context.NOTIFICATION_SERVICE) as? NotificationManager ?: return
+        if (mgr.getNotificationChannel(RECORD_CHANNEL_ID) == null) {
+            mgr.createNotificationChannel(
+                NotificationChannel(
+                    RECORD_CHANNEL_ID,
+                    "记账提醒",
+                    NotificationManager.IMPORTANCE_DEFAULT,
+                ).apply { description = "每次自动记录一笔账时提醒" },
+            )
         }
     }
 
     companion object {
         /** 加密初始化最多尝试次数；超过则放弃加密并明确告知用户（不再静默降级）。 */
         private const val MAX_ENCRYPTION_ATTEMPTS = 3
+
+        /** 「记账提醒」通知渠道 id（Android 8+ 必需）。 */
+        private const val RECORD_CHANNEL_ID = "autoledger_record"
+
+        /** 提醒通知 id 起始值，避免与其它通知 id 冲突。 */
+        private const val RECORD_NOTIFY_BASE_ID = 10_000
 
         /**
          * 放弃加密后的告知。措辞如实：库文件本身不加密，但通知/短信原文仍经 Keystore 密封存储。

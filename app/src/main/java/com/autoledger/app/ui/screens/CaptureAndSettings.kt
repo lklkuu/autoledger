@@ -164,11 +164,19 @@ fun CaptureScreen(container: AppContainer) {
                                 category = null,
                                 modifier = Modifier.weight(1f),
                                 trailing = {
-                                    IconButton(onClick = {
-                                        scope.launch {
-                                            container.repository.markStatus(txn.id, TxnStatus.CONFIRMED)
-                                        }
-                                    }) { Icon(LedgerIcons.Check, "确认入账") }
+                                    Row(verticalAlignment = Alignment.CenterVertically) {
+                                        IconButton(onClick = {
+                                            scope.launch {
+                                                container.repository.markStatus(txn.id, TxnStatus.CONFIRMED)
+                                            }
+                                        }) { Icon(LedgerIcons.Check, "确认入账") }
+                                        // 与账单页保持一致：待确认的流水也能直接丢弃（标记为忽略）。
+                                        IconButton(onClick = {
+                                            scope.launch {
+                                                container.repository.markStatus(txn.id, TxnStatus.IGNORED)
+                                            }
+                                        }) { Icon(LedgerIcons.Delete, "忽略这笔") }
+                                    }
                                 },
                             )
                         }
@@ -241,6 +249,7 @@ fun SettingsScreen(container: AppContainer) {
     ) { uri -> if (uri != null) encryptRequest = EncryptRequest.Import(uri) }
 
     val autoMerge by container.settings.autoMerge.collectAsState()
+    val notifyOnRecord by container.notifyOnRecord.collectAsState()
 
     var showClearConfirm by remember { mutableStateOf(false) }
 
@@ -428,6 +437,23 @@ fun SettingsScreen(container: AppContainer) {
                         )
                     }
                     Switch(checked = autoMerge, onCheckedChange = container.settings::setAutoMerge)
+                }
+            }
+        }
+
+        item {
+            AppCard {
+                SectionTitle("记账提醒", "自动记账后要不要提醒你一声")
+                Row(Modifier.fillMaxWidth(), verticalAlignment = Alignment.CenterVertically) {
+                    Column(Modifier.weight(1f)) {
+                        Text("记账时弹通知", style = MaterialTheme.typography.bodyMedium)
+                        Text(
+                            "每自动记录一笔账，发一条系统通知；没授予通知权限则自动跳过",
+                            style = MaterialTheme.typography.bodySmall,
+                            color = MaterialTheme.colorScheme.onSurfaceVariant,
+                        )
+                    }
+                    Switch(checked = notifyOnRecord, onCheckedChange = container::setNotifyOnRecord)
                 }
             }
         }

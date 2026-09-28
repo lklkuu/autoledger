@@ -74,4 +74,16 @@ class BankCardNotificationTest {
     fun `credit card available limit reminder is not parsed as spending`() {
         assertNull(parser.parse("cmb.pb", "招商银行", "您尾号1234信用卡可用额度为3000.00元"))
     }
+
+    @Test
+    fun `bank marketing sms mentioning 消费 is not parsed as spending`() {
+        // 用户实报（截图）：工行营销短信含"消费"二字却非真实消费，
+        // 旧规则 bodyRejectAny 没有营销词，命中 bank_generic_out 并提取了"500元"。
+        val body = "【工商银行】工享月月花，好礼月月拿！即日起至9月30日，绑定工行信用卡通过微信快捷支付，" +
+            "消费累计金额达标，最高有机会抽取500元微信立减金。参与方式：关注\"工行福建\"微信公众号…回复TDYX退订。"
+        assertNull(
+            parser.parse("sms:inbox", "95588", body),
+            "营销短信不得被记为消费",
+        )
+    }
 }
