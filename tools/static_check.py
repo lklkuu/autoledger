@@ -35,11 +35,12 @@ MODULE_PKGS = {
     "feature:dedup": "com.autoledger.feature.dedup",
     "feature:stats": "com.autoledger.feature.stats",
     "feature:refund": "com.autoledger.feature.refund",
+    "feature:platform": "com.autoledger.feature.platform",
     "feature:transfer": "com.autoledger.feature.transfer",
     "app": "com.autoledger.app",
 }
 
-JVM_MODULES = {"core:model", "feature:dedup", "feature:stats", "feature:refund"}
+JVM_MODULES = {"core:model", "feature:dedup", "feature:stats", "feature:refund", "feature:platform"}
 
 # 依赖声明种类（用于 API 泄漏检查：只有 api 才会传递给使用方）
 DEP_KIND_RE = (
