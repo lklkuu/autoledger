@@ -324,6 +324,32 @@ class LedgerStore(private val container: AppContainer) {
         }
     }
 
+    /**
+     * 改金额 / 日期。
+     *
+     * - **符号与类型不变**（见 [applyAmountAndDateEdit]）：只替换绝对值，避免"改个金额把支出变成收入"；
+     * - **重算指纹**：指纹材料含 `amountMinor`，不重算则跨渠道去重再也匹配不上；
+     * - 调用方（UI）已按 [TxnEditRules] 在「已关联订单/退款/划转」时禁用这两个输入框，
+     *   这里再兜一道：即便被绕过也不写入，避免破坏抵扣对账与配对。
+     *
+     * @param amountMinor 用户输入金额的**绝对值**（单位分）
+     */
+    fun updateAmountAndDate(txn: LedgerTransaction, amountMinor: Long, occurredAtMillis: Long) {
+        if (!TxnEditRules.canEdit(txn) || !TxnEditRules.canEditAmountAndDate(txn)) return
+        storeScope.launch {
+            catching {
+                container.repository.upsert(
+                    applyAmountAndDateEdit(
+                        txn = txn,
+                        amountMinor = amountMinor,
+                        occurredAtMillis = occurredAtMillis,
+                        fingerprintOf = container.duplicateResolver::fingerprintOf,
+                    ),
+                )
+            }
+        }
+    }
+
     /** 用户纠正分类：写回 + 存入学习记忆 */
     fun correctCategory(txn: LedgerTransaction, category: Category) {
         storeScope.launch {

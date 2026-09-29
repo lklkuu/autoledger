@@ -45,8 +45,12 @@ import com.autoledger.app.ui.components.LoadingBox
 import com.autoledger.app.ui.components.MetricCard
 import com.autoledger.app.ui.components.SectionTitle
 import com.autoledger.app.ui.components.TransactionRow
+import com.autoledger.app.ui.components.TxnEditDialog
+import com.autoledger.app.ui.components.TxnEditExtras
+import com.autoledger.app.ui.components.TxnRowTrailing
 import com.autoledger.app.ui.components.yuan
 import com.autoledger.app.ui.stores.LedgerStore
+import com.autoledger.app.ui.stores.TxnEditRules
 import com.autoledger.app.ui.theme.LedgerIcons
 import com.autoledger.app.ui.theme.LedgerPalette
 import com.autoledger.core.model.ExpenseMath
@@ -77,8 +81,10 @@ fun ExpensesScreen(container: AppContainer) {
     var note by remember { mutableStateOf("") }
     var expandedId by remember { mutableStateOf<String?>(null) }
     var isRefund by remember { mutableStateOf(false) }
-    // 正在编辑（改商户名 / 备注）的流水；null = 关闭对话框。
+    // 正在编辑（商户名 / 备注 / 消费平台 / 金额 / 日期）的流水；null = 关闭对话框。
     var editing by remember { mutableStateOf<LedgerTransaction?>(null) }
+    // 点到「已并入其它流水」的行：用它弹说明，而不是默默无响应。
+    var mergedHint by remember { mutableStateOf<String?>(null) }
 
     LazyColumn(
         modifier = Modifier.fillMaxSize().padding(horizontal = 16.dp),
@@ -213,179 +219,47 @@ fun ExpensesScreen(container: AppContainer) {
                 TransactionRow(
                     txn = txn,
                     category = category,
-                    // 点整行 → 弹「修正商户名 / 备注」对话框（自动抓取的商户名经常缺失）。
-                    onClick = { editing = txn },
+                    // 点整行 → 弹「修正商户名 / 备注 / 消费平台 / 金额 / 日期」对话框
+                    // （自动抓取的商户名经常缺失）。已并入其它流水时不给编辑入口。
+                    onClick = if (TxnEditRules.canEdit(txn)) {
+                        { editing = txn }
+                    } else {
+                        { mergedHint = txn.id }
+                    },
                     trailing = {
-                        Row(verticalAlignment = Alignment.CenterVertically) {
-                            // 原「点行展开分类」入口改到独立按钮，避免与编辑动作冲突。
-                            IconButton(onClick = { expandedId = if (expandedId == txn.id) null else txn.id }) {
-                                Icon(LedgerIcons.Category, "纠正分类")
-                            }
-                            IconButton(onClick = { store.delete(txn.id) }) {
-                                Icon(LedgerIcons.Delete, "删除")
-                            }
-                        }
+                        TxnRowTrailing(
+                            store = store,
+                            txn = txn,
+                            expanded = expandedId == txn.id,
+                            onToggleExpanded = { expandedId = if (expandedId == txn.id) null else txn.id },
+                        )
                     },
                 )
                 if (expandedId == txn.id) {
-                    FlowRow(
-                        Modifier.fillMaxWidth().padding(bottom = 8.dp),
-                        horizontalArrangement = Arrangement.spacedBy(6.dp),
-                    ) {
-                        state.categories.values.forEach { cat ->
-                            CategoryChip(cat) {
-                                store.correctCategory(txn, cat)
-                                expandedId = null
-                            }
-                        }
-                        if (txn.type != TxnType.TRANSFER) {
-                            FilterChip(
-                                selected = false,
-                                onClick = { store.markTransfer(txn); expandedId = null },
-                                label = { Text("标为内部划转") },
-                            )
-                        }
-                    }
-                    TagEditor(
-                        tags = txn.txnExtras.tags,
-                        suggestions = store.allTags(),
-                        onAdd = { store.setTags(txn, txn.txnExtras.tags + it) },
-                        onRemove = { store.setTags(txn, txn.txnExtras.tags - it) },
+                    TxnEditExtras(
+                        store = store,
+                        txn = txn,
+                        categories = state.categories.values,
+                        onDone = { expandedId = null },
                     )
                 }
             }
         }
     }
 
-    // 修正对话框：允许补全 / 修改商户名、消费平台与备注。
-    editing?.let { txn ->
-        var name by remember(txn.id) { mutableStateOf(txn.counterparty) }
-        var noteText by remember(txn.id) { mutableStateOf(txn.note.orEmpty()) }
-        var platformId by remember(txn.id) { mutableStateOf(txn.platformId) }
-        // 自动识别且置信度不足 ⇒ 提示用户确认（用户手选后即变 USER 源，不再提示）
-        val platformUncertain = txn.platformSource == com.autoledger.core.model.platform.PlatformSource.AUTO &&
-            txn.platformConfidence < com.autoledger.core.model.platform.PlatformResolver.CONFIRM_THRESHOLD
+    // 已并入其它流水的行被点到：明确告知原因，而不是"点了没反应"
+    mergedHint?.let {
         AlertDialog(
-            onDismissRequest = { editing = null },
-            title = { Text("修正这笔流水") },
-            text = {
-                Column {
-                    OutlinedTextField(
-                        value = name,
-                        onValueChange = { name = it },
-                        label = { Text("商户名") },
-                        singleLine = true,
-                        modifier = Modifier.fillMaxWidth(),
-                    )
-                    OutlinedTextField(
-                        value = noteText,
-                        onValueChange = { noteText = it },
-                        label = { Text("备注") },
-                        singleLine = true,
-                        modifier = Modifier.fillMaxWidth().padding(top = 8.dp),
-                    )
-                    Text(
-                        "消费平台",
-                        Modifier.padding(top = 12.dp),
-                        style = MaterialTheme.typography.labelMedium,
-                    )
-                    PlatformPicker(selected = platformId, onSelect = { platformId = it })
-                    if (platformUncertain) {
-                        Text(
-                            "自动识别不确定，请确认平台是否正确。",
-                            Modifier.padding(top = 6.dp),
-                            style = MaterialTheme.typography.bodySmall,
-                            color = LedgerPalette.Warning,
-                        )
-                    }
-                    Text(
-                        "自动抓取的商户名 / 消费平台常缺失或不准，在这里补上即可；改过之后不会再被自动识别覆盖。",
-                        Modifier.padding(top = 8.dp),
-                        style = MaterialTheme.typography.bodySmall,
-                        color = MaterialTheme.colorScheme.onSurfaceVariant,
-                    )
-                }
-            },
-            confirmButton = {
-                TextButton(onClick = {
-                    store.updateCounterparty(txn, name, noteText, platformId)
-                    editing = null
-                }) { Text("保存") }
-            },
-            dismissButton = {
-                TextButton(onClick = { editing = null }) { Text("取消") }
-            },
+            onDismissRequest = { mergedHint = null },
+            title = { Text("这笔不可修改") },
+            text = { Text("该笔已并入其他流水，如需调整请修改并入后的那条记录。") },
+            confirmButton = { TextButton(onClick = { mergedHint = null }) { Text("知道了") } },
         )
     }
-}
 
-/** 消费平台选择器：内置平台 + 未知，流式排列。 */
-@OptIn(ExperimentalLayoutApi::class)
-@Composable
-private fun PlatformPicker(selected: String, onSelect: (String) -> Unit) {
-    FlowRow(
-        horizontalArrangement = Arrangement.spacedBy(8.dp),
-        verticalArrangement = Arrangement.spacedBy(4.dp),
-        modifier = Modifier.fillMaxWidth().padding(top = 6.dp),
-    ) {
-        com.autoledger.core.model.platform.PlatformCatalog.all().forEach { entry ->
-            FilterChip(
-                selected = entry.id == selected,
-                onClick = { onSelect(entry.id) },
-                label = { Text(entry.displayName) },
-            )
-        }
-    }
-}
-
-/** 交易行内的标签编辑器：显示已有标签（点即移除）、输入新增、并给出常用标签建议。 */
-@OptIn(ExperimentalLayoutApi::class)
-@Composable
-private fun TagEditor(
-    tags: List<String>,
-    suggestions: List<String>,
-    onAdd: (String) -> Unit,
-    onRemove: (String) -> Unit,
-) {
-    var input by remember { mutableStateOf("") }
-    Column(Modifier.fillMaxWidth().padding(top = 6.dp)) {
-        Row(verticalAlignment = Alignment.CenterVertically) {
-            OutlinedTextField(
-                value = input,
-                onValueChange = { input = it },
-                label = { Text("加标签") },
-                singleLine = true,
-                modifier = Modifier.weight(1f),
-            )
-            IconButton(onClick = {
-                val tag = input.trim()
-                if (tag.isNotEmpty()) {
-                    onAdd(tag)
-                    input = ""
-                }
-            }) { Icon(LedgerIcons.Add, "添加标签") }
-        }
-        if (tags.isNotEmpty()) {
-            FlowRow(
-                Modifier.fillMaxWidth().padding(top = 6.dp),
-                horizontalArrangement = Arrangement.spacedBy(6.dp),
-            ) {
-                tags.forEach { tag ->
-                    FilterChip(selected = true, onClick = { onRemove(tag) }, label = { Text("$tag ✕") })
-                }
-            }
-        }
-        val candidates = suggestions.filter { it !in tags }.take(6)
-        if (candidates.isNotEmpty()) {
-            FlowRow(
-                Modifier.fillMaxWidth().padding(top = 4.dp),
-                horizontalArrangement = Arrangement.spacedBy(6.dp),
-            ) {
-                candidates.forEach { tag ->
-                    FilterChip(selected = false, onClick = { onAdd(tag) }, label = { Text(tag) })
-                }
-            }
-        }
+    // 修正对话框：商户名 / 备注 / 消费平台 / 金额 / 日期（两页共用同一实现）
+    editing?.let { txn ->
+        TxnEditDialog(store = store, txn = txn, onDismiss = { editing = null })
     }
 }
 
@@ -415,6 +289,12 @@ fun MonthlyScreen(container: AppContainer) {
     var mode by remember { mutableStateOf(BillMode.MONTH) }
     var selectedMonth by remember { mutableStateOf(months.first()) }
     var selectedYear by remember { mutableStateOf(LocalDate.now(zone).year) }
+
+    // 账单页与记账页共用同一套编辑实现（TxnEditDialog / TxnRowTrailing / TxnEditExtras），
+    // 两页编辑能力完全一致，后续加字段只改一处。
+    var editing by remember { mutableStateOf<com.autoledger.core.model.LedgerTransaction?>(null) }
+    var expandedId by remember { mutableStateOf<String?>(null) }
+    var mergedHint by remember { mutableStateOf<String?>(null) }
 
     fun monthOf(t: com.autoledger.core.model.LedgerTransaction): LocalDate =
         Instant.ofEpochMilli(t.occurredAtMillis).atZone(zone).toLocalDate()
@@ -490,7 +370,35 @@ fun MonthlyScreen(container: AppContainer) {
                     item { AppCard { EmptyHint("这个月还没有记录") } }
                 } else {
                     items(monthTxns.take(60), key = { it.id }) { txn ->
-                        TransactionRow(txn, state.categories[txn.categoryId])
+                        Column(Modifier.padding(horizontal = 4.dp)) {
+                            TransactionRow(
+                                txn = txn,
+                                category = state.categories[txn.categoryId],
+                                onClick = if (TxnEditRules.canEdit(txn)) {
+                                    { editing = txn }
+                                } else {
+                                    { mergedHint = txn.id }
+                                },
+                                trailing = {
+                                    TxnRowTrailing(
+                                        store = store,
+                                        txn = txn,
+                                        expanded = expandedId == txn.id,
+                                        onToggleExpanded = {
+                                            expandedId = if (expandedId == txn.id) null else txn.id
+                                        },
+                                    )
+                                },
+                            )
+                            if (expandedId == txn.id) {
+                                TxnEditExtras(
+                                    store = store,
+                                    txn = txn,
+                                    categories = state.categories.values,
+                                    onDone = { expandedId = null },
+                                )
+                            }
+                        }
                     }
                 }
             }
@@ -588,6 +496,21 @@ fun MonthlyScreen(container: AppContainer) {
                 }
             }
         }
+    }
+
+    // 已并入其它流水的行被点到：明确告知原因
+    mergedHint?.let {
+        AlertDialog(
+            onDismissRequest = { mergedHint = null },
+            title = { Text("这笔不可修改") },
+            text = { Text("该笔已并入其他流水，如需调整请修改并入后的那条记录。") },
+            confirmButton = { TextButton(onClick = { mergedHint = null }) { Text("知道了") } },
+        )
+    }
+
+    // 修正对话框：与记账页共用 TxnEditDialog（商户名 / 备注 / 消费平台 / 金额 / 日期）
+    editing?.let { txn ->
+        TxnEditDialog(store = store, txn = txn, onDismiss = { editing = null })
     }
 }
 
