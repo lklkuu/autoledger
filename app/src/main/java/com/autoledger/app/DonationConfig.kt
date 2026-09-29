@@ -42,8 +42,27 @@ object DonationConfig {
     /**
      * 捐赠渠道。
      *
-     * 预留的 id 约定：`wechat`（微信）、`alipay`（支付宝）。
-     * 填好收款码资源名后，设置页会自动展示对应入口。
+     * ## 接入示例（把注释去掉、按你的实际情况改即可）
+     *
+     * ```kotlin
+     * val channels: List<DonationChannel> = listOf(
+     *     DonationChannel(
+     *         id = "wechat",
+     *         displayName = "微信赞赏码",
+     *         qrResName = "donate_wechat",          // 对应 res/drawable/donate_wechat.png
+     *         hint = "长按识别 / 扫码即可，金额随意",
+     *     ),
+     *     DonationChannel(
+     *         id = "alipay",
+     *         displayName = "支付宝",
+     *         qrResName = "donate_alipay",          // 对应 res/drawable/donate_alipay.png
+     *         url = "https://qr.alipay.com/fkx00000xxxx", // 可选：支付宝收钱码链接，点击直接跳转
+     *         hint = "也可点「打开链接」直接跳转支付宝",
+     *     ),
+     * )
+     * ```
+     *
+     * 预留的 id 约定：`wechat`（微信）、`alipay`（支付宝），也可加任意自定义渠道。
      */
     val channels: List<DonationChannel> = emptyList()
 
