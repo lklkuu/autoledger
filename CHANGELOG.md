@@ -13,6 +13,27 @@
 - 加密备份的 UI 入口（后端能力已具备，当前设置页只有明文导出/导入）
 - 自适应布局（当前为手机竖屏优化）
 
+## [1.1.0] - 2026-09-29
+
+### 新增
+
+**设置页可发现性与支持渠道**
+- 「关于」卡片：应用名、版本号（从包信息动态读取，不会与构建配置不同步）、GitHub 仓库入口
+  （打不开浏览器时把地址显示出来，而不是"点了没反应"）
+- 「支持开发者」卡片 + 捐赠能力：
+  - **微信**：赞赏码图片，弹窗展示供扫码
+  - **支付宝**：收钱码链接，点击**直接跳转**支付宝付款页（微信没有个人版远程收款链接，只能扫码）
+  - **URL 转二维码**（zxing）：二维码内容可指向一个**可随时修改的网页**，
+    换收款方式无需发新版 App
+  - 渠道配置化（`DonationConfig`）：未配置时如实显示说明文案，**不做假入口**
+
+**捐赠落地页**（`docs/donate/`）
+- 纯静态单页，可直接发布到 GitHub Pages；承接 App 内二维码，集中展示最新收款方式
+- 内联 CSS、零外部依赖（无 CDN / 无分析脚本 / 无 Cookie），配色与 App 一致、移动优先
+
+### 变更
+- 新增依赖 `zxing-core 3.5.3`（生成二维码；纯 JVM，不引入 Android 依赖）
+
 ## [1.0.0] - 2026-09-29
 
 首个稳定版。
@@ -93,5 +114,6 @@
 - 未做 Android 自适应布局，当前为手机竖屏优化
 - 捐赠渠道为**配置占位**：填入收款方式后自动在设置页出现
 
-[Unreleased]: https://github.com/lklkuu/autoledger/compare/v1.0.0...HEAD
+[Unreleased]: https://github.com/lklkuu/autoledger/compare/v1.1.0...HEAD
+[1.1.0]: https://github.com/lklkuu/autoledger/releases/tag/v1.1.0
 [1.0.0]: https://github.com/lklkuu/autoledger/releases/tag/v1.0.0
