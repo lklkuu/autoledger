@@ -446,21 +446,7 @@ fun SettingsScreen(container: AppContainer) {
                     color = MaterialTheme.colorScheme.onSurfaceVariant,
                 )
                 Button(
-                    onClick = {
-                        runCatching {
-                            aboutContext.startActivity(
-                                Intent(Intent.ACTION_VIEW, Uri.parse(DonationConfig.GITHUB_REPO_URL))
-                                    .addFlags(Intent.FLAG_ACTIVITY_NEW_TASK),
-                            )
-                        }.onFailure {
-                            // 没装浏览器 / 无法解析链接：把地址显式告诉用户，而不是"点了没反应"
-                            Toast.makeText(
-                                aboutContext,
-                                "打不开浏览器，仓库地址：${DonationConfig.GITHUB_REPO_URL}",
-                                Toast.LENGTH_LONG,
-                            ).show()
-                        }
-                    },
+                    onClick = { openExternalUrl(aboutContext, DonationConfig.GITHUB_REPO_URL) },
                     modifier = Modifier.padding(top = 10.dp),
                 ) { Text("打开 GitHub 仓库") }
                 Text(
@@ -475,6 +461,7 @@ fun SettingsScreen(container: AppContainer) {
         item {
             AppCard {
                 SectionTitle("支持开发者", "如果这个小账本帮到了你")
+                val donateContext = LocalContext.current
                 if (DonationConfig.enabled) {
                     Text(
                         "感谢支持！款项仅用于覆盖开发与维护成本。",
@@ -486,7 +473,15 @@ fun SettingsScreen(container: AppContainer) {
                         horizontalArrangement = Arrangement.spacedBy(8.dp),
                     ) {
                         DonationConfig.channels.forEach { channel ->
-                            Button(onClick = { donationChannel = channel }) { Text(channel.displayName) }
+                            Button(onClick = {
+                                // 只配了跳转链接、没有收款码图片 ⇒ 直接跳出 App（少一次点击）。
+                                // 支付宝走这条路；微信没有个人版远程收款链接，只能展示二维码让用户扫。
+                                if (channel.qrResName == null && channel.url != null) {
+                                    openExternalUrl(donateContext, channel.url)
+                                } else {
+                                    donationChannel = channel
+                                }
+                            }) { Text(channel.displayName) }
                         }
                     }
                 } else {
@@ -761,3 +756,20 @@ private fun copyImageToPrivate(context: Context, uri: android.net.Uri): String? 
     input.use { ins -> file.outputStream().use { outs -> ins.copyTo(outs) } }
     file.absolutePath
 }.getOrNull()
+
+/**
+ * 打开外部链接（仓库地址 / 支付宝收钱码链接等）。
+ *
+ * 失败时把地址直接显示给用户，而不是"点了没反应"——没装浏览器、链接非法、
+ * 或目标 App 未安装都会走到这里。绝不抛异常。
+ */
+private fun openExternalUrl(context: Context, url: String) {
+    val ok = runCatching {
+        context.startActivity(
+            Intent(Intent.ACTION_VIEW, Uri.parse(url)).addFlags(Intent.FLAG_ACTIVITY_NEW_TASK),
+        )
+    }.isSuccess
+    if (!ok) {
+        Toast.makeText(context, "打不开链接，地址：$url", Toast.LENGTH_LONG).show()
+    }
+}
