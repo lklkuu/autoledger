@@ -32,8 +32,15 @@ data class DonationChannel(
      * 而不是收款码本身 —— 换收款方式只改网页，**所有旧版 App 立刻生效**，不必发新版。
      */
     val qrUrl: String? = null,
-    /** 外部跳转链接（如支付宝收钱码链接）；留空则该渠道只展示二维码。 */
+    /** 外部跳转链接（如支付宝收钱码链接、捐赠落地页）；留空则该渠道只展示二维码。 */
     val url: String? = null,
+    /**
+     * 点击渠道按钮后，在弹窗里**展示可点击的链接**（而不是直接跳出 App、也不显示二维码图片）。
+     *
+     * 用于「扫码支持 → 落地页」这类场景：让用户先看到地址、自己决定何时跳转，
+     * 避免"点一下就跳出 App"的突兀感。
+     */
+    val showLinkInDialog: Boolean = false,
     /** 给用户的一句提示，例如「长按识别或扫码」。 */
     val hint: String? = null,
 )
@@ -65,29 +72,30 @@ object DonationConfig {
      * 复制一条改改即可；`qrResName` 对应 `res/drawable/<名字>.png`（**只能小写字母、数字、下划线**）。
      */
     val channels: List<DonationChannel> = listOf(
+        // 【主入口】捐赠落地页 —— **不以图片形式展示**：
+        // 弹窗里直接给出链接，由用户点击后用**默认浏览器**打开。
+        // 落地页上放着当前有效的收款方式，换码只需改网页，旧版 App 依然有效。
+        DonationChannel(
+            id = "web",
+            displayName = "扫码支持",
+            url = "https://lklkuu.github.io/autoledger/donate/",
+            showLinkInDialog = true,
+            hint = "点击链接用浏览器打开，页内含微信与支付宝收款方式",
+        ),
+        // 【快捷方式】直达微信收款码（少一次点击；若该码失效请优先改落地页）
         DonationChannel(
             id = "wechat",
             displayName = "微信赞赏",
             qrResName = "donate_wechat",
             hint = "长按识别或扫码，金额随意，感谢支持 ❤️",
         ),
-        // 支付宝：走收钱码链接**直接跳转**（无需图片，少一次扫码）。
-        // 该链接由本人支付宝收款码解码得到，与账户绑定、长期有效；
-        // 微信没有等价的个人版远程收款链接，只能扫码（见上面的微信渠道）。
+        // 【快捷方式】直达支付宝付款页（微信没有个人版远程收款链接，只能扫码）
         DonationChannel(
             id = "alipay",
             displayName = "支付宝",
             url = "https://qr.alipay.com/fkx15892qu3jnvvmrnvyif0",
             hint = "点击后跳转支付宝完成付款",
         ),
-        // 动态二维码：扫码打开**捐赠落地页**（页内含最新收款方式）。
-        // 部署好 docs/donate/ 后填入地址即可 —— 之后换收款方式只改网页，无需发新版 App。
-        // DonationChannel(
-        //     id = "web",
-        //     displayName = "扫码支持",
-        //     qrUrl = "https://lklkuu.github.io/autoledger/donate/",
-        //     hint = "扫码打开支持页面，选择微信或支付宝",
-        // ),
     )
 
     /** 是否已配置捐赠渠道（决定设置页展示收款入口还是说明文案）。 */

@@ -31,6 +31,7 @@ import androidx.compose.material3.TextButton
 import androidx.compose.material3.LinearProgressIndicator
 import androidx.compose.ui.graphics.asImageBitmap
 import androidx.compose.ui.res.painterResource
+import androidx.compose.ui.text.style.TextDecoration
 import android.net.Uri
 import androidx.compose.foundation.text.KeyboardOptions
 import androidx.compose.material3.OutlinedTextField
@@ -476,9 +477,12 @@ fun SettingsScreen(container: AppContainer) {
                     ) {
                         DonationConfig.channels.forEach { channel ->
                             Button(onClick = {
-                                // 只配了跳转链接、没有收款码图片 ⇒ 直接跳出 App（少一次点击）。
+                                // 只配了链接、没配图片且**未要求弹窗展示** ⇒ 直接跳出 App（少一次点击）。
                                 // 支付宝走这条路；微信没有个人版远程收款链接，只能展示二维码让用户扫。
-                                if (channel.qrResName == null && channel.url != null) {
+                                // 落地页入口则要求 showLinkInDialog，走弹窗给链接。
+                                if (channel.qrResName == null && channel.qrUrl == null &&
+                                    channel.url != null && !channel.showLinkInDialog
+                                ) {
                                     openExternalUrl(donateContext, channel.url)
                                 } else {
                                     donationChannel = channel
@@ -614,12 +618,32 @@ fun SettingsScreen(container: AppContainer) {
         val qrUrlBitmap = remember(channel.id, channel.qrUrl) {
             channel.qrUrl?.let { qrBitmapOf(it) }
         }
+        // 「只给链接」模式（如「扫码支持」→ 落地页）：不展示任何图片，只在弹窗里给出地址，
+        // 由用户自己点「用浏览器打开」——避免"点一下就跳出 App"的突兀感。
+        val url = channel.url
+        val linkOnly = channel.showLinkInDialog && url != null &&
+            channel.qrResName == null && channel.qrUrl == null
         AlertDialog(
             onDismissRequest = { donationChannel = null },
-            title = { Text("${channel.displayName} 收款码") },
+            title = { Text(if (linkOnly) channel.displayName else "${channel.displayName} 收款码") },
             text = {
                 Column {
                     when {
+                        linkOnly -> {
+                            Text(
+                                "点击下面的链接，用浏览器打开支持页面：",
+                                style = MaterialTheme.typography.bodySmall,
+                                color = MaterialTheme.colorScheme.onSurfaceVariant,
+                            )
+                            Text(
+                                url!!,
+                                Modifier.padding(top = 6.dp),
+                                style = MaterialTheme.typography.bodyMedium,
+                                color = LedgerPalette.Positive,
+                                textDecoration = TextDecoration.Underline,
+                            )
+                        }
+
                         // 动态二维码优先：内容指向可随时修改的落地页
                         qrUrlBitmap != null -> Image(
                             bitmap = qrUrlBitmap.asImageBitmap(),
@@ -646,19 +670,25 @@ fun SettingsScreen(container: AppContainer) {
                 }
             },
             confirmButton = {
-                TextButton(onClick = { donationChannel = null }) { Text("关闭") }
-            },
-            dismissButton = channel.url?.let { url ->
-                {
+                if (linkOnly) {
                     TextButton(onClick = {
-                        runCatching {
-                            donationContext.startActivity(
-                                Intent(Intent.ACTION_VIEW, Uri.parse(url))
-                                    .addFlags(Intent.FLAG_ACTIVITY_NEW_TASK),
-                            )
-                        }
+                        openExternalUrl(donationContext, url!!)
                         donationChannel = null
-                    }) { Text("打开链接") }
+                    }) { Text("用浏览器打开") }
+                } else {
+                    TextButton(onClick = { donationChannel = null }) { Text("关闭") }
+                }
+            },
+            dismissButton = if (linkOnly) {
+                { TextButton(onClick = { donationChannel = null }) { Text("取消") } }
+            } else {
+                url?.let { u ->
+                    {
+                        TextButton(onClick = {
+                            openExternalUrl(donationContext, u)
+                            donationChannel = null
+                        }) { Text("打开链接") }
+                    }
                 }
             },
         )

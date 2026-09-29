@@ -13,6 +13,18 @@
 - 加密备份的 UI 入口（后端能力已具备，当前设置页只有明文导出/导入）
 - 自适应布局（当前为手机竖屏优化）
 
+## [1.1.1] - 2026-09-29
+
+### 修复
+- **「支持开发者」没有落地页入口**：`DonationConfig` 里的动态二维码渠道此前是注释状态，
+  设置页只能看到微信/支付宝两个快捷方式，看不到落地页。现已启用并置为主入口。
+
+### 新增
+- 捐赠落地页正式上线（GitHub Pages）：
+  **https://lklkuu.github.io/autoledger/donate/**
+  - 「扫码支持」渠道的二维码内容即该地址 → 换收款方式只需改网页，**无需发新版 App**
+- 微信赞赏码图片同步发布到落地页目录，与 App 内使用同一张
+
 ## [1.1.0] - 2026-09-29
 
 ### 新增
@@ -114,6 +126,7 @@
 - 未做 Android 自适应布局，当前为手机竖屏优化
 - 捐赠渠道为**配置占位**：填入收款方式后自动在设置页出现
 
-[Unreleased]: https://github.com/lklkuu/autoledger/compare/v1.1.0...HEAD
+[Unreleased]: https://github.com/lklkuu/autoledger/compare/v1.1.1...HEAD
+[1.1.1]: https://github.com/lklkuu/autoledger/releases/tag/v1.1.1
 [1.1.0]: https://github.com/lklkuu/autoledger/releases/tag/v1.1.0
 [1.0.0]: https://github.com/lklkuu/autoledger/releases/tag/v1.0.0
