@@ -72,14 +72,23 @@
   }
   .amount-note{
     text-align:center;font-size:14px;color:var(--ink);
-    margin:12px 0 14px;font-weight:600;
+    margin:12px 0 6px;font-weight:600;
   }
-  .fallback{
-    margin-top:12px;padding:12px 14px;border-radius:12px;
-    background:var(--pink-pale);border:1px solid #F6D9DE;
-    font-size:13px;color:#8A5A61;line-height:1.7;
+  .steps{
+    margin-top:14px;padding:14px;border-radius:12px;
+    background:var(--green-pale);border:1px solid #CFE5DF;
   }
-  .fallback strong{color:#7A4A52;}
+  .steps .head{
+    font-size:13.5px;font-weight:600;color:var(--green);margin-bottom:8px;
+  }
+  ol.steps-list{
+    margin:0;padding-left:20px;font-size:13.5px;color:var(--ink);line-height:1.85;
+  }
+  ol.steps-list li{margin-bottom:2px;}
+  ol.steps-list b{color:var(--green);}
+  .tip{
+    margin-top:10px;font-size:12.5px;color:var(--ink-soft);line-height:1.7;
+  }
   .btn{
     display:block;width:100%;text-align:center;text-decoration:none;
     background:var(--green);color:#fff;font-weight:600;font-size:15px;
@@ -137,22 +146,30 @@
     <h2><span class="dot"></span>自愿赞赏</h2>
     <div class="pay">
 
-      <!-- ===== 微信：收款码（截图保存 → 微信扫一扫 → 相册选图） ===== -->
+      <!-- ===== 微信：收款码（截图保存 → 微信扫一扫 → 相册选图） =====
+           说明：这里**刻意不提供「一键唤起微信扫一扫」按钮**。
+           原因：weixin://dl/scan 不是微信开放的接口，微信自 2020 年起主动拦截非官方来源的
+           scheme 调用 —— 表现是"唤起了微信，但微信弹出『对不起，当前页面无法访问』"，
+           比没有按钮更糟。个人开发者也没有任何合规途径绕过（JS-SDK 仅限微信内网页、
+           wx-open-launch-weapp 需认证服务号+小程序、H5 支付需商户资质）。
+           因此改用微信扫一扫**原生支持**的路径：截图 → 扫一扫 → 相册选图。
+      -->
       <div class="pay-item">
         <div class="title"><span>微信赞赏</span></div>
-        <div class="desc">截图保存后用微信「扫一扫」→ 选相册图片，即可付款</div>
+        <div class="desc">请先保存下面的收款码，再用微信扫一扫打开</div>
         <img class="qr" src="wechat.png" alt="微信收款码" loading="lazy">
         <p class="amount-note">金额随意，感谢支持 ❤️</p>
 
-        <!-- 尝试唤起微信扫一扫。
-             注意：weixin://dl/scan 并非微信官方开放的接口，外部浏览器唤起成功率极低
-             （微信有意限制第三方唤起）。因此下面配了失败引导，避免"点了没反应"。 -->
-        <a class="btn" id="wxScanBtn" href="weixin://dl/scan" rel="noopener">打开微信扫一扫</a>
-        <div class="fallback" id="wxFallback" hidden>
-          <strong>没有自动打开微信？</strong><br>
-          这是微信对第三方唤起的限制，并非页面故障。请手动操作：<br>
-          打开<strong>微信</strong> → 右上角「<strong>+</strong>」→「<strong>扫一扫</strong>」→
-          右下角<strong>相册</strong> → 选择上面保存的收款码截图。
+        <div class="steps">
+          <div class="head">三步完成</div>
+          <ol class="steps-list">
+            <li><b>截图保存</b>上面的收款码（或长按图片选择「保存图片」）</li>
+            <li>打开<b>微信</b>，点右上角「<b>+</b>」→「<b>扫一扫</b>」</li>
+            <li>点扫一扫右下角的「<b>相册</b>」，选中刚才保存的图片</li>
+          </ol>
+          <div class="tip">
+            微信扫一扫内置「相册」入口，可识别已保存的二维码图片 —— 这是官方支持的路径。
+          </div>
         </div>
       </div>
 
@@ -201,23 +218,9 @@
     }
   })();
 
-  // 「打开微信扫一扫」：点击后若页面仍在前台，说明唤起失败，展示手动引导。
-  //
-  // 为什么需要这个检测：weixin://dl/scan 不是微信开放的正式接口，各系统/浏览器对
-  // 私有协议的拦截策略不同（iOS 主动拦截、Chrome 25+ 禁 intent: 隐式调用、
-  // 部分国产浏览器默认关闭"打开外部应用"），因此唤起失败是**常态而非异常**。
-  (function () {
-    var btn = document.getElementById('wxScanBtn');
-    var fb = document.getElementById('wxFallback');
-    if (!btn || !fb) return;
-    btn.addEventListener('click', function () {
-      // 1.6s 后如果页面还没被切到后台，判定为唤起失败
-      setTimeout(function () {
-        var stillHere = !document.hidden && document.visibilityState !== 'hidden';
-        if (stillHere) fb.hidden = false;
-      }, 1600);
-    });
-  })();
+  // 注：这里**没有**「唤起微信扫一扫」的脚本。
+  // weixin://dl/scan 已被微信主动拦截（会弹出「对不起，当前页面无法访问」），
+  // 保留它只会让每个用户都撞上一次微信错误页，所以改为页面上方的分步引导。
 </script>
 </body>
 </html>
