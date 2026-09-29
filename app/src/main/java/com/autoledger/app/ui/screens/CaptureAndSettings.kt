@@ -3,11 +3,13 @@ package com.autoledger.app.ui.screens
 import android.content.ClipData
 import android.content.ClipboardManager
 import android.content.Context
+import android.content.Intent
 import android.os.Build
 import android.widget.Toast
 import android.Manifest
 import androidx.activity.compose.rememberLauncherForActivityResult
 import androidx.activity.result.contract.ActivityResultContracts
+import androidx.compose.foundation.Image
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Column
 import androidx.compose.foundation.layout.Row
@@ -27,6 +29,7 @@ import androidx.compose.material3.Switch
 import androidx.compose.material3.Text
 import androidx.compose.material3.TextButton
 import androidx.compose.material3.LinearProgressIndicator
+import androidx.compose.ui.res.painterResource
 import android.net.Uri
 import androidx.compose.foundation.text.KeyboardOptions
 import androidx.compose.material3.OutlinedTextField
@@ -53,6 +56,8 @@ import com.autoledger.app.ui.components.SectionTitle
 import com.autoledger.app.ui.components.TransactionRow
 import com.autoledger.app.ui.components.yuan
 import com.autoledger.app.ui.stores.CaptureStore
+import com.autoledger.app.DonationChannel
+import com.autoledger.app.DonationConfig
 import com.autoledger.app.ui.stores.SettingsStore
 import com.autoledger.app.ui.stores.TransferStore
 import com.autoledger.app.ui.theme.LedgerIcons
@@ -229,6 +234,8 @@ fun SettingsScreen(container: AppContainer) {
     val store = remember(container) { SettingsStore(container) }
     val state by store.state.collectAsState()
     LaunchedEffect(container) { store.refresh() }
+    // 捐赠收款码弹窗当前展示的渠道（null = 不展示）
+    var donationChannel by remember { mutableStateOf<DonationChannel?>(null) }
 
     val exportLauncher = rememberLauncherForActivityResult(
         ActivityResultContracts.CreateDocument("application/json")
@@ -426,6 +433,76 @@ fun SettingsScreen(container: AppContainer) {
 
         item {
             AppCard {
+                SectionTitle("关于", "${DonationConfig.APP_DISPLAY_NAME} · 本地优先的自动记账")
+                val aboutContext = LocalContext.current
+                val versionLabel = remember(aboutContext) {
+                    runCatching {
+                        aboutContext.packageManager.getPackageInfo(aboutContext.packageName, 0).versionName
+                    }.getOrDefault("1.0.0")
+                }
+                Text(
+                    "版本 $versionLabel · 完全开源免费、无广告、不收集任何数据",
+                    style = MaterialTheme.typography.bodySmall,
+                    color = MaterialTheme.colorScheme.onSurfaceVariant,
+                )
+                Button(
+                    onClick = {
+                        runCatching {
+                            aboutContext.startActivity(
+                                Intent(Intent.ACTION_VIEW, Uri.parse(DonationConfig.GITHUB_REPO_URL))
+                                    .addFlags(Intent.FLAG_ACTIVITY_NEW_TASK),
+                            )
+                        }.onFailure {
+                            // 没装浏览器 / 无法解析链接：把地址显式告诉用户，而不是"点了没反应"
+                            Toast.makeText(
+                                aboutContext,
+                                "打不开浏览器，仓库地址：${DonationConfig.GITHUB_REPO_URL}",
+                                Toast.LENGTH_LONG,
+                            ).show()
+                        }
+                    },
+                    modifier = Modifier.padding(top = 10.dp),
+                ) { Text("打开 GitHub 仓库") }
+                Text(
+                    DonationConfig.GITHUB_REPO_URL,
+                    style = MaterialTheme.typography.bodySmall,
+                    color = MaterialTheme.colorScheme.onSurfaceVariant,
+                    modifier = Modifier.padding(top = 6.dp),
+                )
+            }
+        }
+
+        item {
+            AppCard {
+                SectionTitle("支持开发者", "如果这个小账本帮到了你")
+                if (DonationConfig.enabled) {
+                    Text(
+                        "感谢支持！款项仅用于覆盖开发与维护成本。",
+                        style = MaterialTheme.typography.bodySmall,
+                        color = MaterialTheme.colorScheme.onSurfaceVariant,
+                    )
+                    Row(
+                        Modifier.fillMaxWidth().padding(top = 8.dp),
+                        horizontalArrangement = Arrangement.spacedBy(8.dp),
+                    ) {
+                        DonationConfig.channels.forEach { channel ->
+                            Button(onClick = { donationChannel = channel }) { Text(channel.displayName) }
+                        }
+                    }
+                } else {
+                    // 未配置收款渠道时如实说明，不做"假入口"
+                    Text(
+                        "本 App 完全免费、开源、无广告，也不收集你的任何数据。\n" +
+                            "捐赠渠道尚未配置；如果它帮到了你，去 GitHub 点个 Star 或提个 Issue，就是最好的支持。",
+                        style = MaterialTheme.typography.bodySmall,
+                        color = MaterialTheme.colorScheme.onSurfaceVariant,
+                    )
+                }
+            }
+        }
+
+        item {
+            AppCard {
                 SectionTitle("自动去重")
                 Row(Modifier.fillMaxWidth(), verticalAlignment = Alignment.CenterVertically) {
                     Column(Modifier.weight(1f)) {
@@ -524,6 +601,58 @@ fun SettingsScreen(container: AppContainer) {
                 ) { Icon(LedgerIcons.Delete, null); Text(" 清空全部流水") }
             }
         }
+    }
+
+    // 捐赠收款码：在「支持开发者」里点渠道后弹出。
+    // 资源名解析不到（还没放置收款码图片）时降级为文字说明 —— 不崩溃、不假装能捐。
+    donationChannel?.let { channel ->
+        val donationContext = LocalContext.current
+        val qrResId = remember(channel.id, channel.qrResName) {
+            channel.qrResName
+                ?.let { donationContext.resources.getIdentifier(it, "drawable", donationContext.packageName) }
+                ?: 0
+        }
+        AlertDialog(
+            onDismissRequest = { donationChannel = null },
+            title = { Text("${channel.displayName} 收款码") },
+            text = {
+                Column {
+                    if (qrResId != 0) {
+                        Image(
+                            painter = painterResource(qrResId),
+                            contentDescription = "${channel.displayName}收款码",
+                            modifier = Modifier.fillMaxWidth(),
+                        )
+                    } else {
+                        Text("该渠道的收款码尚未配置。", style = MaterialTheme.typography.bodyMedium)
+                    }
+                    channel.hint?.let {
+                        Text(
+                            it,
+                            Modifier.padding(top = 6.dp),
+                            style = MaterialTheme.typography.bodySmall,
+                            color = MaterialTheme.colorScheme.onSurfaceVariant,
+                        )
+                    }
+                }
+            },
+            confirmButton = {
+                TextButton(onClick = { donationChannel = null }) { Text("关闭") }
+            },
+            dismissButton = channel.url?.let { url ->
+                {
+                    TextButton(onClick = {
+                        runCatching {
+                            donationContext.startActivity(
+                                Intent(Intent.ACTION_VIEW, Uri.parse(url))
+                                    .addFlags(Intent.FLAG_ACTIVITY_NEW_TASK),
+                            )
+                        }
+                        donationChannel = null
+                    }) { Text("打开链接") }
+                }
+            },
+        )
     }
 
     if (showClearConfirm) {
