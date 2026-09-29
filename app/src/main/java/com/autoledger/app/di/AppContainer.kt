@@ -2,11 +2,17 @@ package com.autoledger.app.di
 
 import android.app.NotificationChannel
 import android.app.NotificationManager
+import android.app.PendingIntent
 import android.content.Context
+import android.content.Intent
+import android.graphics.BitmapFactory
 import android.os.Build
 import androidx.core.app.NotificationCompat
 import androidx.core.app.NotificationManagerCompat
+import com.autoledger.app.R
 import com.autoledger.app.UserSettings
+import com.autoledger.app.ui.MainActivity
+import com.autoledger.app.ui.nav.Destination
 import com.autoledger.core.backup.BackupManager
 import com.autoledger.core.crypto.CryptoBox
 import com.autoledger.core.crypto.KeystoreKeyProvider
@@ -335,10 +341,30 @@ class AppContainer(context: Context) {
                 ?.let { "¥${"%.2f".format(kotlin.math.abs(it) / 100.0)}" }
                 ?: "金额待确认"
             val who = envelope.counterpartyHint?.takeIf { it.isNotBlank() } ?: "一笔新流水"
+
+            // 点击通知 → 打开 App 并落到「账单」页：流水可点开修正（商户/平台/金额/日期），
+            // 形成「自动记账 → 核对 → 修正」的闭环，而不是点开只停在首页。
+            val openIntent = Intent(ctx, MainActivity::class.java).apply {
+                putExtra(MainActivity.EXTRA_OPEN_DESTINATION, Destination.MONTHLY.name)
+                addFlags(
+                    Intent.FLAG_ACTIVITY_NEW_TASK or
+                        Intent.FLAG_ACTIVITY_CLEAR_TOP or
+                        Intent.FLAG_ACTIVITY_SINGLE_TOP,
+                )
+            }
+            val contentIntent = PendingIntent.getActivity(
+                ctx,
+                0,
+                openIntent,
+                PendingIntent.FLAG_UPDATE_CURRENT or PendingIntent.FLAG_IMMUTABLE,
+            )
+
             val notification = NotificationCompat.Builder(ctx, RECORD_CHANNEL_ID)
-                .setSmallIcon(android.R.drawable.ic_dialog_info)
+                .setSmallIcon(R.drawable.notify_small_icon)
+                .setLargeIcon(BitmapFactory.decodeResource(ctx.resources, R.drawable.notify_large_icon))
                 .setContentTitle("已自动记一笔账")
-                .setContentText("$who · $amountText")
+                .setContentText("$who · $amountText · 点按查看")
+                .setContentIntent(contentIntent)
                 .setAutoCancel(true)
                 .setPriority(NotificationCompat.PRIORITY_DEFAULT)
                 .build()

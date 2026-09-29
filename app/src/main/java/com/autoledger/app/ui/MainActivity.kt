@@ -4,6 +4,7 @@ import android.Manifest
 import android.content.ClipData
 import android.content.ClipboardManager
 import android.content.Context
+import android.content.Intent
 import android.os.Bundle
 import android.widget.Toast
 import androidx.activity.ComponentActivity
@@ -69,7 +70,16 @@ class MainActivity : ComponentActivity() {
         enableEdgeToEdge()
         super.onCreate(savedInstanceState)
         val container = (application as LedgerApp).container
+        // 通知点击（冷启动路径）：直接落到通知指定的页面（默认账单）
+        handleOpenDestination(intent)
         setContent { AppContent(container) }
+    }
+
+    override fun onNewIntent(intent: Intent) {
+        super.onNewIntent(intent)
+        // 通知点击（App 已在前台路径）：PendingIntent 带 CLEAR_TOP|SINGLE_TOP，走到这里
+        setIntent(intent)
+        handleOpenDestination(intent)
     }
 
     override fun onResume() {
@@ -78,6 +88,21 @@ class MainActivity : ComponentActivity() {
         (application as LedgerApp).container.notificationAccess.onAppForeground()
         // 短信权限：未授权时每次回到前台都提示（需求 1）
         (application as LedgerApp).container.smsAccess.onAppForeground()
+    }
+
+    /**
+     * 通知点击的落页处理：extra 里带 [EXTRA_OPEN_DESTINATION]（Destination 的 name），
+     * 解析成功就压栈过去；解析失败（脏值）静默忽略，保持默认首页。
+     */
+    private fun handleOpenDestination(intent: Intent?) {
+        val name = intent?.getStringExtra(EXTRA_OPEN_DESTINATION) ?: return
+        val target = runCatching { Destination.valueOf(name) }.getOrNull() ?: return
+        (application as LedgerApp).container.nav.navigate(target)
+    }
+
+    companion object {
+        /** 通知跳转参数：值是 [com.autoledger.app.ui.nav.Destination] 的 name（如 MONTHLY）。 */
+        const val EXTRA_OPEN_DESTINATION = "com.autoledger.app.extra.OPEN_DESTINATION"
     }
 }
 
