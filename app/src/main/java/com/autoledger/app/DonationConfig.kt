@@ -23,11 +23,18 @@ package com.autoledger.app
 data class DonationChannel(
     val id: String,
     val displayName: String,
-    /** 收款码图片的资源名称（如 `"donate_wechat"`）；null 表示该渠道只展示文字说明。 */
+    /** 收款码图片的资源名称（如 `"donate_wechat"`）；null 表示该渠道不展示静态收款码。 */
     val qrResName: String? = null,
-    /** 外部跳转链接（如支付宝转账链接）；可与收款码并存。 */
+    /**
+     * **动态二维码**：把这个地址现场生成二维码展示给用户扫。
+     *
+     * 与 [qrResName] 的区别：二维码内容指向**你能随时修改的网页**（如捐赠落地页），
+     * 而不是收款码本身 —— 换收款方式只改网页，**所有旧版 App 立刻生效**，不必发新版。
+     */
+    val qrUrl: String? = null,
+    /** 外部跳转链接（如支付宝收钱码链接）；留空则该渠道只展示二维码。 */
     val url: String? = null,
-    /** 给用户的一句提示，例如「请备注你的昵称」。 */
+    /** 给用户的一句提示，例如「长按识别或扫码」。 */
     val hint: String? = null,
 )
 
@@ -64,13 +71,22 @@ object DonationConfig {
             qrResName = "donate_wechat",
             hint = "长按识别或扫码，金额随意，感谢支持 ❤️",
         ),
-        // 支付宝：走收钱码链接跳转（无需图片）。
-        // 拿到链接后把下面三条注释解开、替换成你的地址即可（微信没有等价能力，只能扫码）。
+        // 支付宝：走收钱码链接**直接跳转**（无需图片，少一次扫码）。
+        // 该链接由本人支付宝收款码解码得到，与账户绑定、长期有效；
+        // 微信没有等价的个人版远程收款链接，只能扫码（见上面的微信渠道）。
+        DonationChannel(
+            id = "alipay",
+            displayName = "支付宝",
+            url = "https://qr.alipay.com/fkx15892qu3jnvvmrnvyif0",
+            hint = "点击后跳转支付宝完成付款",
+        ),
+        // 动态二维码：扫码打开**捐赠落地页**（页内含最新收款方式）。
+        // 部署好 docs/donate/ 后填入地址即可 —— 之后换收款方式只改网页，无需发新版 App。
         // DonationChannel(
-        //     id = "alipay",
-        //     displayName = "支付宝",
-        //     url = "https://qr.alipay.com/fkx000000000000",
-        //     hint = "点击后跳转支付宝完成付款",
+        //     id = "web",
+        //     displayName = "扫码支持",
+        //     qrUrl = "https://lklkuu.github.io/autoledger/donate/",
+        //     hint = "扫码打开支持页面，选择微信或支付宝",
         // ),
     )
 

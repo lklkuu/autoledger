@@ -29,6 +29,7 @@ import androidx.compose.material3.Switch
 import androidx.compose.material3.Text
 import androidx.compose.material3.TextButton
 import androidx.compose.material3.LinearProgressIndicator
+import androidx.compose.ui.graphics.asImageBitmap
 import androidx.compose.ui.res.painterResource
 import android.net.Uri
 import androidx.compose.foundation.text.KeyboardOptions
@@ -58,6 +59,7 @@ import com.autoledger.app.ui.components.yuan
 import com.autoledger.app.ui.stores.CaptureStore
 import com.autoledger.app.DonationChannel
 import com.autoledger.app.DonationConfig
+import com.autoledger.app.ui.components.qrBitmapOf
 import com.autoledger.app.ui.stores.SettingsStore
 import com.autoledger.app.ui.stores.TransferStore
 import com.autoledger.app.ui.theme.LedgerIcons
@@ -607,19 +609,31 @@ fun SettingsScreen(container: AppContainer) {
                 ?.let { donationContext.resources.getIdentifier(it, "drawable", donationContext.packageName) }
                 ?: 0
         }
+        // 动态二维码：把落地页地址现场画成二维码。内容是网页地址而非收款码本身，
+        // 所以换收款方式只需改网页，所有旧版 App 立刻生效。
+        val qrUrlBitmap = remember(channel.id, channel.qrUrl) {
+            channel.qrUrl?.let { qrBitmapOf(it) }
+        }
         AlertDialog(
             onDismissRequest = { donationChannel = null },
             title = { Text("${channel.displayName} 收款码") },
             text = {
                 Column {
-                    if (qrResId != 0) {
-                        Image(
+                    when {
+                        // 动态二维码优先：内容指向可随时修改的落地页
+                        qrUrlBitmap != null -> Image(
+                            bitmap = qrUrlBitmap.asImageBitmap(),
+                            contentDescription = "${channel.displayName}二维码",
+                            modifier = Modifier.fillMaxWidth(),
+                        )
+
+                        qrResId != 0 -> Image(
                             painter = painterResource(qrResId),
                             contentDescription = "${channel.displayName}收款码",
                             modifier = Modifier.fillMaxWidth(),
                         )
-                    } else {
-                        Text("该渠道的收款码尚未配置。", style = MaterialTheme.typography.bodyMedium)
+
+                        else -> Text("该渠道的收款码尚未配置。", style = MaterialTheme.typography.bodyMedium)
                     }
                     channel.hint?.let {
                         Text(

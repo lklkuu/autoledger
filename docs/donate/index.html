@@ -1,0 +1,183 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
+<title>支持「打工人小账本」</title>
+<meta name="description" content="打工人小账本是完全免费、开源、无广告的本地记账 App。这里可以自愿赞赏支持开发。">
+<meta name="theme-color" content="#FBF7F4">
+<style>
+  :root{
+    --ink:#163B3D;          /* 主文字 */
+    --ink-soft:#5C7877;     /* 次要文字 */
+    --green:#16856F;        /* 主色（与 App 一致） */
+    --green-pale:#E7F2EF;
+    --pink:#F2AEB5;         /* 强调色 */
+    --pink-pale:#FDEFF1;
+    --paper:#FBF7F4;        /* 背景 */
+    --card:#FFFFFF;
+    --line:#EBE3DD;
+  }
+  *{box-sizing:border-box;}
+  html{-webkit-text-size-adjust:100%;}
+  body{
+    margin:0; padding:0;
+    background:var(--paper);
+    color:var(--ink);
+    font-family:-apple-system,BlinkMacSystemFont,"PingFang SC","Hiragino Sans GB","Microsoft YaHei",sans-serif;
+    line-height:1.65;
+    font-size:16px;
+  }
+  .wrap{max-width:520px;margin:0 auto;padding:28px 20px 48px;}
+  .hero{text-align:center;padding:12px 0 24px;}
+  .hero .emoji{font-size:44px;line-height:1;}
+  .hero h1{font-size:24px;margin:14px 0 8px;letter-spacing:.5px;}
+  .hero p{margin:0;color:var(--ink-soft);font-size:14.5px;}
+  .card{
+    background:var(--card);
+    border:1px solid var(--line);
+    border-radius:18px;
+    padding:20px;
+    margin-bottom:16px;
+  }
+  .card h2{
+    font-size:16px;margin:0 0 12px;display:flex;align-items:center;gap:8px;
+  }
+  .card h2 .dot{
+    width:8px;height:8px;border-radius:99px;background:var(--green);flex:0 0 auto;
+  }
+  ul.why{list-style:none;margin:0;padding:0;}
+  ul.why li{
+    position:relative;padding-left:22px;margin-bottom:10px;font-size:14.5px;
+    color:var(--ink);line-height:1.6;
+  }
+  ul.why li:last-child{margin-bottom:0;}
+  ul.why li::before{
+    content:"";position:absolute;left:6px;top:9px;
+    width:6px;height:6px;border-radius:99px;background:var(--pink);
+  }
+  .pay{display:flex;flex-direction:column;gap:14px;}
+  .pay-item{
+    border:1px solid var(--line);border-radius:14px;padding:16px;
+    background:#FFFDFB;
+  }
+  .pay-item .title{
+    font-weight:600;font-size:15px;margin-bottom:4px;
+    display:flex;align-items:center;justify-content:space-between;gap:10px;
+  }
+  .pay-item .desc{font-size:13px;color:var(--ink-soft);margin-bottom:12px;}
+  .qr{
+    display:block;width:100%;max-width:260px;margin:0 auto;
+    border-radius:12px;border:1px solid var(--line);background:#fff;
+  }
+  .btn{
+    display:block;width:100%;text-align:center;text-decoration:none;
+    background:var(--green);color:#fff;font-weight:600;font-size:15px;
+    padding:13px 16px;border-radius:12px;
+    -webkit-tap-highlight-color:transparent;
+    transition:transform .06s ease, opacity .2s ease;
+  }
+  .btn:active{transform:scale(.985);opacity:.92;}
+  .btn.disabled{
+    background:#EFEAE6;color:#9C8F88;pointer-events:none;
+  }
+  .placeholder{
+    border:1px dashed var(--pink);background:var(--pink-pale);
+    border-radius:12px;padding:14px;font-size:13px;color:#8A5A61;line-height:1.6;
+  }
+  .note{
+    font-size:12.5px;color:var(--ink-soft);background:var(--green-pale);
+    border-radius:12px;padding:12px 14px;margin-top:4px;
+  }
+  footer{
+    text-align:center;font-size:12.5px;color:var(--ink-soft);
+    margin-top:22px;line-height:1.9;
+  }
+  footer a{color:var(--green);text-decoration:none;}
+  .badge{
+    display:inline-block;font-size:11.5px;color:var(--green);
+    background:var(--green-pale);border-radius:99px;padding:3px 10px;margin:0 4px 6px 0;
+  }
+</style>
+</head>
+<body>
+<div class="wrap">
+
+  <div class="hero">
+    <div class="emoji">🐱</div>
+    <h1>支持「打工人小账本」</h1>
+    <p>一个完全免费、开源、无广告的个人记账 App</p>
+    <div style="margin-top:14px;">
+      <span class="badge">本地加密</span>
+      <span class="badge">不联网记账</span>
+      <span class="badge">不收集数据</span>
+    </div>
+  </div>
+
+  <div class="card">
+    <h2><span class="dot"></span>为什么需要你的支持</h2>
+    <ul class="why">
+      <li>App 没有广告、没有会员、没有内购，也不卖你的任何数据。</li>
+      <li>开发与维护都在业余时间完成，捐赠仅用于覆盖设备与调试成本。</li>
+      <li>你的支持会变成下一个功能，而不是一句"感谢反馈"。</li>
+    </ul>
+  </div>
+
+  <div class="card">
+    <h2><span class="dot"></span>自愿赞赏</h2>
+    <div class="pay">
+
+      <!-- ===== 微信：静态收款码（微信没有个人版远程收款链接，只能扫码） ===== -->
+      <div class="pay-item">
+        <div class="title"><span>微信赞赏</span></div>
+        <div class="desc">长按识别二维码，或保存后用微信「扫一扫」</div>
+        <img class="qr" src="wechat.png" alt="微信赞赏码" loading="lazy">
+      </div>
+
+      <!-- ===== 支付宝：收钱码链接跳转 =====
+           链接来自本人支付宝收款码（二维码解码得到），与账户绑定、长期有效。
+           换收款方式只需改这里的 href，App 内旧版无需更新。
+      -->
+      <div class="pay-item">
+        <div class="title"><span>支付宝</span></div>
+        <div class="desc">点击按钮直接跳转支付宝完成付款</div>
+        <a class="btn" id="alipayBtn" href="https://qr.alipay.com/fkx15892qu3jnvvmrnvyif0" rel="noopener">打开支付宝</a>
+      </div>
+
+    </div>
+
+    <div class="note">
+      捐赠完全自愿，金额随意，<strong>不构成购买任何服务或功能</strong>。
+      若你未成年，请先征得监护人同意。
+    </div>
+  </div>
+
+  <div class="card">
+    <h2><span class="dot"></span>不花钱也能帮忙</h2>
+    <ul class="why">
+      <li>到 GitHub 点个 Star ⭐ —— 这对开源项目是实实在在的鼓励。</li>
+      <li>提 Issue 反馈 bug 或想要的功能，比任何打赏都有用。</li>
+      <li>把 App 推荐给同样需要记账的朋友。</li>
+    </ul>
+  </div>
+
+  <footer>
+    <div><a href="https://github.com/lklkuu/autoledger" rel="noopener">github.com/lklkuu/autoledger</a></div>
+    <div>打工人小账本 · 本地优先的自动记账</div>
+  </footer>
+
+</div>
+
+<script>
+  // 支付宝链接配好后（去掉 disabled），本脚本会自动隐藏占位说明，无需手动删。
+  (function () {
+    var btn = document.getElementById('alipayBtn');
+    var hint = document.getElementById('alipayHint');
+    if (!btn || !hint) return;
+    if (!btn.classList.contains('disabled') && btn.getAttribute('href') && btn.getAttribute('href') !== '#') {
+      hint.style.display = 'none';
+    }
+  })();
+</script>
+</body>
+</html>

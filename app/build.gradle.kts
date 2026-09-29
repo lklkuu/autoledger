@@ -112,6 +112,9 @@ dependencies {
     implementation(libs.androidx.compose.material3)
     implementation(libs.androidx.compose.material.icons.extended)
 
+    // 捐赠落地页地址 → 二维码（纯 JVM 库，不引入 Android 依赖）
+    implementation(libs.zxing.core)
+
     debugImplementation(libs.androidx.compose.ui.tooling)
 
     // QA: 纯 JVM 单测（R4 的月份窗口裁剪是纯函数，不需要 Robolectric/Room）
