@@ -70,6 +70,16 @@
     display:block;width:100%;max-width:260px;margin:0 auto;
     border-radius:12px;border:1px solid var(--line);background:#fff;
   }
+  .amount-note{
+    text-align:center;font-size:14px;color:var(--ink);
+    margin:12px 0 14px;font-weight:600;
+  }
+  .fallback{
+    margin-top:12px;padding:12px 14px;border-radius:12px;
+    background:var(--pink-pale);border:1px solid #F6D9DE;
+    font-size:13px;color:#8A5A61;line-height:1.7;
+  }
+  .fallback strong{color:#7A4A52;}
   .btn{
     display:block;width:100%;text-align:center;text-decoration:none;
     background:var(--green);color:#fff;font-weight:600;font-size:15px;
@@ -127,11 +137,23 @@
     <h2><span class="dot"></span>自愿赞赏</h2>
     <div class="pay">
 
-      <!-- ===== 微信：静态收款码（微信没有个人版远程收款链接，只能扫码） ===== -->
+      <!-- ===== 微信：收款码（截图保存 → 微信扫一扫 → 相册选图） ===== -->
       <div class="pay-item">
         <div class="title"><span>微信赞赏</span></div>
-        <div class="desc">长按识别二维码，或保存后用微信「扫一扫」</div>
-        <img class="qr" src="wechat.png" alt="微信赞赏码" loading="lazy">
+        <div class="desc">截图保存后用微信「扫一扫」→ 选相册图片，即可付款</div>
+        <img class="qr" src="wechat.png" alt="微信收款码" loading="lazy">
+        <p class="amount-note">金额随意，感谢支持 ❤️</p>
+
+        <!-- 尝试唤起微信扫一扫。
+             注意：weixin://dl/scan 并非微信官方开放的接口，外部浏览器唤起成功率极低
+             （微信有意限制第三方唤起）。因此下面配了失败引导，避免"点了没反应"。 -->
+        <a class="btn" id="wxScanBtn" href="weixin://dl/scan" rel="noopener">打开微信扫一扫</a>
+        <div class="fallback" id="wxFallback" hidden>
+          <strong>没有自动打开微信？</strong><br>
+          这是微信对第三方唤起的限制，并非页面故障。请手动操作：<br>
+          打开<strong>微信</strong> → 右上角「<strong>+</strong>」→「<strong>扫一扫</strong>」→
+          右下角<strong>相册</strong> → 选择上面保存的收款码截图。
+        </div>
       </div>
 
       <!-- ===== 支付宝：收钱码链接跳转 =====
@@ -177,6 +199,24 @@
     if (!btn.classList.contains('disabled') && btn.getAttribute('href') && btn.getAttribute('href') !== '#') {
       hint.style.display = 'none';
     }
+  })();
+
+  // 「打开微信扫一扫」：点击后若页面仍在前台，说明唤起失败，展示手动引导。
+  //
+  // 为什么需要这个检测：weixin://dl/scan 不是微信开放的正式接口，各系统/浏览器对
+  // 私有协议的拦截策略不同（iOS 主动拦截、Chrome 25+ 禁 intent: 隐式调用、
+  // 部分国产浏览器默认关闭"打开外部应用"），因此唤起失败是**常态而非异常**。
+  (function () {
+    var btn = document.getElementById('wxScanBtn');
+    var fb = document.getElementById('wxFallback');
+    if (!btn || !fb) return;
+    btn.addEventListener('click', function () {
+      // 1.6s 后如果页面还没被切到后台，判定为唤起失败
+      setTimeout(function () {
+        var stillHere = !document.hidden && document.visibilityState !== 'hidden';
+        if (stillHere) fb.hidden = false;
+      }, 1600);
+    });
   })();
 </script>
 </body>
