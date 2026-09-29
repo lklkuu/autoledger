@@ -136,13 +136,25 @@ fun TxnEditDialog(
     var noteText by remember(txn.id) { mutableStateOf(txn.note.orEmpty()) }
     var platformId by remember(txn.id) { mutableStateOf(txn.platformId) }
     var amountText by remember(txn.id) {
-        // 以「元」为单位展示，且与符号无关 —— 方向由类型决定，不在金额输入框里体现
-        mutableStateOf((kotlin.math.abs(txn.amountMinor) / 100.0).let { "%.2f".format(it) })
+        // 以「元」为单位展示，且与符号无关 —— 方向由类型决定，不在金额输入框里体现。
+        //
+        // 必须锁定 Locale.US：默认 Locale 下 `%.2f` 会输出本地化数字（如阿拉伯语环境输出
+        // 阿拉伯数字字符），随后 toBigDecimalOrNull() 解析失败 → 金额被判为非法 →
+        // 保存按钮永久禁用，用户在非中文环境下根本改不了金额。
+        //
+        // abs(Long.MIN_VALUE) 会溢出成负数，这里一并兜住（否则显示成负金额）。
+        val absMinor = if (txn.amountMinor == Long.MIN_VALUE) Long.MAX_VALUE
+        else kotlin.math.abs(txn.amountMinor)
+        mutableStateOf(String.format(java.util.Locale.US, "%.2f", absMinor / 100.0))
     }
     var dateText by remember(txn.id) {
+        // 时间戳可能来自脏数据（备份导入/解析异常），转换失败时回退到今天，
+        // 而不是让 DateTimeException 冒泡把整个弹窗渲染打崩。
         mutableStateOf(
-            LocalDate.ofInstant(Instant.ofEpochMilli(txn.occurredAtMillis), ZoneId.systemDefault())
-                .format(DateTimeFormatter.ISO_LOCAL_DATE),
+            runCatching {
+                LocalDate.ofInstant(Instant.ofEpochMilli(txn.occurredAtMillis), ZoneId.systemDefault())
+                    .format(DateTimeFormatter.ISO_LOCAL_DATE)
+            }.getOrDefault(LocalDate.now(ZoneId.systemDefault()).format(DateTimeFormatter.ISO_LOCAL_DATE)),
         )
     }
 
@@ -241,10 +253,15 @@ fun TxnEditDialog(
             TextButton(
                 enabled = TxnEditRules.canEdit(txn) && !amountInvalid && !dateInvalid,
                 onClick = {
-                    store.updateCounterparty(txn, name, noteText, platformId)
-                    if (amountDateEditable && parsedAmount != null && parsedDate != null) {
-                        store.updateAmountAndDate(txn, parsedAmount, parsedDate)
-                    }
+                    // 单次写入全部字段：拆成两次写会互相覆盖（改了商户和金额只剩一个生效）。
+                    store.saveEdits(
+                        txn = txn,
+                        counterparty = name,
+                        note = noteText,
+                        platformId = platformId,
+                        amountMinor = parsedAmount,
+                        occurredAtMillis = parsedDate,
+                    )
                     onDismiss()
                 },
             ) { Text("保存") }
@@ -325,12 +342,18 @@ fun TagEditor(
     }
 }
 
-/** `yyyy-MM-dd` → 当天 00:00 的 epoch millis；解析失败返回 null。 */
+/**
+ * `yyyy-MM-dd` → 当天 00:00 的 epoch millis；解析失败返回 null。
+ *
+ * 捕获 Exception 而非只捕获 [DateTimeParseException]：日期格式合法但数值越界
+ * （如 `+1000000000-01-01` 超出 LocalDate 年份上限）会抛 [java.time.DateTimeException]，
+ * 它是 DateTimeParseException 的**兄弟类**，只 catch 前者会漏掉这类脏输入并导致崩溃。
+ */
 private fun parseLocalDate(text: String): Long? = try {
     LocalDate.parse(text.trim(), DateTimeFormatter.ISO_LOCAL_DATE)
         .atStartOfDay(ZoneId.systemDefault())
         .toInstant()
         .toEpochMilli()
-} catch (e: DateTimeParseException) {
+} catch (e: Exception) {
     null
 }

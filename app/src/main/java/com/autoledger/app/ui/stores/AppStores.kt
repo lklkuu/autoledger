@@ -350,6 +350,42 @@ class LedgerStore(private val container: AppContainer) {
         }
     }
 
+    /**
+     * 一次保存全部编辑（商户 / 备注 / 平台 / 金额 / 日期）。
+     *
+     * 用**单次 upsert** 而非分别调用 [updateCounterparty] 与 [updateAmountAndDate]：
+     * 后者是两条并发协程各基于旧副本 copy 后整行写入，后写的会覆盖先写的，
+     * 造成"改了商户和金额，只剩一个生效"。
+     *
+     * 约束在这里再兜一道：不可编辑的流水直接返回；已关联订单/退款/划转时忽略金额与日期。
+     */
+    fun saveEdits(
+        txn: LedgerTransaction,
+        counterparty: String,
+        note: String?,
+        platformId: String,
+        amountMinor: Long? = null,
+        occurredAtMillis: Long? = null,
+    ) {
+        if (!TxnEditRules.canEdit(txn)) return
+        val amountDateAllowed = TxnEditRules.canEditAmountAndDate(txn)
+        storeScope.launch {
+            catching {
+                container.repository.upsert(
+                    applyFullEdit(
+                        txn = txn,
+                        counterparty = counterparty,
+                        note = note,
+                        platformId = platformId,
+                        amountMinor = if (amountDateAllowed) amountMinor else null,
+                        occurredAtMillis = if (amountDateAllowed) occurredAtMillis else null,
+                        fingerprintOf = container.duplicateResolver::fingerprintOf,
+                    ),
+                )
+            }
+        }
+    }
+
     /** 用户纠正分类：写回 + 存入学习记忆 */
     fun correctCategory(txn: LedgerTransaction, category: Category) {
         storeScope.launch {

@@ -90,7 +90,7 @@ internal fun applyAmountAndDateEdit(
     occurredAtMillis: Long,
     fingerprintOf: (LedgerTransaction) -> String,
 ): LedgerTransaction {
-    val abs = kotlin.math.abs(amountMinor)
+    val abs = safeAbs(amountMinor)
     val signed = if (txn.amountMinor < 0) -abs else abs
     val edited = txn.copy(
         amountMinor = signed,
@@ -99,3 +99,46 @@ internal fun applyAmountAndDateEdit(
     )
     return edited.copy(fingerprint = fingerprintOf(edited))
 }
+
+/**
+ * 一次算完**全部**可编辑字段（商户 / 备注 / 平台 / 金额 / 日期），供单次 upsert 使用。
+ *
+ * 存在的理由：若拆成「改商户」与「改金额」两次独立写入，两者都基于同一个旧副本各自 copy，
+ * 后一次 upsert 会**整行覆盖**前一次的结果 —— 用户改了商户和金额，最后只剩一个字段生效。
+ * 合并成一次计算 + 一次写入，才不会出现这种静默丢字段。
+ *
+ * @param amountMinor 用户输入的绝对值（分）；null 表示不改金额
+ * @param occurredAtMillis 新的发生时间；null 表示不改日期
+ */
+internal fun applyFullEdit(
+    txn: LedgerTransaction,
+    counterparty: String,
+    note: String?,
+    platformId: String,
+    amountMinor: Long?,
+    occurredAtMillis: Long?,
+    fingerprintOf: (LedgerTransaction) -> String,
+): LedgerTransaction {
+    val userChangedPlatform = platformId != txn.platformId
+    var edited = txn.copy(
+        counterparty = counterparty.trim(),
+        note = note?.trim()?.ifBlank { null },
+        platformId = platformId,
+        platformConfidence = if (userChangedPlatform) 1f else txn.platformConfidence,
+        platformSource = if (userChangedPlatform) PlatformSource.USER else txn.platformSource,
+    )
+    if (amountMinor != null || occurredAtMillis != null) {
+        val signed = if (txn.amountMinor < 0) -safeAbs(amountMinor ?: txn.amountMinor)
+        else safeAbs(amountMinor ?: txn.amountMinor)
+        edited = edited.copy(
+            amountMinor = signed,
+            occurredAtMillis = occurredAtMillis ?: txn.occurredAtMillis,
+            bookedAtMillis = txn.bookedAtMillis,
+        )
+    }
+    return edited.copy(fingerprint = fingerprintOf(edited))
+}
+
+/** [kotlin.math.abs] 对 Long.MIN_VALUE 会溢出成负数，这里兜住。 */
+private fun safeAbs(value: Long): Long =
+    if (value == Long.MIN_VALUE) Long.MAX_VALUE else kotlin.math.abs(value)

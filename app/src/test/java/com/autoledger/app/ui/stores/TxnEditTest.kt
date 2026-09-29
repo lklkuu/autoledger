@@ -7,6 +7,7 @@ import com.autoledger.core.model.platform.PlatformSource
 import kotlin.test.Test
 import kotlin.test.assertEquals
 import kotlin.test.assertNull
+import kotlin.test.assertTrue
 
 /**
  * 修正流水（改商户名 / 备注）的纯 JVM 单测（用户反馈问题 5）。
@@ -96,6 +97,44 @@ class TxnEditTest {
 
         assertEquals(PlatformSource.AUTO, edited.platformSource, "没改平台就不该被标成 USER")
         assertEquals(0.6f, edited.platformConfidence)
+    }
+
+    // ------------------------------------------------------------ 合并写入（applyFullEdit）
+
+    @Test
+    fun `full edit writes merchant, platform, amount and date in one shot`() {
+        // 回归护栏：拆成「改商户」+「改金额」两次写会互相覆盖（后写的整行覆盖先写的），
+        // 用户改两个字段最后只剩一个生效。这里断言一次写入后所有字段都在。
+        val edited = applyFullEdit(
+            txn = txn(counterparty = "旧商户", fingerprint = "old"),
+            counterparty = "  星巴克  ",
+            note = "午餐",
+            platformId = "meituan",
+            amountMinor = 4_500L,
+            occurredAtMillis = 1_650_000_000_000L,
+            fingerprintOf = { "fp" },
+        )
+        assertEquals("星巴克", edited.counterparty, "商户要生效")
+        assertEquals("午餐", edited.note)
+        assertEquals("meituan", edited.platformId, "平台要生效")
+        assertEquals(-4_500L, edited.amountMinor, "金额要生效且保持支出符号")
+        assertEquals(1_650_000_000_000L, edited.occurredAtMillis, "日期要生效")
+        assertEquals("fp", edited.fingerprint, "指纹要重算")
+    }
+
+    @Test
+    fun `full edit with null amount or date leaves them untouched`() {
+        val edited = applyFullEdit(txn(), "星巴克", null, "alipay", null, null) { "fp" }
+        assertEquals(-1_350L, edited.amountMinor)
+        assertEquals(1_700_000_000_000L, edited.occurredAtMillis)
+    }
+
+    @Test
+    fun `full edit survives Long MIN_VALUE amount instead of flipping the sign`() {
+        // abs(Long.MIN_VALUE) 会溢出成负数，不兜住的话支出会被写成收入。
+        val extreme = txn().copy(amountMinor = Long.MIN_VALUE)
+        val edited = applyFullEdit(extreme, "星巴克", null, "wechat", Long.MIN_VALUE, null) { "fp" }
+        assertTrue(edited.amountMinor < 0, "支出必须仍是负数，实际 ${edited.amountMinor}")
     }
 
     // ------------------------------------------------------------ 金额 / 日期编辑
