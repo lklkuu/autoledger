@@ -192,6 +192,63 @@ class BankIncomeDirectionTest {
         assertNull(r, "营销短信不得被记为收入")
     }
 
+    // ------------------------------------------------------------------ 反向护栏：真实支出绝不能变成收入
+    //
+    // 这一组是 d854d8c 引入、由 QA 独立护栏（BankExpenseRegressionGuardTest）抓出来的**方向反转**回归：
+    // 若把入账词整表塞进 bank_generic_out.bodyRejectAny，支出规则让位后收入规则会顺势认领，
+    // 「消费5000元，将于10月25日入账」会被记成 +5000 的收入 —— 比漏记严重得多。
+    // 修法是让位条件必须带上下文（入账词要**主导**本次金额），见 INCOME_GOVERNS_AMOUNT。
+
+    @Test
+    fun `credit card purchase sms ending with 入账 stays an outflow`() {
+        // 信用卡账单短信最常见的尾缀：钱先花掉、次月才入账。
+        val r = parser.parse("sms:inbox", "95588", "您尾号1234信用卡本期消费5,000元，将于10月25日入账。")
+        assertNotNull(r, "真实消费不得被丢弃")
+        assertEquals("bank_generic_out", r.ruleId, "实际=${r.ruleId}")
+        assertEquals(Direction.OUT, r.direction, "消费短信绝不能被判成收入（方向反转）")
+        assertEquals(-500_000L, r.amountMinor)
+    }
+
+    @Test
+    fun `purchase sms whose 入账 is a trailing clause stays an outflow`() {
+        val r = parser.parse("sms:inbox", "95588", "您尾号1234的卡9月30日07:16消费500元，该笔交易将于次日入账。")
+        assertNotNull(r)
+        assertEquals(Direction.OUT, r.direction)
+        assertEquals(-50_000L, r.amountMinor)
+    }
+
+    @Test
+    fun `purchase sms with a subsidy sub amount stays an outflow of the real amount`() {
+        // 「补贴100元」是子金额，不是本次交易的金额 —— 支出规则不得让位，金额也必须取 500。
+        val r = parser.parse("sms:inbox", "95588", "您尾号1234的卡9月30日消费500元，其中政府补贴100元，实付400元。")
+        assertNotNull(r)
+        assertEquals(Direction.OUT, r.direction, "实际=${r.ruleId}")
+        assertEquals(-50_000L, r.amountMinor, "必须取 500 元，而不是补贴的 100 元")
+    }
+
+    @Test
+    fun `invariant - expense samples carrying an income word are never booked as income`() {
+        val samples = listOf(
+            "您尾号1234的卡9月30日07:16消费500元，该笔交易将于次日入账。",
+            "您尾号1234信用卡本期消费5,000元，将于10月25日入账。",
+            "您尾号1234的卡9月30日消费500元，其中政府补贴100元，实付400元。",
+            "您尾号1234的卡（代发账户）9月30日消费500元。",
+            "您尾号1234的卡9月30日消费500元，资金将于T+1日到账商户。",
+            "您尾号1234的卡9月30日消费500元，本期结息日为10月20日。",
+            "您尾号1234的卡9月30日消费500元，商户已收款。",
+            "您尾号1234的卡9月30日消费500元，手续费将于次月退还。",
+            "您尾号1234的卡9月30日消费500元，请于还款日前存入足额款项。",
+        )
+        val inverted = samples.mapNotNull { body ->
+            val r = parser.parse("sms:inbox", "95588", body)
+            if (r != null && r.direction == Direction.IN) "「$body」→ ${r.ruleId}/${r.amountMinor}" else null
+        }
+        assertTrue(
+            inverted.isEmpty(),
+            "以下真实消费被记成了收入（方向反转，比漏记更严重）：\n  ${inverted.joinToString("\n  ")}",
+        )
+    }
+
     // ------------------------------------------------------------------ 不变量：含收入语义的文本永不落 OUT
 
     @Test

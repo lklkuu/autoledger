@@ -44,7 +44,8 @@ class NotificationParser(
         val hit = candidates.firstOrNull { rule ->
             val bodyOk = rule.bodyMustContainAny.isEmpty() || rule.bodyMustContainAny.any { haystack.contains(it) }
             val titleOk = rule.titleMustContainAny.isEmpty() || rule.titleMustContainAny.any { title.contains(it) }
-            val notRejected = rule.bodyRejectAny.none { haystack.contains(it) }
+            val notRejected = rule.bodyRejectAny.none { haystack.contains(it) } &&
+                rule.bodyRejectPatterns.none { Regex(it).containsMatchIn(haystack) }
             bodyOk && titleOk && notRejected
         } ?: return null
 
