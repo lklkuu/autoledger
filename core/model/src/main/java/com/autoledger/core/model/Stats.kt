@@ -1,6 +1,7 @@
 package com.autoledger.core.model
 
 import java.time.Instant
+import java.time.YearMonth
 import java.time.ZoneId
 
 /**
@@ -75,6 +76,26 @@ data class TimeRange(val startMillis: Long, val endInclusiveMillis: Long) {
             val firstDay = Instant.ofEpochMilli(now).atZone(ZONE).toLocalDate()
                 .withDayOfMonth(1).atStartOfDay(ZONE).toInstant().toEpochMilli()
             return TimeRange(firstDay, now)
+        }
+
+        /**
+         * **指定月份**的区间 —— 供「发现」页按月查看。
+         *
+         * 与 [thisMonth] 的区别：后者锚定「现在」，这里锚定任意月份。
+         * 当前月仍把右端夹到 `now`（避免未来日期的预授权流水混进本月）；过去月右端取该月**最后一毫秒**。
+         *
+         * ⚠️ 右端必须写成「次月 1 日 00:00 − 1ms」，不能写「本月最后一天 00:00」：
+         * 查询走 `occurredAtMillis BETWEEN from AND to`（**双闭区间**），
+         * 给最后一天 00:00 会漏掉当月 23:59:59 的流水；给次月 1 日 00:00 会多吃下月一笔。
+         * 先 `plusMonths(1)` 再减 1ms，闰年 2 月自动正确。
+         */
+        fun monthOf(yearMonth: YearMonth, now: Long = System.currentTimeMillis()): TimeRange {
+            val zone = ZONE
+            val start = yearMonth.atDay(1).atStartOfDay(zone).toInstant().toEpochMilli()
+            val nextMonthStart = yearMonth.plusMonths(1)
+                .atDay(1).atStartOfDay(zone).toInstant().toEpochMilli()
+            val isCurrentMonth = yearMonth == YearMonth.from(Instant.ofEpochMilli(now).atZone(zone))
+            return TimeRange(start, if (isCurrentMonth) now else nextMonthStart - 1L)
         }
 
         /** 最近 n 天的滚动窗口（含今天） */

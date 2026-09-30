@@ -22,6 +22,12 @@ import java.time.ZoneId
 internal fun computeInsightsFacts(
     allMonth: List<LedgerTransaction>,
     categories: Map<String, Category>,
+    /**
+     * **已过去的天数**，作为「日均花销」的分母。
+     *
+     * ⚠️ 不能一律传「今天几号」：查看已经过完的月份（如 9 月 30 天）时传 1，
+     * 日均会变成「月支出 ÷ 1」= 虚高 30 倍。当前月传 `dayOfMonth`，过去月传该月总天数。
+     */
     days: Int,
     zone: ZoneId,
 ): InsightsStore.Facts {
@@ -48,5 +54,7 @@ internal fun computeInsightsFacts(
         unclassifiedCount = spending.count { it.type == TxnType.EXPENSE && it.categoryId == null },
         recent = spending.sortedByDescending { it.occurredAtMillis }.take(3),
         categories = categories,
+        // 空态判定用（见 Facts.recordCount 的注释）：只有内部划转的月份金额全 0 却没有可展示记录
+        recordCount = spending.size,
     )
 }

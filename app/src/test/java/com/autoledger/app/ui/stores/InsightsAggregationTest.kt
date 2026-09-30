@@ -80,4 +80,44 @@ class InsightsAggregationTest {
         )
         assertEquals("星巴克" to 7_000L, facts.topMerchant, "同商户支出 100 − 退款 30 = 70")
     }
+
+    // ------------------------------------------------------------ recordCount（按月查看的空态判定）
+
+    @Test
+    fun `recordCount ignores internal transfers`() {
+        // 只有内部划转的月份：金额正负抵消为 0，但确实"没有可展示的收支记录"。
+        // 若用「金额是否全为 0」判空就会误判成有数据；recordCount 才是可靠依据。
+        val facts = computeInsightsFacts(
+            listOf(
+                txn("a", TxnType.TRANSFER, -50_000L, counterparty = "自己"),
+                txn("b", TxnType.TRANSFER, 50_000L, counterparty = "自己"),
+            ),
+            emptyMap(),
+            days = 30,
+            zone = zone,
+        )
+        assertEquals(0, facts.recordCount, "内部划转不计入 recordCount")
+    }
+
+    @Test
+    fun `recordCount is zero for an empty month`() {
+        val facts = computeInsightsFacts(emptyList(), emptyMap(), days = 30, zone = zone)
+        assertEquals(0, facts.recordCount)
+        assertTrue(facts.recent.isEmpty())
+    }
+
+    @Test
+    fun `recordCount counts expenses and refunds but not transfers`() {
+        val facts = computeInsightsFacts(
+            listOf(
+                txn("e", TxnType.EXPENSE, -10_000L),
+                txn("r", TxnType.REFUND, 3_000L),
+                txn("t", TxnType.TRANSFER, -5_000L),
+            ),
+            emptyMap(),
+            days = 30,
+            zone = zone,
+        )
+        assertEquals(2, facts.recordCount, "支出 + 退款 = 2；内部划转剔除")
+    }
 }

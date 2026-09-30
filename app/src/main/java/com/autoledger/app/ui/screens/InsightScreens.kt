@@ -32,6 +32,7 @@ import com.autoledger.app.ui.components.ErrorPanel
 import com.autoledger.app.ui.components.HeroTile
 import com.autoledger.app.ui.components.LoadingBox
 import com.autoledger.app.ui.components.MetricCard
+import com.autoledger.app.ui.components.MonthSelector
 import com.autoledger.app.ui.components.ProgressLine
 import com.autoledger.app.ui.components.SectionTitle
 import com.autoledger.app.ui.components.TransactionRow
@@ -178,10 +179,31 @@ fun InsightsScreen(container: AppContainer) {
         if (state.loading) item { LoadingBox() }
         state.error?.let { item { ErrorPanel(it, store::load) } }
 
+        // 月份选择器：默认当前月 ⇒ 与「按月查看」上线前的行为一致。
+        // 选中月只能经 store.selectMonth 修改 —— 它负责取消旧订阅再重订阅，
+        // UI 若直接改状态会让新旧月份的 Flow 同时写 state，出现跳月/闪回。
+        item {
+            val selected = state.selectedMonth
+            MonthSelector(
+                months = state.availableMonths.ifEmpty { listOf(selected) },
+                selected = selected,
+                canGoPrev = state.canGoPrev,
+                canGoNext = state.canGoNext,
+                onSelect = store::selectMonth,
+                onPrev = store::prevMonth,
+                onNext = store::nextMonth,
+            )
+        }
+
         item {
             AppCard {
-                SectionTitle("今日小发现")
+                val monthLabel = "${state.selectedMonth.monthValue}月"
+                // 标题动态化：数据来自所选月份的整月区间，写死「今日」会名不副实
+                SectionTitle("$monthLabel 小发现", "${state.selectedMonth.year} 年")
                 val facts = state.facts
+                if (facts.recordCount == 0) {
+                    EmptyHint("$monthLabel 没有可统计的记录")
+                } else {
                 facts.largestTxn?.let { txn ->
                     FactLine("最大一笔", "¥${kotlin.math.abs(txn.amountMinor).yuan()} · ${txn.counterparty.ifBlank { "未知名交易" }}")
                 }
@@ -191,6 +213,7 @@ fun InsightsScreen(container: AppContainer) {
                 FactLine("工作日 vs 周末", "¥${facts.weekdayVsWeekend.first.yuan()} / ¥${facts.weekdayVsWeekend.second.yuan()}")
                 FactLine("日均花销", "¥${facts.avgDailyMinor.yuan()}")
                 FactLine("待补分类", "${facts.unclassifiedCount} 笔")
+                }
             }
         }
 
@@ -198,11 +221,15 @@ fun InsightsScreen(container: AppContainer) {
 
         item {
             AppCard {
-                SectionTitle("最近记下的", "本月前几笔")
+                val monthLabel = "${state.selectedMonth.monthValue}月"
+                SectionTitle("最近记下的", "$monthLabel 前几笔")
                 // 直接复用 InsightsStore 自己算出的 facts，避免为这一张卡片再挂一个 HomeStore（R1）。
                 val recent = state.facts.recent
                 if (recent.isEmpty()) {
-                    EmptyHint("还没有数据")
+                    // 用 recordCount 区分「该月真的没有记录」与「有记录但无可展示项」
+                    EmptyHint(
+                        if (state.facts.recordCount == 0) "$monthLabel 还没有记录" else "还没有数据",
+                    )
                 } else {
                     recent.forEach { TransactionRow(it, state.facts.categories[it.categoryId]) }
                 }

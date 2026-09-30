@@ -2,6 +2,7 @@ package com.autoledger.core.model
 
 import java.time.LocalDate
 import java.time.LocalDateTime
+import java.time.YearMonth
 import java.time.ZoneId
 import kotlin.test.Test
 import kotlin.test.assertEquals
@@ -82,5 +83,62 @@ class TimeRangeTest {
         // 所有统计静默返回空，没有任何报错。
         val r = TimeRange.lastDays(0, now)
         assertTrue(r.startMillis <= r.endInclusiveMillis, "lastDays(0) 不应产出 start > end 的负区间")
+    }
+
+    // ------------------------------------------------------------ monthOf（「发现」页按月查看）
+
+    @Test
+    fun `monthOf for a past month covers its last millisecond`() {
+        // 右端必须取「次月 1 日 00:00 − 1ms」。查询走 occurredAtMillis BETWEEN（**双闭区间**），
+        // 若写成「本月最后一天 00:00」，当月 23:59:59 的流水会被整段漏掉。
+        val r = TimeRange.monthOf(YearMonth.of(2026, 9), now)
+        val expectedEnd = LocalDateTime.of(2026, 10, 1, 0, 0, 0).atZone(zone).toInstant().toEpochMilli() - 1L
+        assertEquals(expectedEnd, r.endInclusiveMillis)
+        val lastMoment = LocalDateTime.of(2026, 9, 30, 23, 59, 59, 999_000_000)
+            .atZone(zone).toInstant().toEpochMilli()
+        assertTrue(lastMoment in r.startMillis..r.endInclusiveMillis, "月末 23:59:59.999 必须落在区间内")
+    }
+
+    @Test
+    fun `monthOf excludes the first millisecond of the next month`() {
+        val r = TimeRange.monthOf(YearMonth.of(2026, 9), now)
+        val nextMonthStart = LocalDateTime.of(2026, 10, 1, 0, 0, 0)
+            .atZone(zone).toInstant().toEpochMilli()
+        assertTrue(nextMonthStart > r.endInclusiveMillis, "次月 1 日 00:00 不得落进本月区间")
+    }
+
+    @Test
+    fun `monthOf for the current month is clamped to now`() {
+        // 当前月右端夹 now：未来日期的流水（预授权等）不该混进本月。
+        val r = TimeRange.monthOf(YearMonth.of(2026, 3), now)
+        assertEquals(
+            LocalDate.of(2026, 3, 1).atStartOfDay(zone).toInstant().toEpochMilli(),
+            r.startMillis,
+        )
+        assertEquals(now, r.endInclusiveMillis)
+    }
+
+    @Test
+    fun `monthOf handles leap February`() {
+        // 2024 是闰年（2 月 29 天）。先 plusMonths(1) 再减 1ms 的写法对闰年自动正确，
+        // 无需为 2 月写特例。
+        val r = TimeRange.monthOf(YearMonth.of(2024, 2), now)
+        val expectedEnd = LocalDateTime.of(2024, 3, 1, 0, 0, 0)
+            .atZone(zone).toInstant().toEpochMilli() - 1L
+        assertEquals(expectedEnd, r.endInclusiveMillis)
+        val leapDay = LocalDateTime.of(2024, 2, 29, 12, 0, 0).atZone(zone).toInstant().toEpochMilli()
+        assertTrue(leapDay in r.startMillis..r.endInclusiveMillis, "闰日 2/29 必须落在区间内")
+    }
+
+    @Test
+    fun `monthOf crosses year boundary without off by one`() {
+        val r = TimeRange.monthOf(YearMonth.of(2025, 12), now)
+        assertEquals(
+            LocalDate.of(2025, 12, 1).atStartOfDay(zone).toInstant().toEpochMilli(),
+            r.startMillis,
+        )
+        val expectedEnd = LocalDateTime.of(2026, 1, 1, 0, 0, 0)
+            .atZone(zone).toInstant().toEpochMilli() - 1L
+        assertEquals(expectedEnd, r.endInclusiveMillis)
     }
 }

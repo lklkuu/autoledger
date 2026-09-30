@@ -98,20 +98,21 @@ object FreedomMath {
      *
      * 与 `Σ(每个月：月薪 − 该月支出) + 存款` 等价，只是把逐月求和压成一次乘法。
      *
-     * @param monthsUsed 使用月数，见 [monthsUsed]。**0 = 账本为空**，此时直接返回 0
-     *   （用户明确要求：空账本时当月已攒照常算、累计已攒按 0 处理，不要报错）。
-     *   这个分支里存款也**不计入** —— 还没开始记，谈「累计攒了多少」没有意义，
-     *   而且存款本身在「当前存款」输入框里已经看得见。
+     * @param monthsUsed 使用月数，见 [monthsUsed]。**0 = 账本为空**，此时公式照跑：
+     *   累计 = 0 − 0 + 存款 = **存款**。
+     *
+     *   ⚠️ 这里**刻意不**写成 `if (monthsUsed <= 0) return 0L`：存款是用户**明确输入的真实值**，
+     *   不该因为账本还空就被抹掉。刚装 App、先填了「当前存款 5 万」的用户，
+     *   若看到「累计已攒 ¥0」只会困惑 —— 他要的是"我总共攒了多少"，而存款正是其中真实的一部分。
+     *   空账本真正要防的是**报错 / NaN**，而不是把结果改成 0。
      */
     fun cumulativeSavedUpMinor(
         monthsUsed: Int,
         monthlyNetSalaryMinor: Long,
         cumulativeExpenseMinor: Long,
         currentDepositMinor: Long,
-    ): Long {
-        if (monthsUsed <= 0) return 0L
-        return monthsUsed.toLong() * monthlyNetSalaryMinor - cumulativeExpenseMinor + currentDepositMinor
-    }
+    ): Long = monthsUsed.toLong().coerceAtLeast(0L) * monthlyNetSalaryMinor -
+        cumulativeExpenseMinor + currentDepositMinor
 
     // ------------------------------------------------------------------ 进度 / 还差
 

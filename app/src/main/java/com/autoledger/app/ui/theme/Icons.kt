@@ -1,6 +1,8 @@
 package com.autoledger.app.ui.theme
 
 import androidx.compose.material.icons.Icons
+import androidx.compose.material.icons.automirrored.outlined.KeyboardArrowLeft
+import androidx.compose.material.icons.automirrored.outlined.KeyboardArrowRight
 import androidx.compose.material.icons.outlined.AccountBalanceWallet
 import androidx.compose.material.icons.outlined.AutoAwesome
 import androidx.compose.material.icons.outlined.CalendarMonth
@@ -82,4 +84,7 @@ object LedgerIcons {
     val Download = Icons.Outlined.Download
     val Search = Icons.Outlined.Search
     val Merge = Icons.Outlined.MergeType
+    // AutoMirrored 版本：RTL 语言下箭头会自动镜像（普通 Outlined 版本不会）
+    val ChevronLeft = Icons.AutoMirrored.Outlined.KeyboardArrowLeft
+    val ChevronRight = Icons.AutoMirrored.Outlined.KeyboardArrowRight
 }

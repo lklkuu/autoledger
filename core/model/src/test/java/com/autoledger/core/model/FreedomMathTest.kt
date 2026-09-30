@@ -184,15 +184,34 @@ class FreedomMathTest {
     }
 
     @Test
-    fun `cumulative is zero for an empty ledger even with a deposit`() {
-        // 用户口径：账本为空 → 累计已攒按 0 处理（当月已攒照常算）。
+    fun `cumulative equals the deposit for an empty ledger`() {
+        // 用户口径（决策 B）：账本为空 ⇒ 使用月数 0，公式**照跑** → 累计 = 0 − 0 + 存款 = 存款。
+        //
+        // 刻意不写成 `if (monthsUsed <= 0) return 0L`：存款是用户明确输入的真实值，
+        // 不该因为账本还空就被抹掉 —— 刚装 App、先填了 5 万存款的用户
+        // 若看到「累计已攒 ¥0」只会困惑。空账本要防的是**报错 / NaN**，不是把结果改成 0。
+        assertEquals(
+            5_000_000L,
+            FreedomMath.cumulativeSavedUpMinor(
+                monthsUsed = 0,
+                monthlyNetSalaryMinor = 1_200_000L,
+                cumulativeExpenseMinor = 0L,
+                currentDepositMinor = 5_000_000L,
+            ),
+            "空账本时累计已攒应等于存款，而不是硬置 0",
+        )
+    }
+
+    @Test
+    fun `cumulative is zero for an empty ledger with no deposit`() {
+        // 补充边界：账本空且没填存款 ⇒ 0（不是负数、不是异常）
         assertEquals(
             0L,
             FreedomMath.cumulativeSavedUpMinor(
                 monthsUsed = 0,
                 monthlyNetSalaryMinor = 1_200_000L,
                 cumulativeExpenseMinor = 0L,
-                currentDepositMinor = 5_000_000L,
+                currentDepositMinor = 0L,
             ),
         )
     }
