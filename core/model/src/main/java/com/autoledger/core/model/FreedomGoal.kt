@@ -4,8 +4,6 @@ package com.autoledger.core.model
 data class FreedomGoal(
     /** 目标金额（分） */
     val targetMinor: Long = 12_000_000L,
-    /** 安全垫金额（分） */
-    val cushionMinor: Long = 560_000L,
     /** 当前已攒（分） */
     val currentMinor: Long = 0L,
 )

@@ -527,9 +527,11 @@ class FreedomStore(private val container: AppContainer) {
 
     data class State(
         val targetMinor: Long = 0L,
-        val cushionMinor: Long = 0L,
         val currentMinor: Long = 0L,
+        /** 到手月薪（分）：来自时薪页的 WageProfile，「已攒」公式的收入项。 */
+        val monthlyNetSalaryMinor: Long = 0L,
         val monthlySurplusMinor: Long = 0L,
+        /** 当月支出（分）：「已攒」公式的扣减项，由 ExpenseMath 口径算出。 */
         val monthlyExpenseMinor: Long = 0L,
     )
 
@@ -553,27 +555,37 @@ class FreedomStore(private val container: AppContainer) {
 
     private suspend fun observe() {
         val month = TimeRange.thisMonth(System.currentTimeMillis())
+        // 三个源一起订阅：目标/存款 + 到手月薪 + 当月流水。
+        // 月薪与流水都是 StateFlow/Flow，任一侧变化都会重新发射，
+        // 因此「已攒 = 月薪 − 当月支出 + 存款」能实时刷新（存款输入项在 UI 侧联动）。
         combine(
             container.settings.goal,
+            container.settings.wage,
             container.repository.observeRange(month.startMillis, month.endInclusiveMillis, true),
-        ) { goal, txns -> goal to txns }
+        ) { goal, wage, txns -> Triple(goal, wage, txns) }
             .flowOn(Dispatchers.Default)
-            .collect { (goal, txns) ->
+            .collect { (goal, wage, txns) ->
                 val expense = ExpenseMath.netExpenseMinor(txns).coerceAtLeast(0L)
                 val income = txns.filter { it.type == TxnType.INCOME }.sumOf { kotlin.math.abs(it.amountMinor) }
                 _state.value = State(
                     targetMinor = goal.targetMinor,
-                    cushionMinor = goal.cushionMinor,
                     currentMinor = goal.currentMinor,
+                    monthlyNetSalaryMinor = wage.monthlyNetSalaryMinor,
                     monthlySurplusMinor = income - expense,
                     monthlyExpenseMinor = expense,
                 )
             }
     }
 
-    fun saveGoal(targetMinor: Long, cushionMinor: Long, currentMinor: Long) {
+    /**
+     * 保存目标。「已攒」不再由用户填写，因此这里只落「目标金额 + 当前存款」。
+     *
+     * @param currentMinor 当前存款（分）。它同时是「已攒」公式的加项，
+     *   页面上的输入框未保存也会实时参与展示（见 FreedomScreen）。
+     */
+    fun saveGoal(targetMinor: Long, currentMinor: Long) {
         // B4：settings.goal 是 StateFlow，updateGoal 后 combine 会自动重新发射，无需手动 load()。
-        container.settings.updateGoal(FreedomGoal(targetMinor, cushionMinor, currentMinor))
+        container.settings.updateGoal(FreedomGoal(targetMinor, currentMinor))
     }
 }
 

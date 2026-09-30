@@ -9,15 +9,12 @@ import com.autoledger.core.database.toAppSettings
 import com.autoledger.core.database.toEntity
 import com.autoledger.core.crypto.CryptoBox
 import com.autoledger.core.model.AccountKind
-import com.autoledger.core.model.AppSettings
 import com.autoledger.core.model.CategoryKind
 import com.autoledger.core.model.Direction
-import com.autoledger.core.model.FreedomGoal
 import com.autoledger.core.model.LedgerTransaction
 import com.autoledger.core.model.RuleKind
 import com.autoledger.core.model.TxnStatus
 import com.autoledger.core.model.TxnType
-import com.autoledger.core.model.WageProfile
 import com.autoledger.core.model.platform.PlatformCatalog
 import com.autoledger.core.model.platform.PlatformSource
 import org.json.JSONArray
@@ -115,7 +112,7 @@ class BackupManager(
             put("categories", categories)
             put("accounts", accounts)
             put("rules", rules)
-            db.settingsDao().global()?.let { put("settings", it.toAppSettings().toJson()) }
+            db.settingsDao().global()?.let { put("settings", it.toAppSettings().toSettingsJson()) }
         }
     }
 
@@ -199,7 +196,7 @@ class BackupManager(
         }.orEmpty()
         if (rules.isNotEmpty()) ruleDao.upsertAll(rules)
 
-        payload.optJSONObject("settings")?.let { db.settingsDao().upsert(it.toAppSettingsFromJson().toEntity()) }
+        payload.optJSONObject("settings")?.let { db.settingsDao().upsert(it.parseAppSettings().toEntity()) }
 
         return ImportOutcome(
             fileVersion = fileVersion,
@@ -214,44 +211,7 @@ class BackupManager(
     @Volatile var currentPassphrase: CharArray? = null
 
     // 流水的备份 JSON 编解码已抽到顶层纯函数（见 TxnJson.kt）：便于不经 Room 直接单测。
-
-    private fun AppSettings.toJson(): JSONObject = JSONObject().apply {
-        put("wage", JSONObject().apply {
-            put("monthlyNetSalaryMinor", wage.monthlyNetSalaryMinor)
-            put("payMonthsPerYear", wage.payMonthsPerYear)
-            put("monthlyWorkCostMinor", wage.monthlyWorkCostMinor)
-            put("workDaysPerMonth", wage.workDaysPerMonth)
-            put("dailyOfficeHours", wage.dailyOfficeHours)
-            put("dailyCommuteMinutes", wage.dailyCommuteMinutes)
-            put("dailyOvertimeHours", wage.dailyOvertimeHours)
-        })
-        put("goal", JSONObject().apply {
-            put("targetMinor", goal.targetMinor)
-            put("cushionMinor", goal.cushionMinor)
-            put("currentMinor", goal.currentMinor)
-        })
-        put("autoMerge", autoMerge)
-    }
-
-    private fun JSONObject.toAppSettingsFromJson(): AppSettings {
-        val w = optJSONObject("wage")
-        val g = optJSONObject("goal")
-        return AppSettings(
-            wage = WageProfile(
-                monthlyNetSalaryMinor = w?.optLong("monthlyNetSalaryMinor") ?: WageProfile().monthlyNetSalaryMinor,
-                payMonthsPerYear = w?.optInt("payMonthsPerYear") ?: WageProfile().payMonthsPerYear,
-                monthlyWorkCostMinor = w?.optLong("monthlyWorkCostMinor") ?: WageProfile().monthlyWorkCostMinor,
-                workDaysPerMonth = w?.optDouble("workDaysPerMonth") ?: WageProfile().workDaysPerMonth,
-                dailyOfficeHours = w?.optDouble("dailyOfficeHours") ?: WageProfile().dailyOfficeHours,
-                dailyCommuteMinutes = w?.optInt("dailyCommuteMinutes") ?: WageProfile().dailyCommuteMinutes,
-                dailyOvertimeHours = w?.optDouble("dailyOvertimeHours") ?: WageProfile().dailyOvertimeHours,
-            ),
-            goal = FreedomGoal(
-                targetMinor = g?.optLong("targetMinor") ?: FreedomGoal().targetMinor,
-                cushionMinor = g?.optLong("cushionMinor") ?: FreedomGoal().cushionMinor,
-                currentMinor = g?.optLong("currentMinor") ?: FreedomGoal().currentMinor,
-            ),
-            autoMerge = optBoolean("autoMerge", true),
-        )
-    }
+    // 设置的编解码同理抽到 SettingsJson.kt（toSettingsJson / parseAppSettings），
+    // 这样「旧档案里多出来的字段（如已下线的 cushionMinor）能不能导进来」可以直接单测，
+    // 不必为了两行 JSON 先造一个 LedgerDatabase。
 }

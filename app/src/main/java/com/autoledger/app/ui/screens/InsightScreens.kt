@@ -39,9 +39,10 @@ import com.autoledger.app.ui.components.yuan
 import com.autoledger.app.ui.stores.FreedomStore
 import com.autoledger.app.ui.stores.InsightsStore
 import com.autoledger.app.ui.theme.LedgerPalette
+import com.autoledger.core.model.FreedomMath
 import com.autoledger.core.model.Money
 
-/** 自由 —— 自由基金目标与安全垫 */
+/** 自由 —— 自由基金目标与「已攒」进度 */
 @Composable
 fun FreedomScreen(container: AppContainer) {
     val store = remember(container) { FreedomStore(container) }
@@ -50,18 +51,23 @@ fun FreedomScreen(container: AppContainer) {
     val state by store.state.collectAsState()
 
     var target by remember(state.targetMinor) { mutableStateOf(state.targetMinor.yuan()) }
-    var cushion by remember(state.cushionMinor) { mutableStateOf(state.cushionMinor.yuan()) }
     var current by remember(state.currentMinor) { mutableStateOf(state.currentMinor.yuan()) }
 
     val targetMinor = Money.fromYuanDouble(target.toDoubleOrNull() ?: 0.0).minor
+    // 存款用**输入框当前值**而不是已保存值：这样用户一边敲「已攒」就一边变（需求 3 的实时更新）。
     val currentMinor = Money.fromYuanDouble(current.toDoubleOrNull() ?: 0.0).minor
-    val cushionMinor = Money.fromYuanDouble(cushion.toDoubleOrNull() ?: 0.0).minor
     val progress = if (targetMinor <= 0) 0f else (currentMinor.toDouble() / targetMinor).toFloat()
     val surplusMinor = state.monthlySurplusMinor
     val monthsLeft = if (surplusMinor > 0 && targetMinor > currentMinor) {
         (targetMinor - currentMinor).toDouble() / surplusMinor
     } else null
-    val cushionMonths = if (state.monthlyExpenseMinor > 0) cushionMinor.toDouble() / state.monthlyExpenseMinor else 0.0
+    // 已攒 = 到手月薪 − 当月支出 + 当前存款（口径见 FreedomMath，纯函数、有单测）。
+    // 刻意不夹断：结果为负说明这个月在吃老本，是真实且需要被看见的状态。
+    val savedUpMinor = FreedomMath.savedUpMinor(
+        monthlyNetSalaryMinor = state.monthlyNetSalaryMinor,
+        monthlyExpenseMinor = state.monthlyExpenseMinor,
+        currentDepositMinor = currentMinor,
+    )
 
     LazyColumn(
         modifier = Modifier.fillMaxSize().padding(horizontal = 16.dp),
@@ -72,11 +78,13 @@ fun FreedomScreen(container: AppContainer) {
             AppCard {
                 SectionTitle("自由坐标", "攒到多少钱就不用勉强自己了")
                 Row(Modifier.fillMaxWidth().padding(top = 8.dp), horizontalArrangement = Arrangement.SpaceBetween) {
-                    HeroTile("已攒", "¥${currentMinor.yuan()}")
+                    // 负值必须显示负号：Long.yuan() 默认会吞掉它，这里显式开 withSign。
+                    HeroTile(
+                        "已攒",
+                        "¥${savedUpMinor.yuan(withSign = true)}",
+                        hint = "= 到手月薪 − 当月支出 + 存款（自动计算）",
+                    )
                     HeroTile("目标", "¥${targetMinor.yuan()}", accent = LedgerPalette.InkDeep)
-                    HeroTile("安全垫", "¥${cushionMinor.yuan()}", hint = "约 ${
-                        "%.1f".format(cushionMonths)
-                    } 个月开销")
                 }
                 ProgressLine(
                     progress = progress,
@@ -103,10 +111,9 @@ fun FreedomScreen(container: AppContainer) {
             AppCard {
                 SectionTitle("目标设置")
                 MoneyField("目标金额", target) { target = it }
-                MoneyField("安全垫金额", cushion) { cushion = it }
                 MoneyField("当前存款", current) { current = it }
                 Button(
-                    onClick = { store.saveGoal(targetMinor, cushionMinor, currentMinor) },
+                    onClick = { store.saveGoal(targetMinor, currentMinor) },
                     Modifier.padding(top = 10.dp),
                     colors = ButtonDefaults.buttonColors(containerColor = LedgerPalette.Positive),
                 ) { Text("保存目标") }

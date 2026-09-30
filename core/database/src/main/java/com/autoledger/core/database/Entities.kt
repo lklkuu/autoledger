@@ -129,6 +129,14 @@ data class SettingsEntity(
     val wageCommuteMinutes: Int,
     val wageOvertimeHours: Double,
     val goalTargetMinor: Long,
+    /**
+     * 已下线字段（原「安全垫金额」）：列保留、恒写 0，不再参与任何业务逻辑。
+     *
+     * 保留而不是删除的理由：`app_settings` 的历史 schema（3/4/5.json）里它是 NOT NULL 列，
+     * 而 minSdk 26 上 `ALTER TABLE ... DROP COLUMN` 依赖 SQLite 3.35+，在低版本系统上会直接报错；
+     * 正确删法要「建新表 → 拷数据 → 删旧表 → 改名」，属于重型迁移，
+     * 风险远大于留一条死列。详见 SettingsMapper.toEntity 的同名注释。
+     */
     val goalCushionMinor: Long,
     val goalCurrentMinor: Long,
     val autoMerge: Boolean,
