@@ -24,4 +24,28 @@ object FreedomMath {
         monthlyExpenseMinor: Long,
         currentDepositMinor: Long,
     ): Long = monthlyNetSalaryMinor - monthlyExpenseMinor + currentDepositMinor
+
+    /**
+     * 进度 = 已攒 / 目标，**封顶 100%**。
+     *
+     * 封顶必须在**这里**做而不能只靠 ProgressLine：进度条内部会 clamp，
+     * 但旁边的「进度 XX%」文字用的是原始值，不封顶会显示「108.0%」这种怪数字。
+     * 目标未填（<= 0）时为 0，避免除零。
+     */
+    fun progressOf(savedUpMinor: Long, targetMinor: Long): Float =
+        if (targetMinor <= 0L) {
+            0f
+        } else {
+            (savedUpMinor.toDouble() / targetMinor.toDouble()).toFloat().coerceIn(0f, 1f)
+        }
+
+    /**
+     * 还差多少（分）。
+     *
+     * ⚠️ **只有这个展示值**才夹到 0：已攒超过目标时差额是负的，
+     * 显示「还差 ¥-5000」没有意义，显示 0 即代表已达标。
+     * 绝不能反过来把 [savedUpMinor] 本身夹断 —— 负值是有意义的真实状态（在吃老本）。
+     */
+    fun remainingMinor(savedUpMinor: Long, targetMinor: Long): Long =
+        (targetMinor - savedUpMinor).coerceAtLeast(0L)
 }

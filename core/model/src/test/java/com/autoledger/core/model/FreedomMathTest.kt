@@ -71,6 +71,49 @@ class FreedomMathTest {
         assertEquals(0L, FreedomMath.savedUpMinor(0L, 0L, 0L))
     }
 
+    // ------------------------------------------------------------------ 进度 / 还差（都基于已攒）
+
+    @Test
+    fun `progress follows the saved up amount`() {
+        // 已攒 30000 / 目标 120000 = 25%
+        assertEquals(0.25f, FreedomMath.progressOf(3_000_000L, 12_000_000L))
+    }
+
+    @Test
+    fun `progress is capped at 100 percent once the target is reached`() {
+        // 已攒 54000 > 目标 50000：进度必须封顶，不能显示 108%
+        assertEquals(1f, FreedomMath.progressOf(5_400_000L, 5_000_000L))
+        assertEquals(1f, FreedomMath.progressOf(5_000_000L, 5_000_000L), "刚好达标就是 100%")
+        assertEquals(1f, FreedomMath.progressOf(9_999_999L, 1L), "远超目标同样封顶")
+    }
+
+    @Test
+    fun `progress floor is zero for a negative saved up amount`() {
+        // 已攒为负（这个月在吃老本）→ 进度 0，不得出现负进度
+        assertEquals(0f, FreedomMath.progressOf(-300_000L, 5_000_000L))
+    }
+
+    @Test
+    fun `progress is zero when no target is set`() {
+        // 目标未填 → 不得除零，也不得显示 NaN
+        assertEquals(0f, FreedomMath.progressOf(3_000_000L, 0L))
+        assertEquals(0f, FreedomMath.progressOf(3_000_000L, -1L))
+    }
+
+    @Test
+    fun `remaining shows zero once the target is reached`() {
+        assertEquals(0L, FreedomMath.remainingMinor(5_400_000L, 5_000_000L), "已达标 → 还差 0")
+        assertEquals(0L, FreedomMath.remainingMinor(5_000_000L, 5_000_000L))
+        assertEquals(2_000_000L, FreedomMath.remainingMinor(3_000_000L, 5_000_000L), "未达标 → 还差 20000 元")
+    }
+
+    @Test
+    fun `remaining grows when the saved up amount is negative`() {
+        // 已攒 −3000、目标 5000 → 还差 8000；这里允许差额大于目标，
+        // 因为只有**这个展示值**夹 0，已攒本身的负值必须保留（见 savedUpMinor 的注释）。
+        assertEquals(8_000_000L, FreedomMath.remainingMinor(-3_000_000L, 5_000_000L))
+    }
+
     // ------------------------------------------------------------------ 口径性质
 
     @Test

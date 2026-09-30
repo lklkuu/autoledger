@@ -56,11 +56,6 @@ fun FreedomScreen(container: AppContainer) {
     val targetMinor = Money.fromYuanDouble(target.toDoubleOrNull() ?: 0.0).minor
     // 存款用**输入框当前值**而不是已保存值：这样用户一边敲「已攒」就一边变（需求 3 的实时更新）。
     val currentMinor = Money.fromYuanDouble(current.toDoubleOrNull() ?: 0.0).minor
-    val progress = if (targetMinor <= 0) 0f else (currentMinor.toDouble() / targetMinor).toFloat()
-    val surplusMinor = state.monthlySurplusMinor
-    val monthsLeft = if (surplusMinor > 0 && targetMinor > currentMinor) {
-        (targetMinor - currentMinor).toDouble() / surplusMinor
-    } else null
     // 已攒 = 到手月薪 − 当月支出 + 当前存款（口径见 FreedomMath，纯函数、有单测）。
     // 刻意不夹断：结果为负说明这个月在吃老本，是真实且需要被看见的状态。
     val savedUpMinor = FreedomMath.savedUpMinor(
@@ -68,6 +63,13 @@ fun FreedomScreen(container: AppContainer) {
         monthlyExpenseMinor = state.monthlyExpenseMinor,
         currentDepositMinor = currentMinor,
     )
+    // 进度与「还差」都基于**已攒**（而不是当前存款）：
+    // 已攒改成自动计算后，若进度仍按存款算，页面会自相矛盾（显示已攒 54000、进度却按 50000）。
+    val progress = FreedomMath.progressOf(savedUpMinor, targetMinor)
+    val surplusMinor = state.monthlySurplusMinor
+    val monthsLeft = if (surplusMinor > 0 && targetMinor > currentMinor) {
+        (targetMinor - currentMinor).toDouble() / surplusMinor
+    } else null
 
     LazyColumn(
         modifier = Modifier.fillMaxSize().padding(horizontal = 16.dp),
@@ -89,7 +91,7 @@ fun FreedomScreen(container: AppContainer) {
                 ProgressLine(
                     progress = progress,
                     label = "进度 ${"%.1f".format(progress * 100)}%",
-                    targetLabel = "还差 ¥${(targetMinor - currentMinor).coerceAtLeast(0L).yuan()}",
+                    targetLabel = "还差 ¥${FreedomMath.remainingMinor(savedUpMinor, targetMinor).yuan()}",
                 )
                 monthsLeft?.let {
                     Text(
