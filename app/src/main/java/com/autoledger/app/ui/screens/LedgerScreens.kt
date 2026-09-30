@@ -156,7 +156,7 @@ fun ExpensesScreen(container: AppContainer) {
                     OutlinedTextField(
                         value = state.query,
                         onValueChange = store::onQueryChange,
-                        label = { Text("搜索商户 / 备注 / 金额") },
+                        label = { Text("搜索商户 / 平台 / 备注 / 金额") },
                         singleLine = true,
                         leadingIcon = { Icon(LedgerIcons.Search, null) },
                         modifier = Modifier.weight(1f),

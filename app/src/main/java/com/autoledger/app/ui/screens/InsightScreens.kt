@@ -54,22 +54,38 @@ fun FreedomScreen(container: AppContainer) {
     var current by remember(state.currentMinor) { mutableStateOf(state.currentMinor.yuan()) }
 
     val targetMinor = Money.fromYuanDouble(target.toDoubleOrNull() ?: 0.0).minor
-    // 存款用**输入框当前值**而不是已保存值：这样用户一边敲「已攒」就一边变（需求 3 的实时更新）。
+    // 存款用**输入框当前值**而不是已保存值：这样用户一边敲「累计已攒」就一边变（需求 3 的实时更新）。
     val currentMinor = Money.fromYuanDouble(current.toDoubleOrNull() ?: 0.0).minor
-    // 已攒 = 到手月薪 − 当月支出 + 当前存款（口径见 FreedomMath，纯函数、有单测）。
+    // 两个「已攒」的口径都在 FreedomMath（纯函数、有单测），UI 不发明公式：
+    //   当月已攒 = 到手月薪 − 当月支出（不含存款）
+    //   累计已攒 = 使用月数 × 月薪 − 累计支出 + 存款
     // 刻意不夹断：结果为负说明这个月在吃老本，是真实且需要被看见的状态。
-    val savedUpMinor = FreedomMath.savedUpMinor(
+    val monthlySavedUpMinor = FreedomMath.monthlySavedUpMinor(
         monthlyNetSalaryMinor = state.monthlyNetSalaryMinor,
         monthlyExpenseMinor = state.monthlyExpenseMinor,
+    )
+    val cumulativeSavedUpMinor = FreedomMath.cumulativeSavedUpMinor(
+        monthsUsed = state.monthsUsed,
+        monthlyNetSalaryMinor = state.monthlyNetSalaryMinor,
+        cumulativeExpenseMinor = state.cumulativeExpenseMinor,
         currentDepositMinor = currentMinor,
     )
-    // 进度与「还差」都基于**已攒**（而不是当前存款）：
-    // 已攒改成自动计算后，若进度仍按存款算，页面会自相矛盾（显示已攒 54000、进度却按 50000）。
-    val progress = FreedomMath.progressOf(savedUpMinor, targetMinor)
+    // 进度与「还差」都基于**累计已攒**：目标是一个长期总量，
+    // 拿「当月」这个单月切片去比会让页面自相矛盾（显示累计 42000、进度却按 7500 算）。
+    val progress = FreedomMath.progressOf(cumulativeSavedUpMinor, targetMinor)
     val surplusMinor = state.monthlySurplusMinor
-    val monthsLeft = if (surplusMinor > 0 && targetMinor > currentMinor) {
-        (targetMinor - currentMinor).toDouble() / surplusMinor
+    val monthsLeft = if (surplusMinor > 0 && targetMinor > cumulativeSavedUpMinor) {
+        (targetMinor - cumulativeSavedUpMinor).toDouble() / surplusMinor
     } else null
+    // 「开始使用的月份」= 账本最早一笔流水所在月份；账本为空时显示占位符而不是崩。
+    val startLabel = state.startYearMonth?.let { FreedomMath.yearMonthLabel(it) } ?: "—"
+    // 空账本时累计按 0 处理（FreedomMath 口径），这句提示要把它讲清楚，
+    // 否则用户会以为「填了存款却显示 0」是 bug。
+    val cumulativeHint = if (state.monthsUsed <= 0) {
+        "账本暂无流水，累计按 0 处理"
+    } else {
+        "起始月 $startLabel 起 ${state.monthsUsed} 个月（按月薪估算）"
+    }
 
     LazyColumn(
         modifier = Modifier.fillMaxSize().padding(horizontal = 16.dp),
@@ -82,16 +98,25 @@ fun FreedomScreen(container: AppContainer) {
                 Row(Modifier.fillMaxWidth().padding(top = 8.dp), horizontalArrangement = Arrangement.SpaceBetween) {
                     // 负值必须显示负号：Long.yuan() 默认会吞掉它，这里显式开 withSign。
                     HeroTile(
-                        "已攒",
-                        "¥${savedUpMinor.yuan(withSign = true)}",
-                        hint = "= 到手月薪 − 当月支出 + 存款（自动计算）",
+                        "当月已攒",
+                        "¥${monthlySavedUpMinor.yuan(withSign = true)}",
+                        hint = "= 到手月薪 − 当月支出",
                     )
+                    HeroTile(
+                        "累计已攒",
+                        "¥${cumulativeSavedUpMinor.yuan(withSign = true)}",
+                        hint = cumulativeHint,
+                    )
+                }
+                Row(Modifier.fillMaxWidth().padding(top = 10.dp), horizontalArrangement = Arrangement.SpaceBetween) {
                     HeroTile("目标", "¥${targetMinor.yuan()}", accent = LedgerPalette.InkDeep)
+                    HeroTile("起始月", startLabel, accent = LedgerPalette.InkDeep)
                 }
                 ProgressLine(
                     progress = progress,
                     label = "进度 ${"%.1f".format(progress * 100)}%",
-                    targetLabel = "还差 ¥${FreedomMath.remainingMinor(savedUpMinor, targetMinor).yuan()}",
+                    // 差额只在**展示位**夹 0（见 FreedomMath.remainingMinor），累计本身不夹断。
+                    targetLabel = "还差 ¥${FreedomMath.remainingMinor(cumulativeSavedUpMinor, targetMinor).yuan()}",
                 )
                 monthsLeft?.let {
                     Text(

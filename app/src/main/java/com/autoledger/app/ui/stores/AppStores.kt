@@ -7,6 +7,7 @@ import com.autoledger.core.database.RefundAllocationEntity
 import com.autoledger.core.model.Category
 import com.autoledger.core.model.ExpenseMath
 import com.autoledger.core.model.FreedomGoal
+import com.autoledger.core.model.FreedomMath
 import com.autoledger.core.model.LedgerTransaction
 import com.autoledger.core.model.MetricResult
 import com.autoledger.core.model.TimeRange
@@ -412,13 +413,8 @@ class LedgerStore(private val container: AppContainer) {
         val s = _state.value
         var list = s.items
         if (!s.showTransfers) list = list.filter { it.type != TxnType.TRANSFER && it.type != TxnType.REFUND }
-        if (s.query.isNotBlank()) {
-            val q = s.query.trim()
-            list = list.filter {
-                it.counterparty.contains(q, true) || it.note?.contains(q, true) == true ||
-                    (kotlin.math.abs(it.amountMinor) / 100.0).toString().contains(q)
-            }
-        }
+        // 搜索范围：商户 / 消费平台展示名 / 备注 / 金额（口径与测试见 LedgerQuery.kt）
+        if (s.query.isNotBlank()) list = list.filter { matchesQuery(it, s.query) }
         s.tagFilter?.let { tag -> list = list.filter { tag in it.txnExtras.tags } }
         // 消费平台筛选：空串按「未知」处理（历史数据与识别失败都落 unknown）
         s.platformFilter?.let { pid ->
@@ -528,11 +524,22 @@ class FreedomStore(private val container: AppContainer) {
     data class State(
         val targetMinor: Long = 0L,
         val currentMinor: Long = 0L,
-        /** 到手月薪（分）：来自时薪页的 WageProfile，「已攒」公式的收入项。 */
+        /** 到手月薪（分）：来自时薪页的 WageProfile，两个「已攒」公式的收入项。 */
         val monthlyNetSalaryMinor: Long = 0L,
         val monthlySurplusMinor: Long = 0L,
-        /** 当月支出（分）：「已攒」公式的扣减项，由 ExpenseMath 口径算出。 */
+        /** 当月支出（分）：「当月已攒」公式的扣减项，由 ExpenseMath 口径算出。 */
         val monthlyExpenseMinor: Long = 0L,
+        /** 起始月起到现在的累计支出（分）：「累计已攒」公式的扣减项。 */
+        val cumulativeExpenseMinor: Long = 0L,
+        /**
+         * 「开始使用的月份」= 账本**最早一笔流水所在的月份**（年月序号，见 [FreedomMath.yearMonthIndex]）。
+         * 账本为空时为 `null` —— 此时 [monthsUsed] = 0、累计已攒按 0 处理。
+         *
+         * 刻意**不用** App 安装时间：用户可能装了很久才开始记，也可能补录历史账单。
+         */
+        val startYearMonth: Int? = null,
+        /** 使用月数（含起始月与当月），账本为空时为 0。见 [FreedomMath.monthsUsed]。 */
+        val monthsUsed: Int = 0,
     )
 
     private val _state = MutableStateFlow(State())
@@ -554,25 +561,39 @@ class FreedomStore(private val container: AppContainer) {
     }
 
     private suspend fun observe() {
-        val month = TimeRange.thisMonth(System.currentTimeMillis())
-        // 三个源一起订阅：目标/存款 + 到手月薪 + 当月流水。
-        // 月薪与流水都是 StateFlow/Flow，任一侧变化都会重新发射，
-        // 因此「已攒 = 月薪 − 当月支出 + 存款」能实时刷新（存款输入项在 UI 侧联动）。
+        val zone = ZoneId.systemDefault()
+        // 三个源一起订阅：目标/存款 + 到手月薪 + **全量**流水。
+        // 之所以从「当月窗口」换成全量：累计口径需要两样当月窗口给不了的东西 ——
+        //   ① 最早一笔流水所在月份（起始月）；② 起始月至今的累计支出。
+        // 当月支出就在内存里按月份窗口裁出来，省掉一路 observeRange 订阅。
+        // 月薪 / 流水 / 目标都是 Flow，任一侧变化都会重新发射 → 两个「已攒」实时刷新。
         combine(
             container.settings.goal,
             container.settings.wage,
-            container.repository.observeRange(month.startMillis, month.endInclusiveMillis, true),
+            container.repository.observeAll(includeTransfers = true),
         ) { goal, wage, txns -> Triple(goal, wage, txns) }
             .flowOn(Dispatchers.Default)
             .collect { (goal, wage, txns) ->
-                val expense = ExpenseMath.netExpenseMinor(txns).coerceAtLeast(0L)
-                val income = txns.filter { it.type == TxnType.INCOME }.sumOf { kotlin.math.abs(it.amountMinor) }
+                val now = System.currentTimeMillis()
+                val month = TimeRange.thisMonth(now)
+                val monthTxns = txns.filter { it.occurredAtMillis in month.startMillis..month.endInclusiveMillis }
+                val expense = ExpenseMath.netExpenseMinor(monthTxns).coerceAtLeast(0L)
+                val income = monthTxns.filter { it.type == TxnType.INCOME }.sumOf { kotlin.math.abs(it.amountMinor) }
+                // 累计支出只算到「现在」：未来日期的流水（预授权 / 跨时区账单）不该把累计支出抬高。
+                val cumulativeExpense = ExpenseMath
+                    .netExpenseMinor(txns.filter { it.occurredAtMillis <= now })
+                    .coerceAtLeast(0L)
+                // 起始月取全量流水里最早一笔（含未来流水），口径见 FreedomMath.earliestYearMonthIndex。
+                val startYearMonth = FreedomMath.earliestYearMonthIndex(txns, zone)
                 _state.value = State(
                     targetMinor = goal.targetMinor,
                     currentMinor = goal.currentMinor,
                     monthlyNetSalaryMinor = wage.monthlyNetSalaryMinor,
                     monthlySurplusMinor = income - expense,
                     monthlyExpenseMinor = expense,
+                    cumulativeExpenseMinor = cumulativeExpense,
+                    startYearMonth = startYearMonth,
+                    monthsUsed = FreedomMath.monthsUsed(startYearMonth, FreedomMath.yearMonthIndex(now, zone)),
                 )
             }
     }
