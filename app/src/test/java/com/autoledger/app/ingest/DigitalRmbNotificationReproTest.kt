@@ -320,8 +320,14 @@ class DigitalRmbNotificationReproTest {
     /**
      * 场景 R（**真实原文**）：一笔 **17.45 元**京东消费（走数字人民币）触发 4 条通知。
      *
-     * 用户报告 App 记成 **2 条**，期望 **1 条**。本用例把真实链路逐条打出来（`[REPRO]`），
-     * 并断言**改后**最终条数。
+     * 用户报告 App 记成 **2 条**，期望 **1 条**。本用例把真实链路逐条打出来（`[REPRO]`）。
+     *
+     * ## 缺口修复（本轮）
+     * [3][4] 此前 **`ruleId = —`**（没命中任何规则）⇒ 落「未解析出金额」的半残状态。
+     * 根因是 `bank_generic_out.bodyMustContainAny` 触发词覆盖不足（含「支付」不含「支付成功」），
+     * **不是**金额正则不认识 `¥`（`amountPatterns` 第 2 条本就认 `¥`）。
+     * 修法：① 补组合词（「支付给 / 钱包支付 / 数字人民币支付 / 数字钱包」）；② `digital_rmb` 补中词「数字钱包」。
+     * 修后 [3][4] 都应是「有金额、平台正确」的正常待确认记录 —— 见下方硬断言。
      */
     @Test
     fun `scenario R - the real four notifications of one 17_45 yuan digital rmb payment`() {
@@ -357,6 +363,21 @@ class DigitalRmbNotificationReproTest {
         )
         val (rows, repo) = runScenario("R：真实原文（17.45 元京东数字人民币）", scenario)
         assertEquals(4, rows.size)
+
+        // ── [1][2] 本就命中：金额 17.45 元、平台数币 ──────────────────────────
+        assertEquals("bank_generic_out", rows[0].ruleId, "[1] 工行短信应命中支出规则")
+        assertEquals(-1_745L, rows[0].amountMinor, "[1] 应解析出 17.45 元")
+        assertEquals("bank_generic_out", rows[1].ruleId, "[2] 工行动账通知应命中支出规则")
+        assertEquals(-1_745L, rows[1].amountMinor, "[2] 应解析出 17.45 元")
+
+        // ── [3][4] 本轮修复点：从「未解析出金额」变成「有金额、平台正确」的正常记录 ──
+        assertEquals("bank_generic_out", rows[2].ruleId, "[3] 数字钱包支付给…¥17.45 应命中支出规则（此前 ruleId=—）")
+        assertEquals(-1_745L, rows[2].amountMinor, "[3] 应解析出 17.45 元（此前为 null）")
+        assertEquals("digital_rmb", rows[2].platformId, "[3] 含「数字钱包」应识别为数币（此前误落 bank）")
+        assertEquals("bank_generic_out", rows[3].ruleId, "[4] 数币 App 付款通知应命中支出规则（此前 ruleId=—）")
+        assertEquals(-1_745L, rows[3].amountMinor, "[4] 应解析出 17.45 元（此前为 null）")
+        assertEquals("digital_rmb", rows[3].platformId, "[4] 含「数字人民币钱包」应识别为数币")
+
         println("[REPRO] 场景 R 最终存活 = ${repo.alive().size} 条（用户期望 1）")
     }
 

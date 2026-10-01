@@ -339,6 +339,33 @@ class KeywordPlatformResolverTest {
     }
 
     @Test
+    fun `case R5b - 数字钱包 medium keyword resolves a wallet notification without a package`() {
+        // 真实样本 [3]（工行数字钱包动账通知）：正文只含「数字钱包」（无强词「数字人民币」）。
+        // 此前落 bank(0.35)（被「尾号」拖住）；补入 medium 后应落 digital_rmb(0.60)。
+        // 0.60 > bank 的 0.35 ⇒ 数币胜出；0.60 < CONFIRM_THRESHOLD ⇒ UI 仍打「待确认」角标。
+        val r = resolve(
+            "动账通知\n您尾号为4793的数字钱包支付给中电联京东共管钱包（0098）¥17.45",
+            null, "com.icbc.wallet",
+        )
+        assertEquals("digital_rmb", r.platformId, "「数字钱包」是中词线索，应把这类通知识别为数币")
+        assertEquals(0.60f, r.confidence)
+        assertTrue(r.confidence < PlatformResolver.CONFIRM_THRESHOLD, "0.60 < 0.75 ⇒ UI 必须提示确认")
+        assertFalse(r.ambiguous, "数币(0.60) 与 bank(0.35) 分差 0.25 ≥ 0.15 ⇒ 不算歧义")
+    }
+
+    @Test
+    fun `case R5c - 数字人民币 wallet notification keeps the strong confidence`() {
+        // 真实样本 [4]（数币 App 付款通知）：正文含强词「数字人民币」⇒ 0.90。
+        val r = resolve(
+            "付款通知\n您的我的钱包数字人民币钱包在京东平台支付¥17.45",
+            null, "cn.gov.pboc.dcep",
+        )
+        assertEquals("digital_rmb", r.platformId)
+        assertEquals(0.90f, r.confidence)
+        assertFalse(r.ambiguous)
+    }
+
+    @Test
     fun `case R6 - bare bank sms with no package falls back to bank below the confirm threshold`() {
         // 无包名形态（与 case 2 的 sms:inbox 形态互为补充）：只凭「尾号」这一 weak 线索落 bank(0.35)。
         // 0.35 == UNKNOWN_THRESHOLD ⇒ 不落 unknown；< CONFIRM_THRESHOLD ⇒ UI 必须打「待确认」角标。

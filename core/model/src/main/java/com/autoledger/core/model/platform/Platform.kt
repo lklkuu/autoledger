@@ -273,7 +273,11 @@ object PlatformCatalog {
             // 官方数字支付通道（E_WALLET）：优先级**高于银行卡、低于微信/支付宝**（需求原话）。
             kind = PlatformKind.E_WALLET,
             strongKeywords = listOf("数字人民币", "数币支付"),
-            mediumKeywords = listOf("数字人民币钱包", "e-CNY"),
+            // 「数字钱包」放 medium（0.60）：比强词「数字人民币」弱（它没点明"人民币"），
+            // 但比弱词「试点版」强得多 —— 正文出现"数字钱包"基本就是数币钱包的支付通知。
+            // 真实样本：「您尾号为4793的**数字钱包**支付给中电联京东共管钱包（0098）¥17.45」，
+            // 此前既无「数字人民币」也无「数字人民币钱包」⇒ 被「尾号」拖成 bank(0.35)。
+            mediumKeywords = listOf("数字人民币钱包", "数字钱包", "e-CNY"),
             weakKeywords = listOf("试点版"),
             packageNames = emptySet(), // 待核实（设计文档 §3.2）：包名不确定则留空，靠关键词兜底
             sortOrder = 80,
