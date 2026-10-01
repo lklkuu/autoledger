@@ -19,7 +19,11 @@ import kotlin.test.assertTrue
  */
 class InsightsAggregationTest {
 
-    private val zone = ZoneId.of("Asia/Shanghai")
+    // 必须与生产代码同源：`TimeRange.monthOf` 用 ZoneId.systemDefault() 划月，
+    // 本类的 millis() 夹具若写死固定时区（如 Asia/Shanghai），在系统时区≠该时区的机器
+    // （CI Linux 默认 UTC）上会与 monthOf 的月界相差整 8 小时 ⇒ 假失败（v1.1.5 CI 实证）。
+    // computeInsightsFacts 的用例里 fixtures 与被测函数传同一个 zone ⇒ 依旧自洽。
+    private val zone = ZoneId.systemDefault()
 
     private fun txn(
         id: String,
