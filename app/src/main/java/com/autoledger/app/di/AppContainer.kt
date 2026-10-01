@@ -346,11 +346,17 @@ class AppContainer(context: Context) {
      *
      * 用 [PlatformCatalog.replaceExtras]（原子整体替换）而不是「先清空再逐个注册」：
      * 后者存在一个「自定义平台全部消失」的窗口，而采集循环可能正在并发识别。
+     *
+     * 整体套 [PlatformCatalog.withRebuildGate]：本方法被**三个调用方**共用
+     * （启动注入 / 用户自定义平台写成功后的增量同步），与 `BackupManager.import` 的重建段
+     * 并发交错时可能出现「后落库者被先读库者的旧快照覆盖」。门内整个序列原子。
      */
     suspend fun syncUserPlatformsToCatalog() {
-        val platforms = runCatching { repository.listUserPlatforms(includeArchived = true) }
-            .getOrDefault(emptyList())
-        PlatformCatalog.replaceExtras(platforms.map { it.toPlatformEntry() })
+        PlatformCatalog.withRebuildGate {
+            val platforms = runCatching { repository.listUserPlatforms(includeArchived = true) }
+                .getOrDefault(emptyList())
+            PlatformCatalog.replaceExtras(platforms.map { it.toPlatformEntry() })
+        }
     }
 
     /** 供 UI 在错误页点击「重试」时调用 */

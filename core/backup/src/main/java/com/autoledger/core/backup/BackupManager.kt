@@ -251,9 +251,17 @@ class BackupManager(
         // 本次会话里编辑流水的平台选择器还是旧的。
         // 用 replaceExtras 整体替换（原子），而不是「先清空再逐个注册」——
         // 后者存在一个「自定义平台全部消失」的窗口，采集循环可能正在并发识别。
-        PlatformCatalog.replaceExtras(
-            repo.listUserPlatforms(includeArchived = true).map { it.toPlatformEntry() },
-        )
+        //
+        // 「upsertUserPlatform 循环 → listUserPlatforms → replaceExtras」是一个三步序列，
+        // 必须整体套 PlatformCatalog.withRebuildGate：否则与启动注入/用户编辑平台的重建入口
+        // 并发交错时，先读库者的旧快照会覆盖后落库者（丢失更新）。
+        // （锁顺序 ingestGate → rebuildGate：此处持门期间不再回调采集总线。）
+        PlatformCatalog.withRebuildGate {
+            platforms.forEach { repo.upsertUserPlatform(it) }
+            PlatformCatalog.replaceExtras(
+                repo.listUserPlatforms(includeArchived = true).map { it.toPlatformEntry() },
+            )
+        }
 
         // 导入是一次性批量写入（最多 upsert 数千条流水）⇒ outbox 会被一口气塞满；
         // 导入完成后淘汰一次，封住 outbox 无限膨胀。淘汰是运维动作，**绝不**放进单笔写事务。

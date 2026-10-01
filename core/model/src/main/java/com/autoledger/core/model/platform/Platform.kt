@@ -1,5 +1,8 @@
 package com.autoledger.core.model.platform
 
+import kotlinx.coroutines.sync.Mutex
+import kotlinx.coroutines.sync.withLock
+
 /**
  * 消费平台（业务维度）的类型契约。
  *
@@ -154,8 +157,8 @@ data class PlatformEntry(
 /**
  * 消费平台目录。
  *
- * 新增平台 = 往 [BUILT_IN] 加一条数据，或运行时调用 [register]（预留给「用户自定义 / 远端下发规则包」，
- * 本期不开放 UI）。
+ * 新增平台 = 往 [BUILT_IN] 加一条数据，或运行时调用 [register]（用户自定义平台，
+ * 由 `UserPlatformStore` 经 `AppContainer.syncUserPlatformsToCatalog` / 备份导入注入）。
  */
 object PlatformCatalog {
 
@@ -309,7 +312,33 @@ object PlatformCatalog {
     @Volatile
     private var cached: List<PlatformEntry>? = null
 
+    /**
+     * **目录重建互斥门**：跨进程内所有「重建目录」入口（启动注入 / 用户编辑平台 / 备份导入重建）串行化。
+     *
+     * 为什么 `@Synchronized` 不够：单个写方法原子 ≠ **多步序列**原子。
+     * 「先落库 → 再读库 → 再 [replaceExtras]」是一个三步序列，若两个入口并发交错，
+     * 后落库者可能被先读库者的旧快照覆盖（丢失更新）。门把**整个序列**变成临界区。
+     *
+     * ⚠️ **锁顺序：`ingestGate → rebuildGate`**（见 `CaptureDispatcher.ingestGate` 的 KDoc）。
+     * 采集循环持 `ingestGate` 期间可经识别读到本目录；因此任何持有本门（`withRebuildGate`）的
+     * 代码路径**不得再**去获取 `ingestGate`，否则出现 `rebuildGate → ingestGate` 反序持锁，可死锁。
+     */
+    private val rebuildGate = Mutex()
+
+    /**
+     * 在目录重建互斥门内执行 [block]。
+     *
+     * 使用方（**全局只有三处入口**）：
+     * 1. `AppContainer.syncUserPlatformsToCatalog`（启动注入 + 用户自定义平台写成功后的增量同步，
+     *    `UserPlatformStore` 经它间接受保护）；
+     * 2. `BackupManager.import`（导入重建目录段：`upsertUserPlatform` 循环 → `listUserPlatforms` →
+     *    `replaceExtras`，三步必须整体原子）；
+     * 3. 未来如有新的重建入口，必须走同一扇门。
+     */
+    suspend fun <R> withRebuildGate(block: suspend () -> R): R = rebuildGate.withLock { block() }
+
     /** 全部条目，按 [PlatformEntry.sortOrder] 稳定排序。结果被缓存，见 [cached]。 */
+    @Synchronized
     fun all(): List<PlatformEntry> =
         cached ?: (BUILT_IN + extra).sortedBy { it.sortOrder }.also { cached = it }
 
@@ -336,6 +365,7 @@ object PlatformCatalog {
      *
      * 由「用户自定义平台」在启动注入与写成功后调用（见 AppContainer / UserPlatformStore）。
      */
+    @Synchronized
     fun register(entry: PlatformEntry) {
         extra.removeAll { it.id == entry.id }
         extra.add(entry)
@@ -352,12 +382,14 @@ object PlatformCatalog {
      * 而历史流水引用的 `platformId` 若来自别处的目录快照仍能查到。
      * 用户自定义平台的真正保留靠 DB 的软删除（`archived`），不是靠这里。
      */
+    @Synchronized
     fun unregister(id: String) {
         extra.removeAll { it.id == id }
         cached = null
     }
 
     /** 仅供测试：清空 [register] 进来的条目，恢复内置目录。 */
+    @Synchronized
     internal fun resetExtras() {
         extra.clear()
         cached = null
@@ -372,6 +404,7 @@ object PlatformCatalog {
      * 而采集循环可能正在并发识别，会把刚落地的流水判定成 `unknown`。
      * 整体替换是**原子**的，要么旧目录、要么新目录，不存在中间态。
      */
+    @Synchronized
     fun replaceExtras(entries: List<PlatformEntry>) {
         extra.clear()
         extra.addAll(entries)

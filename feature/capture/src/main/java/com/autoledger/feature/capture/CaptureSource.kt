@@ -76,6 +76,11 @@ object CaptureDispatcher {
      * 「一笔数字人民币支付会同时触发银行短信 + 银行 App + 数币 App 多条通知」的核心场景。
      *
      * 分发本身只是转发，串行化不影响吞吐（通知到达频率远低于处理速度）。
+     *
+     * ⚠️ **锁顺序：`ingestGate → rebuildGate`**：门内的 ingest → 识别路径会读 `PlatformCatalog`
+     * （其内部是 `@Synchronized` 的 monitor 锁，无 suspend 等待）。反之，持
+     * `PlatformCatalog.withRebuildGate` 的重建入口**绝不允许**回调进本总线（再取 `ingestGate`），
+     * 否则出现 `rebuildGate → ingestGate` 反序持锁，可死锁。
      */
     private val ingestGate = Mutex()
 

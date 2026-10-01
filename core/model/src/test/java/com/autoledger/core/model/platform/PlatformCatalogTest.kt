@@ -2,6 +2,10 @@ package com.autoledger.core.model.platform
 
 import com.autoledger.core.model.UserPlatform
 import com.autoledger.core.model.toPlatformEntry
+import kotlinx.coroutines.async
+import kotlinx.coroutines.awaitAll
+import kotlinx.coroutines.delay
+import kotlinx.coroutines.runBlocking
 import kotlin.test.assertEquals
 import kotlin.test.assertFalse
 import kotlin.test.assertNotEquals
@@ -328,6 +332,96 @@ class PlatformCatalogTest {
             com.autoledger.core.model.newUserPlatformId(),
             generated,
             "两次生成必须不同（否则两笔自定义平台会互相覆盖）",
+        )
+    }
+
+    // ------------------------------------------------------------------ 目录重建互斥门（并发护栏）
+
+    @Test
+    fun `withRebuildGate serializes concurrent rebuild entries`() = runBlocking {
+        // 门内临界区必须严格串行：同一时刻最多一个协程在门内（并发==1）。
+        // 若门失效（比如被误改为普通函数 / Mutex 换成了可重入自旋），计数会出现 >1。
+        var active = 0
+        var maxActive = 0
+        (1..8).map {
+            async {
+                PlatformCatalog.withRebuildGate {
+                    active += 1
+                    maxActive = maxOf(maxActive, active)
+                    delay(5)
+                    active -= 1
+                }
+            }
+        }.awaitAll()
+        assertEquals(1, maxActive, "门内并发必须==1（临界区严格串行）")
+        assertEquals(0, active, "全部退出后计数必须归零")
+    }
+
+    @Test
+    fun `hammered register and all and priorityOf from many threads stay consistent`() {
+        // 多线程数百次并发 register（同 ID 覆盖）/ all（触发缓存重算）/ priorityOf：
+        // ① 写覆盖必须原子 —— 结束后同 ID 只剩一条，目录只多一条；
+        // ② 条目必须仍可查到（写丢 = 用户自定义平台静默消失，是最恶劣的故障形态）。
+        try {
+            val threads = (1..8).map { t ->
+                Thread {
+                    repeat(100) { i ->
+                        PlatformCatalog.register(
+                            PlatformEntry(
+                                id = "user:stress",
+                                displayName = "压力$t-$i",
+                                kind = PlatformKind.ORDER,
+                                mediumKeywords = listOf("压力"),
+                                sortOrder = 1000,
+                            ),
+                        )
+                        PlatformCatalog.all()
+                        priorityOf("user:stress")
+                    }
+                }.also { it.start() }
+            }
+            threads.forEach { it.join() }
+
+            val found = PlatformCatalog.find("user:stress")
+            assertNotNull(found, "800 次并发写读后条目必须仍可查到")
+            assertEquals(PlatformPriority.ORDER, priorityOf("user:stress"))
+            assertEquals(
+                builtInIds.size + 1,
+                PlatformCatalog.all().size,
+                "同 ID 覆盖 ⇒ 无论并发多少次，目录只多一条（removeAll+add 必须原子）",
+            )
+        } finally {
+            PlatformCatalog.resetExtras()
+        }
+    }
+
+    @Test
+    fun `concurrent replaceExtras never leaves a mixed catalog`() = runBlocking {
+        // 两组完全不同的自定义平台并发整体替换：每一轮结束后，extra 必须恰好等于 A 或 B 的全量，
+        // 绝不允许出现「A 的部分 + B 的部分」混合态（混合态 = 目录半新半旧，识别结果不可解释）。
+        try {
+            val setA = (1..3).map { PlatformEntry(id = "user:a$it", displayName = "A$it", sortOrder = 1000 + it) }
+            val setB = (1..3).map { PlatformEntry(id = "user:b$it", displayName = "B$it", sortOrder = 2000 + it) }
+            val idsA = setA.map { it.id }
+            val idsB = setB.map { it.id }
+            repeat(60) {
+                (1..2).map {
+                    async {
+                        PlatformCatalog.replaceExtras(if (it == 1) setA else setB)
+                    }
+                }.awaitAll()
+                val extras = PlatformCatalog.all().filter { it.id.startsWith("user:") }.map { it.id }
+                assertTrue(
+                    extras == idsA || extras == idsB,
+                    "并发 replace 后出现混合态：$extras",
+                )
+            }
+        } finally {
+            PlatformCatalog.resetExtras()
+        }
+        assertFalse(
+            PlatformCatalog.all().any { it.id.startsWith("user:") },
+            "测试结束必须恢复内置目录，避免污染其他用例",
         )
     }
 }
