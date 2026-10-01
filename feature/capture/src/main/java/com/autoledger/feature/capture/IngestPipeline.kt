@@ -179,8 +179,11 @@ class IngestPipeline(
             }
             duplicates.isNotEmpty() -> Outcome.NeedsReview(
                 final.id,
-                if (duplicates.first().crossSource) "发现 ${duplicates.size} 笔可能的重复，待你确认合并"
-                else "同渠道 ${duplicates.size} 笔同金额流水，疑似重复，待你确认是否为独立消费",
+                // ⚠️ 文案不得承诺**当前不存在**的动作：待确认页只有「确认入账 / 忽略」两个按钮，
+                // 没有「合并」入口（三个 NeedsReview 调用点也都丢弃了 reason）。
+                // 原先写「待你确认合并」会让用户去找一个不存在的功能 ⇒ 改为请用户核对。
+                if (duplicates.first().crossSource) "发现 ${duplicates.size} 笔可能的重复，请核对"
+                else "同渠道 ${duplicates.size} 笔同金额流水，疑似重复，请核对该笔是否为独立消费",
             )
             shouldConfirm -> Outcome.Accepted(final.id, true, reason)
             else -> Outcome.NeedsReview(final.id, "分类置信度 ${"%.2f".format(confidence)} 偏低，待确认")
