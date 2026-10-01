@@ -1,6 +1,7 @@
 package com.autoledger.app.refund
 
 import com.autoledger.core.database.repository.RefundRepository
+import com.autoledger.core.model.capture.CaptureSourceIds
 import com.autoledger.core.model.refund.RefundRejectCode
 import com.autoledger.core.model.refund.RefundRequest
 import com.autoledger.core.model.refund.RefundResult
@@ -26,10 +27,10 @@ class RefundService(private val repository: RefundRepository) {
         orderId: String,
         amountMinor: Long,
         refundNo: String,
-        idempotencyKey: String = "manual:$refundNo",
+        idempotencyKey: String = "${CaptureSourceIds.MANUAL}:$refundNo",
         now: Long = System.currentTimeMillis(),
         allowExpired: Boolean = false,
-        sourceId: String = "manual",
+        sourceId: String = CaptureSourceIds.MANUAL,
     ): Outcome {
         val state = runCatching { repository.loadState(orderId) }.getOrNull()
             ?: return Outcome(

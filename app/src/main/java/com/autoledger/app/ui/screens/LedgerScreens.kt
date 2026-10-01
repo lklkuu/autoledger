@@ -133,7 +133,7 @@ fun ExpensesScreen(container: AppContainer) {
                         val minor = com.autoledger.core.model.Money.fromYuanDouble(kotlin.math.abs(yuanValue)).minor
                             .coerceAtLeast(1L)
                         scope.launch {
-                            val source = container.captureRegistry.find("manual")
+                            val source = container.captureRegistry.find(com.autoledger.core.model.capture.CaptureSourceIds.MANUAL)
                                 as? com.autoledger.feature.capture.manual.ManualCaptureSource
                             // 退款记为独立 REFUND 流水（正数、显式类型），不依赖订单
                             val envelope = source?.envelope(
