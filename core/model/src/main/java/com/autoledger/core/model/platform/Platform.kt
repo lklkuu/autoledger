@@ -44,16 +44,27 @@ enum class PlatformKind {
     PAYMENT,
 
     /**
-     * 银行：钱从**哪张卡**出去（结算侧）。
+     * 官方数字支付通道：数字人民币（`digital_rmb`）/ 云闪付（`unionpay`）。
      *
-     * 为什么要独立成一个 kind，而不是塞进 [PAYMENT] 或 [OTHER]：
+     * 优先级**介于三方支付通道（微信/支付宝）与银行卡之间**（需求原话：
+     * 「云闪付 / 数币的优先级要高于银行卡，但低于微信支付宝」）。
+     * 它既不是消费场所（[ORDER]），也不是第三方支付通道（[PAYMENT]），
+     * 更不同于底层资金源（[BANK]）—— 是央行 / 银联出的官方数字通道，故单列一类。
+     */
+    E_WALLET,
+
+    /**
+     * 银行：最底层资金源 —— 钱从**哪张卡**出去（信息量最少）。
+     *
+     * 为什么独立成一个 kind，而不是塞进 [PAYMENT] 或 [OTHER]：
      * - 塞进 [PAYMENT] ⇒ 它会与微信/支付宝同级，而需求要求「银行卡优先级最低」
      *   （美团 > 微信/支付宝 > 银行卡），同级就**排不出序**；
      * - 塞进 [OTHER] ⇒ [toPriority] 会得到 [PlatformPriority.NONE]，**无法参与层级比较**，
      *   跨渠道互补匹配直接失效。
      *
-     * 新增本值是**源码兼容**的：全仓对 [PlatformKind] 只有 `== ORDER` / `== PAYMENT` 形式的判断，
-     * 没有穷尽 `when`（否则会因缺分支而编译失败）。
+     * ⚠️ **新增 [PlatformKind] 值不是"源码兼容"的（不要被旧注释误导）**：全仓虽以 `== ORDER` /
+     * `== PAYMENT` 形式判断为主，但 UI 层 `roleLabel()`（`PlatformManageScreen`）是**穷尽 `when`** ——
+     * 漏分支会编译失败。新增 kind（如 [E_WALLET]）时必须**同步补它的分支**。
      */
     BANK,
 
@@ -74,20 +85,29 @@ enum class PlatformPriority(val rank: Int) {
     /** unknown / OTHER —— 不参与层级比较。 */
     NONE(0),
 
-    /** 银行卡：层级最低（钱从哪张卡出去，信息量最少）。 */
+    /** 银行卡：最低（钱从哪张卡出去，信息量最少）。 */
     BANK(1),
 
-    /** 微信 / 支付宝 / 云闪付 / 数字人民币。 */
-    PAYMENT(2),
+    /** 官方数字支付通道（数字人民币 / 云闪付）：**高于银行卡、低于三方支付通道**。 */
+    E_WALLET(2),
+
+    /** 微信 / 支付宝等**三方支付通道**（钱从哪条通道出去）。 */
+    PAYMENT(3),
 
     /** 美团 / 淘宝 / 拼多多 / 抖音：层级最高（用户真正关心的消费场所）。 */
-    ORDER(3),
+    ORDER(4),
 }
 
-/** 角色 → 去重层级。 */
+/**
+ * 角色 → 去重层级。
+ *
+ * ⚠️ `rank` 是 `Int`，中间层是通过**重排**加入的（`E_WALLET(2)` 插在 `BANK(1)` 与 `PAYMENT(3)` 之间），
+ * 不是插 `1.5` —— 改 rank 数值时必须保持这里的**相对顺序不变**。
+ */
 fun PlatformKind.toPriority(): PlatformPriority = when (this) {
     PlatformKind.ORDER -> PlatformPriority.ORDER
     PlatformKind.PAYMENT -> PlatformPriority.PAYMENT
+    PlatformKind.E_WALLET -> PlatformPriority.E_WALLET
     PlatformKind.BANK -> PlatformPriority.BANK
     PlatformKind.OTHER -> PlatformPriority.NONE
 }
@@ -250,7 +270,8 @@ object PlatformCatalog {
         PlatformEntry(
             id = "digital_rmb",
             displayName = "数字人民币",
-            kind = PlatformKind.PAYMENT,
+            // 官方数字支付通道（E_WALLET）：优先级**高于银行卡、低于微信/支付宝**（需求原话）。
+            kind = PlatformKind.E_WALLET,
             strongKeywords = listOf("数字人民币", "数币支付"),
             mediumKeywords = listOf("数字人民币钱包", "e-CNY"),
             weakKeywords = listOf("试点版"),
@@ -260,7 +281,8 @@ object PlatformCatalog {
         PlatformEntry(
             id = "unionpay",
             displayName = "云闪付",
-            kind = PlatformKind.PAYMENT,
+            // 官方数字支付通道（E_WALLET），理由同 digital_rmb。
+            kind = PlatformKind.E_WALLET,
             strongKeywords = listOf("云闪付"),
             mediumKeywords = listOf("银联", "UnionPay"),
             weakKeywords = listOf("银联商务", "云闪付支付"),

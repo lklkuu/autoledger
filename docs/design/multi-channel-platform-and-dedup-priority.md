@@ -390,26 +390,26 @@ adb shell dumpsys notification --noredact | grep -E "pkg=|packageName"
 | 级别 | 匹配键 | 适用场景 | 是否新增 |
 |---|---|---|---|
 | **Tier-1 指纹精确** | `fingerprint` + 3 分钟窗口 | 商户名一致（同一平台被重复抓取、或银行短信与通知恰好同名） | 已有 |
-| **Tier-2 层级互补** | `amountMinor` 相等 + 3 分钟窗口 + 不同 `sourceId` + **平台层级互补** | 商户名不同但描述同一笔（美团通知 ↔ 银行短信） | 🆕 **新增** |
+| **Tier-2 层级互补** | `amountMinor` 相等 + 3 分钟窗口 + **平台层级互补** | 商户名不同但描述同一笔（美团通知 ↔ 银行短信） | 🆕 **新增**（**实现期修订：原含「不同 `sourceId`」，见 §10-⑨**） |
 
 **Tier-2 的护栏（这是防误合并的关键，必须逐条实现）**
 
-记 `tier(p) = priorityOf(p).rank ∈ {ORDER=3, PAYMENT=2, BANK=1, NONE=0}`。
+记 `tier(p) = priorityOf(p).rank ∈ {ORDER=4, PAYMENT=3, E_WALLET=2, BANK=1, NONE=0}`。
 
 | 组合 | 自动合并？ | 理由 |
 |---|---|---|
-| `ORDER ↔ PAYMENT` | ✅ | 美团下单 + 微信/支付宝付款 —— **正是需求要的场景** |
-| `ORDER ↔ BANK` | ✅ | 美团下单 + 银行卡扣款 |
+| 恰好一侧 `ORDER`（`ORDER↔PAYMENT` / `ORDER↔E_WALLET` / `ORDER↔BANK` / `ORDER↔NONE`） | ✅ | 消费场所 + 资金通道，一笔消费的上下游 —— **正是需求要的场景** |
 | `ORDER ↔ NONE`（unknown） | ✅ | 美团通知 + 银行短信未识别出平台 |
-| `PAYMENT ↔ BANK` | ⚠️ **默认不自动合并，降级为待确认** | 「微信支付 88」+「银行卡扣 88」**可能是同一笔**（微信绑的这张卡），**也可能是两笔**（先充值、再消费）。证据不足 |
-| `PAYMENT ↔ PAYMENT`（微信↔支付宝） | ❌ | 一次消费只有一个支付通道 |
-| `ORDER ↔ ORDER`（美团↔淘宝） | ❌ | 两个消费场所 = 两笔消费 |
-| `BANK ↔ BANK`（**同一条** `bank` 通道） | ⚠️ **降级为待确认** | 目录里 `BANK` 只有唯一 ID `bank` ⇒ 同层级即同一通道；银行短信 + 银行 App 通知是**同一条通道被重复抓取** ⇒ 疑似同一笔，但银行短信常无商户名、无法排除"同金额两笔真实扣款" ⇒ 交用户（**实现期修订：本条原为 ❌；见 §10-⑤**） |
-| 任一侧 `NONE` 且另一侧也是 `NONE` | ❌ | 无层级信息，不合并 |
+| `PAYMENT ↔ E_WALLET` | ⚖️ **降级为待确认** | 一笔消费只走一个支付通道（两者互斥），但保守起见浮出给用户（**实现期修订：见 §10-⑩**） |
+| `PAYMENT ↔ BANK` | ⚖️ **默认不自动合并，降级为待确认** | 「微信支付 88」+「银行卡扣 88」**可能是同一笔**（微信绑的这张卡），**也可能是两笔**（先充值、再消费）。证据不足 |
+| `E_WALLET ↔ BANK` | ⚖️ **降级为待确认** | **用户拍板**：数币 / 云闪付与银行卡边界模糊，宁可保守，也不静默吞掉真实消费（**实现期修订：见 §10-⑩**） |
+| 同层级 + **同 id**（`wechat↔wechat` / `digital_rmb↔digital_rmb` / `bank↔bank`） | ⚖️ **降级为待确认** | 同一类通道被重复抓取 ⇒ 疑似同一笔，但银行短信常无商户名、无法排除"同金额两笔真实扣款" ⇒ 交用户（`bank↔bank` 见 **§10-⑤**） |
+| 同层级 + **不同 id**（微信↔支付宝 / 数币↔云闪付 / 美团↔淘宝） | ❌ | 一次消费只有一个通道 / 两个消费场所 = 两笔消费（**连候选都不是**） |
+| `NONE ↔ NONE` / 任一资金通道 `↔ NONE` | ❌ | 无层级信息 / 无互补证据，不合并 |
 
-> `PAYMENT ↔ BANK` 不自动合并是**有意的保守**：这是唯一真实歧义的组合。降级为"待你确认"比误合并安全，与项目既有取舍一致（`LedgerDuplicateResolver.kt:21-24`：「宁可多一步确认，也不静默吞掉真实消费」）。
+> `PAYMENT ↔ BANK` / `PAYMENT ↔ E_WALLET` / `E_WALLET ↔ BANK` 不自动合并是**有意的保守**：三者都是"钱从不同通道出去"，真实歧义。降级为"待你确认"比误合并安全，与项目既有取舍一致（`LedgerDuplicateResolver.kt:21-24`：「宁可多一步确认，也不静默吞掉真实消费」）。
 
-> ⚠️ **实现期修订**：本护栏表在 QA 复核后修订了 `BANK ↔ BANK` 一行；此外 Tier-1 另补了「层级 / 门店」两道闸、Tier-2 另补了「权威来源」闸。完整偏离清单与理由见 **§10 实现期修订记录**（请连同该节一起阅读，勿只按本表实现）。
+> ⚠️ **实现期修订**：本护栏表在实现期加入 `E_WALLET` 中间层并据用户拍板重排（见 §10-⑩）；此外 Tier-1 另补了「层级 / 门店」两道闸、Tier-2 另补了「权威来源」闸。完整偏离清单与理由见 **§10 实现期修订记录**（请连同该节一起阅读，勿只按本表实现）。
 
 **Tier-2 查询路径与性能**
 
@@ -730,9 +730,9 @@ suspend fun updateMergeState(id: String, status: String, primaryId: String?)
 
 ## 10. 实现期修订记录
 
-> **本节只增不改**：§1–§9 的正文除 §4.2 判定表按最终口径更新过 `BANK ↔ BANK` 一行外，其余**保持原样**。
+> **本节只增不改**：§1–§9 的正文除 §4.2 的判定表按最终口径更新外（新增 `E_WALLET` 层、`BANK ↔ BANK` 行回退为单行；Tier-2 匹配键去掉「不同 `sourceId`」），其余**保持原样**；§2.2 的条目快照保留原设计，以 §10-⑩ 为准。
 > 目的正是让读者看出「**原设计是什么、后来为什么改**」—— 只改判定表会让文档显得"一开始就设计对了"，
-> 那会抹掉迭代痕迹，也会掩盖真实踩过的坑。下列 ①–⑦ 按**发现顺序**排列，每条 = 偏离内容 + 触发它的反例 + 理由。
+> 那会抹掉迭代痕迹，也会掩盖真实踩过的坑。下列 ①–⑩ 按**发现顺序**排列，每条 = 偏离内容 + 触发它的反例 + 理由。
 
 ### ① Tier-1 也必须有层级护栏（原设计**完全未提**）
 
@@ -781,6 +781,53 @@ suspend fun updateMergeState(id: String, status: String, primaryId: String?)
 - **多候选择一（P2-3）**：`IngestPipeline` 原取 `duplicates.first()`；Tier-2 候选分数恒为 50、排序与"能否自动合并"无关，若一个 `REVIEW` 候选排在前面会**挡掉**本可 `AUTO_MERGE` 的候选 ⇒ 改为 `firstOrNull { canAutoMerge }`。
 - **识别用例补齐（T5）**：§7.1 的 R2/R4/R5/R6/R7/R9 补测（R1/R3/R8 判定为已覆盖未重复）。
 - **用例前提修正（P2-4）**：集成测试里「财付通」会被判成 `wechat`（`wechat` 弱词与 `bank` 弱词同 0.35 分，按 `sortOrder` tie-break `wechat` 胜）⇒ 改用具名商户并加**前提断言**锁住 `PlatformCatalog.BANK_ID`。
+
+### ⑧ `digital_rmb` / `unionpay` 归入结算侧（`BANK`）；判据由「同层级」改为「**同一条通道**」
+
+- **变更**：`PlatformKind` 由 `PAYMENT` → **`BANK`**（`core:model/.../Platform.kt`）。数字人民币钱包 / 云闪付本质上与银行卡同属「钱从哪个**卡/钱包**出去」的**结算侧**，而不是微信/支付宝那样的**支付通道**。（§2.2 的条目快照保留原样，以本节为准。）
+- **反例（真实场景）**：一笔数字人民币支付会同时触发**多条结算侧通道**的通知（银行 App 短信 + 数币 App + 云闪付），商户名各不相同 ⇒ 指纹不同 ⇒ 走 Tier-2。若沿用「`BANK ↔ BANK` 一律 REVIEW」，则「银行卡短信 + 数币通知」这对**同一笔**永远合不上 ⇒ 用户看到 4 条记录，期望 1 条。
+- **修订**：`complementaryVerdict` / `tierOneAllowsAutoMerge` 的 `BANK ↔ BANK` 判据由「同层级」升级为「**同一条通道**（同 `platformId`）」：
+
+  | 通道 | 同 `platformId` | 不同 `platformId`（银行卡 ↔ 数币 ↔ 云闪付） |
+  |---|---|---|
+  | Tier-1 | ✅ 放行（同一条通道被重复抓取 ⇒ Bug 2） | ✅ **放行**（一笔支付触发多条结算侧通道通知） |
+  | Tier-2 | ⚖️ REVIEW（交用户，必修⑤） | ✅ **AUTO_MERGE** |
+
+- **⚠️ 旧论证失效（勿再引用）**：§10-⑤ 的「`BANK` 只有唯一 ID `bank` ⇒ 同层级即同一通道」**已不成立** —— 改后 `BANK` 有 **3** 个 ID（`bank` / `digital_rmb` / `unionpay`）。凡引用该前提的段落（§4.2、`ComplementaryMatch` KDoc、`PlatformKind.BANK` KDoc）均已同步更正。
+
+### ⑨ Tier-2 去掉「必须跨渠道」
+
+- **原设计**：Tier-2 要求 `other.sourceId != txn.sourceId`；理由是"同渠道同金额更像两笔真实消费"。
+- **反例**：同一笔支付的多条通知**同属 `notify` 渠道**（数币 App / 云闪付 App / 银行 App），该约束让它们**连候选都不是** ⇒ 静默漏合并（用户看到 4 条，期望 1 条）。
+- **修订**：`tierTwoCandidates` 去掉该过滤；`canAutoMerge` 的 COMPLEMENTARY 分支同步去掉 `crossSource` 依赖。误合并改由**层级护栏**兜底：同层级同通道 ⇒ REJECT/REVIEW（到不了 AUTO_MERGE），只有**层级互补**或**不同结算侧通道**才 AUTO_MERGE。
+- **仍保留的保守分支（本批有意不改）**：同渠道**且指纹相同**的一对（如两条 `notify`）在 **Tier-1** 命中候选，但 `crossSource=false` ⇒ 不自动合并 ⇒ 落**待确认**。团队判定为"保守但安全"，与「宁可多一步确认，也不静默吞掉真实消费」一致。
+
+### ⑩ 数币 / 云闪付改为「官方数字通道」中间层 `E_WALLET`（**推翻 §10-⑧**）
+
+- **背景**：§10-⑧ 曾把 `digital_rmb` / `unionpay` 归入 `BANK`（与银行卡同级）。**用户随后改了口径**：
+  「云闪付和数币的优先级要**高于银行卡，但低于微信支付宝**」⇒ 应**插一个中间层**，而不是并入 `BANK`。
+- **变更**：`PlatformKind` 新增 `E_WALLET`（`digital_rmb` / `unionpay` 指向它，**不是** `BANK`，也**不是** `PAYMENT`）；
+  `PlatformPriority` 重排为 `NONE(0) < BANK(1) < E_WALLET(2) < PAYMENT(3) < ORDER(4)`
+  —— `rank` 是 `Int`，中间层靠**重排**加入，**不能**插 `1.5`。
+- **判定表（用户拍板，最终版）**：
+
+  | 组合 | 判定 |
+  |---|---|
+  | 恰好一侧 `ORDER` | ✅ AUTO_MERGE |
+  | `PAYMENT ↔ E_WALLET` / `PAYMENT ↔ BANK` / `E_WALLET ↔ BANK` | ⚖️ REVIEW |
+  | 同层级 + **同 id**（`bank↔bank` 等） | ⚖️ REVIEW |
+  | 同层级 + **不同 id**（`wechat↔alipay` / `digital_rmb↔unionpay` / `meituan↔taobao`） | ❌ REJECT |
+  | `NONE` 相关（含 `NONE↔NONE`） | ❌ REJECT |
+
+- **方针**：「**能 REVIEW 就别 REJECT**」—— REJECT 连候选都不给，用户根本看不到；REVIEW 至少浮出来让用户裁决。
+  故 `E_WALLET ↔ BANK`（本次需求核心一格）判 **REVIEW**，`PAYMENT ↔ E_WALLET` 亦然。
+- **⚠️ §10-⑧ 作废（勿再引用）**：`BANK` 层级重新只剩**唯一 ID `bank`**，§10-⑤ 的「`BANK` 只有唯一 ID ⇒ 同层级即同一通道」
+  **重新成立**；`complementaryVerdict` / `tierOneAllowsAutoMerge` 里基于「BANK 多 ID」的那两支（§10-⑧）已**回退**。
+- **连带（Tier-1）**：§10-⑧ 里「同层级 BANK 一律放行」的临时分支**作废** —— `E_WALLET` 独立成层后，
+  `tierOneAllowsAutoMerge(E_WALLET, BANK)` 走既有「层级不同 ⇒ 放行」语义（**实测 = 放行**），未新增特判。
+- **仍未解决（属解析层，与判定表正交，本批范围外）**：复现发现截图里两条通知的金额用 `¥` 符号写出
+  （如「……支付¥17.45」），`NotificationParser` 的金额规则**未命中** ⇒ `amountHint = null`
+  ⇒ 落「未解析出金额」，连 Tier-2 候选都进不去。**这是"4 条 → 1 条"之外的第二道缺口**，需另立任务。
 
 ---
 

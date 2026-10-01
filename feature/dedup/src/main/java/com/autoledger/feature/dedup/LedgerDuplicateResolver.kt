@@ -25,16 +25,16 @@ import java.security.MessageDigest
  *   或银行短信与通知恰好同名商户，都走这条。
  * - **Tier-2 层级互补**（新增）：商户名**不同**但描述同一笔（美团通知「美团外卖」↔ 银行短信「财付通」）。
  *   因为商户名不同 ⇒ 指纹必然不同 ⇒ Tier-1 永远查不到，所以必须另开一条按
- *   「同金额 + 时间窗口 + 跨 source + 平台层级互补」匹配的通道，见 [complementaryVerdict]。
+ *   「同金额 + 时间窗口 + 平台层级互补」匹配的通道，见 [complementaryVerdict]。
+ *   （**不再要求跨 source**：同一笔支付的多条通知常来自同一条 `notify` 渠道，见设计文档 §10-⑨。）
  *   **只在 Tier-1 未命中时才执行** ⇒ 不增加既有热路径成本，也不构成 O(n²)。
  *
  * 边界与取舍：
  * - 同一家店、同金额、3 分钟内的**两笔真实消费**指纹相同，无法从指纹本身区分；
- *   因此只对「跨渠道」候选自动合并，同渠道候选降级为待确认，交由用户判断，
- *   宁可多一步确认，也不静默吞掉真实消费。
- * - Tier-2 的护栏比 Tier-1 更严（层级必须互补），理由同上：同一家店 3 分钟内两笔真实消费
- *   在 Tier-2 里是 `ORDER ↔ ORDER` 或同 tier ⇒ [ComplementaryVerdict.REJECT]，连候选都不是
- *   （**唯一例外**：同一条 `bank` 通道被跨来源重复抓取 ⇒ [ComplementaryVerdict.REVIEW]，浮出候选交用户；见必修⑤）。
+ *   Tier-1 因此只对**跨渠道**候选自动合并，同渠道候选降级为待确认（宁可多一步确认，也不静默吞掉真实消费）。
+ * - Tier-2 靠**平台层级**而非来源区分：同一家店 3 分钟内两笔真实消费在 Tier-2 里是
+ *   `ORDER ↔ ORDER` / `PAYMENT ↔ PAYMENT` ⇒ [ComplementaryVerdict.REJECT]，连候选都不是；
+ *   而「同一条通道被重复抓取」或「一笔支付触发多条结算侧通道通知」⇒ REVIEW / AUTO_MERGE（见 §4.2 与 §10-⑤/⑧）。
  */
 class LedgerDuplicateResolver(
     private val repository: LedgerRepository,
@@ -95,7 +95,8 @@ class LedgerDuplicateResolver(
     }
 
     /**
-     * Tier-2 候选：同金额 + 时间窗口 + **跨 source** + 层级不为 [ComplementaryVerdict.REJECT]。
+     * Tier-2 候选：同金额 + 时间窗口 + 层级不为 [ComplementaryVerdict.REJECT]。
+     * （**不再要求跨 source**，见设计文档 §10-⑨ —— 同一笔支付的多条通知常来自同一条 `notify` 渠道。）
      *
      * 时间窗口用**对称**的 ±[windowMillis]：不要求「同一天」——
      * 23:59:30 的微信通知与 00:00:10 的银行短信是同一笔，要求同天会漏合并。
@@ -117,9 +118,11 @@ class LedgerDuplicateResolver(
             // 仓储契约已排除 MERGED / IGNORED 与自身；这里再核一遍，
             // 因为「被吸收的记录不得再当候选」是不能只靠一层的硬约束（见设计 §4.6）。
             if (other.status == TxnStatus.MERGED || other.status == TxnStatus.IGNORED) return@mapNotNull null
-            // 必须跨渠道：同渠道同金额更像两笔真实消费，交给 Tier-1 / 人工。
-            if (other.sourceId == txn.sourceId) return@mapNotNull null
             // 护栏：层级不互补的**连候选都不是**（这是防误合并的关键，见 ComplementaryMatch）。
+            // ⚠️ 这里**刻意不再要求「必须跨渠道」**（设计文档 §10-⑨）：同一笔支付的多条通知常常来自
+            // 同一条 `notify` 渠道（数币 App + 云闪付 App + 银行 App），旧约束会把它们挡在候选之外
+            // ⇒ 静默漏合并。是否**合并**由层级护栏决定：`同层级同通道 ⇒ REJECT/REVIEW`、
+            // `不同结算侧通道 ⇒ AUTO_MERGE`，护栏本身已能挡住误合并，不需要再用来源做粗筛。
             if (complementaryVerdict(txn.platformId, other.platformId) == ComplementaryVerdict.REJECT) {
                 return@mapNotNull null
             }
@@ -127,7 +130,8 @@ class LedgerDuplicateResolver(
                 txnId = other.id,
                 // 可信但低于精确指纹：Tier-1 的分档在 0~100，这里固定 50 作为"中级可信"。
                 score = TIER_TWO_SCORE,
-                crossSource = true,
+                // 如实标记：同渠道时为 false（供 UI 文案区分），但**不再**作为能否合并的门槛。
+                crossSource = other.sourceId != txn.sourceId,
                 platformId = other.platformId,
                 priorityRank = priorityOf(other.platformId).rank,
                 platformSource = other.platformSource,
@@ -168,7 +172,9 @@ class LedgerDuplicateResolver(
                     !branchSuffixesConflict(txn.counterparty, candidate.counterparty)
             MatchTier.COMPLEMENTARY ->
                 txn.amountMinor != 0L &&
-                    candidate.crossSource &&
+                    // ⚠️ 不再要求 `candidate.crossSource`（设计文档 §10-⑨）：同渠道的多条通知
+                    // （数币 App / 云闪付 App / 银行 App）也是同一笔。误合并由下面的层级护栏兜住：
+                    // 同层级同通道的候选只会是 REVIEW（不是 AUTO_MERGE），因此到不了这里。
                     complementaryVerdict(txn.platformId, candidate.platformId) == ComplementaryVerdict.AUTO_MERGE &&
                     // ⚠️ 权威来源护栏（P0-4）：`unknown` 一侧若是「手工录入 / 账单导入」，
                     // 它只是**没识别出平台**，并不代表是某笔订单的银行侧 ⇒ 不得被静默吸收。

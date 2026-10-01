@@ -188,6 +188,7 @@ private fun PlatformCard(
 private fun roleLabel(kind: PlatformKind): String = when (kind) {
     PlatformKind.ORDER -> "下单平台"
     PlatformKind.PAYMENT -> "支付通道"
+    PlatformKind.E_WALLET -> "数字通道"
     PlatformKind.BANK -> "银行卡"
     PlatformKind.OTHER -> "其他"
 }
@@ -231,8 +232,9 @@ private fun UserPlatformEditDialog(
                         horizontalArrangement = Arrangement.spacedBy(8.dp),
                     ) {
                         PlatformKind.entries.forEach { k ->
-                            // 不开放 BANK：它是内置的"银行兜底"整类，用户自建一条银行卡平台没有意义
-                            if (k == PlatformKind.BANK) return@forEach
+                            // 不开放 BANK / E_WALLET：它们是内置的"整类"通道（银行兜底 / 官方数字通道），
+                            // 用户自建一条「银行卡 / 数字人民币 / 云闪付」平台没有意义；自定义的多是商家（ORDER）或通道。
+                            if (k == PlatformKind.BANK || k == PlatformKind.E_WALLET) return@forEach
                             OutlinedButton(
                                 onClick = { kind = k },
                                 colors = if (kind == k) {

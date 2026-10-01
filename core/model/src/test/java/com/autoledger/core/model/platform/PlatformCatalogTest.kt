@@ -188,10 +188,11 @@ class PlatformCatalogTest {
             "douyin" to PlatformKind.ORDER,
             "alipay" to PlatformKind.PAYMENT,
             "wechat" to PlatformKind.PAYMENT,
-            // 云闪付 / 数字人民币是**支付通道**（钱从哪条通道出去），不是消费场所
-            "unionpay" to PlatformKind.PAYMENT,
-            "digital_rmb" to PlatformKind.PAYMENT,
-            // 银行卡单独成类：见 PlatformKind.BANK 的注释（塞进 PAYMENT 就与微信同级、排不出「银行卡最低」）
+            // 云闪付 / 数字人民币是**官方数字通道**（E_WALLET）—— 见设计文档 §10-⑩：
+            // 优先级**高于银行卡、低于微信/支付宝**，既不是消费场所、也不是第三方支付通道。
+            "unionpay" to PlatformKind.E_WALLET,
+            "digital_rmb" to PlatformKind.E_WALLET,
+            // 银行卡：最底层资金源；塞进 PAYMENT 会与微信同级、排不出「银行卡最低」
             "bank" to PlatformKind.BANK,
             PlatformCatalog.UNKNOWN_ID to PlatformKind.OTHER,
         )
@@ -207,13 +208,22 @@ class PlatformCatalogTest {
     fun `role maps to the documented dedup priority ladder`() {
         assertEquals(PlatformPriority.ORDER, PlatformKind.ORDER.toPriority())
         assertEquals(PlatformPriority.PAYMENT, PlatformKind.PAYMENT.toPriority())
+        assertEquals(PlatformPriority.E_WALLET, PlatformKind.E_WALLET.toPriority())
         assertEquals(PlatformPriority.BANK, PlatformKind.BANK.toPriority())
         assertEquals(PlatformPriority.NONE, PlatformKind.OTHER.toPriority())
 
-        // 需求三档：美团(下单) > 微信/支付宝(通道) > 银行卡
+        // 需求四档：美团(下单) > 微信/支付宝(通道) > 数币/云闪付(官方数字通道) > 银行卡
         assertTrue(PlatformPriority.ORDER.rank > PlatformPriority.PAYMENT.rank)
-        assertTrue(PlatformPriority.PAYMENT.rank > PlatformPriority.BANK.rank)
+        assertTrue(PlatformPriority.PAYMENT.rank > PlatformPriority.E_WALLET.rank)
+        assertTrue(PlatformPriority.E_WALLET.rank > PlatformPriority.BANK.rank)
         assertTrue(PlatformPriority.BANK.rank > PlatformPriority.NONE.rank)
+        // rank 是 Int 且新增中间层是靠**重排**（E_WALLET=2 插在 BANK=1 与 PAYMENT=3 之间），
+        // 不是插 1.5 —— 这里顺带钉死相对顺序，防止后人改成小数式排布。
+        assertEquals(0, PlatformPriority.NONE.rank)
+        assertEquals(1, PlatformPriority.BANK.rank)
+        assertEquals(2, PlatformPriority.E_WALLET.rank)
+        assertEquals(3, PlatformPriority.PAYMENT.rank)
+        assertEquals(4, PlatformPriority.ORDER.rank)
     }
 
     @Test
@@ -221,6 +231,8 @@ class PlatformCatalogTest {
         assertEquals(PlatformPriority.ORDER, priorityOf("meituan"))
         assertEquals(PlatformPriority.PAYMENT, priorityOf("alipay"))
         assertEquals(PlatformPriority.PAYMENT, priorityOf("wechat"))
+        assertEquals(PlatformPriority.E_WALLET, priorityOf("digital_rmb"))
+        assertEquals(PlatformPriority.E_WALLET, priorityOf("unionpay"))
         assertEquals(PlatformPriority.BANK, priorityOf("bank"))
         assertEquals(PlatformPriority.NONE, priorityOf(PlatformCatalog.UNKNOWN_ID))
     }

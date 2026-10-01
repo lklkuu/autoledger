@@ -16,7 +16,8 @@ import com.autoledger.core.model.platform.priorityOf
  * | 银行扣款短信 | `财付通` | `财付通` |
  *
  * ⇒ 指纹不同 ⇒ `findByFingerprintNear` 根本查不到对方 ⇒ **平台优先级永远没机会执行**。
- * 必须补一条「同金额 + 时间窗口 + 跨 source + 层级互补」的通道。
+ * 必须补一条「同金额 + 时间窗口 + 层级互补」的通道
+ * （**不再要求跨 source** —— 同一笔支付的多条通知常来自同一条 `notify` 渠道，见设计文档 §10-⑨）。
  *
  * ## 三态而不是布尔
  * 判定表的第三行「`PAYMENT ↔ BANK`」不是简单的「不合」而是「**证据不足，交给用户**」：
@@ -43,61 +44,71 @@ enum class ComplementaryVerdict {
 /**
  * 按**平台层级**判定两条同金额记录能否互补合并。
  *
- * 记 `tier(p) = priorityOf(p)`：`ORDER(3) > PAYMENT(2) > BANK(1) > NONE(0)`。
+ * 记 `tier(p) = priorityOf(p)`：`ORDER(4) > PAYMENT(3) > E_WALLET(2) > BANK(1) > NONE(0)`。
  *
  * | 组合 | 判定 | 理由 |
  * |---|---|---|
- * | `ORDER ↔ PAYMENT` | [AUTO_MERGE] | 美团下单 + 微信/支付宝付款 —— **正是需求要的场景** |
- * | `ORDER ↔ BANK` | [AUTO_MERGE] | 美团下单 + 银行卡扣款 |
- * | `ORDER ↔ NONE`（unknown） | [AUTO_MERGE] | 美团通知 + 银行短信没识别出平台 |
- * | `PAYMENT ↔ BANK` | [REVIEW] | 唯一真实歧义组合，交用户 |
- * | `PAYMENT ↔ PAYMENT` | [REJECT] | 一次消费只有一个支付通道 |
- * | `ORDER ↔ ORDER` | [REJECT] | 两个消费场所 = 两笔消费 |
- * | `BANK ↔ BANK` | [REVIEW] | **同一条**银行通道被重复抓取（目录里 `BANK` 只有唯一 ID `bank`）⇒ 疑似同一笔，交用户（必修⑤） |
+ * | 恰好一侧 `ORDER`（`ORDER↔PAYMENT` / `ORDER↔E_WALLET` / `ORDER↔BANK` / `ORDER↔NONE`） | [AUTO_MERGE] | 消费场所 + 资金通道，一笔消费的上下游 —— **正是需求要的场景** |
+ * | `PAYMENT ↔ E_WALLET` | [REVIEW] | 一笔消费只走一个支付通道（两者互斥），但保守起见浮出给用户 |
+ * | `PAYMENT ↔ BANK` | [REVIEW] | 唯一真实歧义组合（微信绑的就是这张卡？还是先充值再消费？），交用户 |
+ * | `E_WALLET ↔ BANK` | [REVIEW] | **用户拍板**：数币 / 云闪付与银行卡边界模糊，宁可保守，也不静默吞掉真实消费 |
+ * | `PAYMENT ↔ NONE` / `E_WALLET ↔ NONE` / `BANK ↔ NONE` | [REJECT] | 保守：unknown 那条可能什么都没识别出，没有互补证据 |
+ * | 同层级 + **同 id**（`wechat↔wechat` / `digital_rmb↔digital_rmb` / `bank↔bank`） | [REVIEW] | 同一类通道被重复抓取 ⇒ 疑似同一笔，但无法排除「同金额两笔」⇒ 交用户 |
+ * | 同层级 + **不同 id**（`wechat↔alipay` / `digital_rmb↔unionpay` / `meituan↔taobao`） | [REJECT] | 一次消费只有一个通道 / 两个消费场所 = 两笔真实消费 ⇒ **连候选都不是** |
  * | `NONE ↔ NONE` | [REJECT] | 无层级信息，不合并 |
- * | `PAYMENT ↔ NONE` / `BANK ↔ NONE` | [REJECT] | 保守：unknown 那条可能什么都没识别出，没有互补证据 |
  *
- * 实现上「恰好一侧是 ORDER ⇒ AUTO_MERGE」一句覆盖了前三行与全部 `ORDER↔ORDER` 情况，
- * 不存在"某一格被写反"的空间。
+ * ## 判定方针：「**能 REVIEW 就别 REJECT**」（用户拍板）
+ * REJECT = 连候选都不给，用户**根本看不到**这条重复；REVIEW = 至少浮出来让用户裁决。
+ * 因此凡「可能是同一笔、也可能是两笔」的格子一律取 REVIEW —— 即使理论上互斥：
+ * `PAYMENT ↔ E_WALLET`（两者都是"钱从某通道出去"）与 `E_WALLET ↔ BANK`（本次需求的核心一格）
+ * 都取 REVIEW 而非 REJECT，让用户有机会发现漏网。与项目既有取舍一致
+ * （「宁可多一步确认，也不静默吞掉真实消费」）。
  *
- * ## ⚠️ 同一个 `BANK ↔ BANK` 在两条通道上判定**不同**（有意为之，勿"统一"）
+ * ## 为什么这条判定必须是纯函数
+ * 它决定「两条记录会不会被合成一条」。写松一点就是**静默吞掉真实消费**（设计 R2）。
+ * 抽成纯函数后，判定表能被逐格单测钉死（[com.autoledger.feature.dedup.TierTwoVerdictMatrixTest]），
+ * 不必为每一格都造一遍完整 ingest 链路。
  *
- * | 通道 | 判据 | 判定 | 理由 |
- * |---|---|---|---|
- * | Tier-1（指纹精确） | 商户名**完全相同** | ✅ [AUTO_MERGE] | 银行短信 + 银行 App 通知写同一个银行名 ⇒ 同一条通道被重复抓取，**证据强** |
- * | Tier-2（层级互补） | 商户名**不同或为空** | ⚖️ [REVIEW] | 银行短信常常抽不出商户名，无法排除「同金额的两笔真实银行扣款」⇒ **证据弱**，交用户 |
+ * ## 实现结构（4 条分支覆盖全表，无"某一格被写反"的空间）
+ * ① 恰好一侧 `ORDER` ⇒ [AUTO_MERGE]；② 任一侧 `NONE` ⇒ [REJECT]；
+ * ③ 两侧不同层级（都在 `{PAYMENT, E_WALLET, BANK}`）⇒ [REVIEW]；
+ * ④ 同层级：同 id ⇒ [REVIEW]，不同 id ⇒ [REJECT]。
  *
- * 分层的**唯一尺度是证据强度**：同一条通道的两条记录，商户名一致（Tier-1）时证据强 ⇒ 自动合并；
- * 商户名不同/为空（Tier-2）时证据弱 ⇒ 浮出候选交用户（既不静默合并、也不静默双记）。
- * 这是设计本意，**不是** bug —— 把两条通道"统一"成同一个判定，要么丢能力（Tier-1 退化），
- * 要么吞账（Tier-2 变成静默合并）。
- *
- * ⚠️ 目前 `BANK` 层级**只有唯一 ID `bank`**，所以「同层级」即「同一条通道」。
- * 若将来 `BANK` 出现第二个 ID（例如给不同银行不同 ID），本行必须收紧为
- * **仅当 `incomingPlatformId == existingPlatformId` 才 REVIEW**（不同的两张卡 = 两笔真实消费）。
+ * ## ⚠️ 与 Tier-1 [tierOneAllowsAutoMerge] 对**同一组合**的判定**可以不同**（有意为之，勿"统一"）
+ * 分层的**唯一尺度是证据强度**：Tier-1 要求商户名**完全相同**（证据强，同一条通道的两条记录
+ * 商户名一致）⇒ 可以自动合并；Tier-2 的前提是商户名**不同或为空**（证据弱）⇒ 保守浮出候选。
+ * 例：`E_WALLET ↔ BANK` 在 Tier-1 放行（同商户名 = 同一条支付的两面），在 Tier-2 为 [REVIEW]。
+ * 把两者"统一"要么丢能力（Tier-1 退化），要么吞账（Tier-2 变静默合并）。**这不是 bug。**
  */
 fun complementaryVerdict(incomingPlatformId: String, existingPlatformId: String): ComplementaryVerdict {
     val incoming = priorityOf(incomingPlatformId)
     val existing = priorityOf(existingPlatformId)
 
-    // 恰好一侧是下单平台 ⇒ 层级互补：一侧说「在哪个平台花」，另一侧说「钱从哪出」。
+    // ① 恰好一侧是下单平台 ⇒ 层级互补：一侧说「在哪个平台花」，另一侧说「钱从哪出」。
     if ((incoming == PlatformPriority.ORDER) != (existing == PlatformPriority.ORDER)) {
         return ComplementaryVerdict.AUTO_MERGE
     }
 
-    // 支付通道 ↔ 银行卡：两侧都只说「钱从哪出」，但一张卡可能就是该通道绑的卡 ⇒ 证据不足，交给用户。
-    if (incoming == PlatformPriority.PAYMENT && existing == PlatformPriority.BANK) return ComplementaryVerdict.REVIEW
-    if (incoming == PlatformPriority.BANK && existing == PlatformPriority.PAYMENT) return ComplementaryVerdict.REVIEW
+    // ② 任一侧无层级信息（unknown / 未收录）⇒ 没有互补证据（unknown 那条可能什么都没识别出）。
+    //    `NONE ↔ NONE` 也在此拒（无层级信息，不合并）。
+    if (incoming == PlatformPriority.NONE || existing == PlatformPriority.NONE) {
+        return ComplementaryVerdict.REJECT
+    }
 
-    // 同一条银行通道被重复抓取（必修⑤）：目录里 `BANK` 只有唯一 ID `bank` ⇒
-    // 银行短信 + 银行 App 动账通知是**同一条通道**被两个采集来源抓到，疑似同一笔；
-    // 但银行短信常常抽不出商户名（Tier-2 的前提），无法排除「同金额的两笔真实银行扣款」⇒
-    // 证据不足，**交用户**（既不静默合并、也不静默双记）。
-    // ⚠️ 与 Tier-1 的同组合判定（自动合并）**不同且是故意的**，理由见本函数 KDoc 的
-    // 「同一个 BANK ↔ BANK 在两条通道上判定不同」一节。
-    if (incoming == PlatformPriority.BANK && existing == PlatformPriority.BANK) return ComplementaryVerdict.REVIEW
+    // 走到这里：两侧都在 `{PAYMENT, E_WALLET, BANK}`（都不是 ORDER、不是 NONE）。
+    // ③ 不同层级（支付通道 ↔ 数币/云闪付 ↔ 银行卡）：两侧都只说「钱从哪条通道 / 哪张卡出去」，
+    //    可能是同一笔的两个侧面，也可能是两笔（先充值再消费）⇒ 证据不足，浮出候选交用户。
+    //    用户方针「能 REVIEW 就别 REJECT」⇒ 一律 REVIEW。
+    if (incoming != existing) return ComplementaryVerdict.REVIEW
 
-    return ComplementaryVerdict.REJECT
+    // ④ 同层级：
+    //    · 同 id（如 `bank↔bank`、`digital_rmb↔digital_rmb`）⇒ 同一类通道被重复抓取 ⇒ 疑似同一笔，交用户；
+    //    · 不同 id（`wechat↔alipay` / `digital_rmb↔unionpay`）⇒ 一次消费只走一个通道 ⇒ 两笔真实消费 ⇒ 拒绝。
+    return if (incomingPlatformId == existingPlatformId) {
+        ComplementaryVerdict.REVIEW
+    } else {
+        ComplementaryVerdict.REJECT
+    }
 }
 
 /**
@@ -115,45 +126,42 @@ fun complementaryVerdict(incomingPlatformId: String, existingPlatformId: String)
  * 降级成待确认等于**功能倒退**。Tier-1 的商户名**完全相同**（指纹相同）⇒ 证据比 Tier-2 更强，
  * 护栏可以放宽。
  *
- * ## 判定（只拒绝「同层级 **且不同通道**」）
+ * ## 判定（只拒绝「同层级 **且不同 id**」；跨层级一律放行）
  * | 组合 | 是否允许自动合并 | 理由 |
  * |---|---|---|
- * | 层级不同（`ORDER↔PAYMENT` / `ORDER↔BANK` / `ORDER↔NONE` …） | ✅ 允许 | 层级互补 ⇒ 同一笔的两个侧面 |
- * | `PAYMENT ↔ PAYMENT`（微信 vs 支付宝） | ❌ 拒绝 | 一次消费只有一个支付通道 ⇒ 只能是两笔 |
- * | `ORDER ↔ ORDER`（美团 vs 淘宝） | ❌ 拒绝 | 两个消费场所 ⇒ 两笔消费 |
- * | `BANK ↔ BANK`（**同一条** `bank` 通道） | ✅ 允许 | 银行短信 + 银行 App 动账通知是**同一条通道**被重复抓取 ⇒ 就是同一笔（Bug 2 的修复点） |
+ * | 层级不同（`ORDER↔PAYMENT` / `ORDER↔E_WALLET` / `ORDER↔BANK` / `ORDER↔NONE` / `PAYMENT↔E_WALLET` / `PAYMENT↔BANK` / `E_WALLET↔BANK` …） | ✅ 允许 | 层级互补 ⇒ 同一笔的两个侧面 |
+ * | 同层级 **同 id**（`bank↔bank` / `digital_rmb↔digital_rmb` / `wechat↔wechat`） | ✅ 允许 | **同一条**通道被重复抓取（银行短信 + 银行 App 动账通知）⇒ 就是同一笔（Bug 2 的修复点） |
+ * | `PAYMENT ↔ PAYMENT`（**不同** id：微信 vs 支付宝） | ❌ 拒绝 | 一次消费只有一个支付通道 ⇒ 只能是两笔 |
+ * | `ORDER ↔ ORDER`（**不同** id：美团 vs 淘宝） | ❌ 拒绝 | 两个消费场所 ⇒ 两笔消费 |
+ * | `E_WALLET ↔ E_WALLET`（**不同** id：数币 vs 云闪付） | ❌ 拒绝 | 两个官方数字通道 ⇒ 只能是两笔 |
  * | `NONE ↔ NONE`（两边都没识别出平台） | ❌ 拒绝 | 没有层级信息可依据，保守交给用户 |
  *
- * 关键区分：**判定「同层级」时，`BANK` 这个目录里只有**一个** ID（`bank`）**，
- * 所以「同层级 + 同 platformId」= 同一条银行通道被两个采集来源抓到 ⇒ 是重复抓取，必须合并；
- * 而「同层级 + 不同 platformId」（微信 vs 支付宝、美团 vs 淘宝）才是两笔真实消费。
- *
  * ## ⚠️ 不要改成「同层级一律拒绝」（防后人照旧设计稿"修"回去）
- * 正确的判据是「**同层级 且 不同通道**」，**不是**「同层级」。若笼统地改成"同层级一律拒绝"：
- * `bank` 只有单一 ID，银行短信与银行 App 通知**都是 `bank`**，会被一起拒掉 ⇒
- * **同一笔银行流水被记两次**（正是 1.1.2 修过的 Bug 2）。
- * 而这条能力**只有跑完整链路才测得到** —— `CrossChannelBankMergeTest` 现在明确走
- * `findDuplicates → canAutoMerge → merge`（见该文件的端到端用例），改错了会红。
- * （教训：该能力原先只被"直接调 `merge()`、绕过 `canAutoMerge`"的用例覆盖，
+ * 正确的判据是「**同层级 且 不同 id**」，**不是**「同层级」。笼统地改成"同层级一律拒绝"会误伤
+ * 「银行短信与银行 App 通知**都是 `bank`**（同层级、同 id）」—— 它们是**重复抓取**，拒掉会
+ * **同一笔银行流水记两次**（正是 1.1.2 修过的 Bug 2）。这条能力**只有跑完整链路才测得到** ——
+ * `CrossChannelBankMergeTest` 明确走 `findDuplicates → canAutoMerge → merge`（见该文件的端到端用例），
+ * 改错了会红。（教训：该能力原先只被"直接调 `merge()`、绕过 `canAutoMerge`"的用例覆盖，
  *  字面版实现即使回退 v1.0 能力，**全量测试仍然全绿** —— 变异验证才发现这份盲区。）
  *
- * ## ⚠️ 与 Tier-2 的 `BANK ↔ BANK` 判定**不同**（同名组合、不同判定，勿"统一"）
- * 本函数（Tier-1）对 `bank ↔ bank` 返回 `true`（自动合并）；而 [complementaryVerdict]（Tier-2）
- * 对**同一组合**返回 [ComplementaryVerdict.REVIEW]。**这不是 bug**：分层尺度是**证据强度** ——
- * Tier-1 要求商户名**完全相同**（证据强），Tier-2 的前提是商户名**不同或为空**（证据弱）。
- * 详见 [complementaryVerdict] 的「同一个 BANK ↔ BANK 在两条通道上判定不同」一节。
+ * ## ⚠️ 与 Tier-2 [complementaryVerdict] 对同一组合的判定**不同**（有意为之，勿"统一"）
+ * 本函数（Tier-1）护栏**只看层级**，`E_WALLET ↔ BANK` 属"层级不同" ⇒ 放行（自动合并）；
+ * 而 [complementaryVerdict]（Tier-2）对同组合返回 [ComplementaryVerdict.REVIEW]。**这不是 bug**：
+ * 分层尺度是**证据强度** —— Tier-1 要求商户名**完全相同**（证据强），Tier-2 前提是商户名**不同或为空**（证据弱）。
+ * 详见 [complementaryVerdict] 的「与 Tier-1 对同一组合的判定可以不同」一节。
  */
 fun tierOneAllowsAutoMerge(incomingPlatformId: String, existingPlatformId: String): Boolean {
     val incoming = priorityOf(incomingPlatformId)
     val existing = priorityOf(existingPlatformId)
 
-    // 层级不同 ⇒ 互补 ⇒ 放行（含 ORDER↔NONE 这类"一侧说了场所、一侧什么都没说"）。
+    // 层级不同 ⇒ 互补 ⇒ 放行（含 ORDER↔NONE 这类"一侧说了场所、一侧什么都没说"，
+    // 以及 E_WALLET↔BANK 这类"钱从不同层级通道出去"）。
     if (incoming != existing) return true
 
     // 双方都无层级信息（unknown / 未收录）⇒ 没有可依据的层级，保守拒绝。
     if (incoming == PlatformPriority.NONE) return false
 
-    // 同层级：只有「同一条通道被重复抓取」才允许自动合并；不同通道 = 两笔真实消费。
+    // 同层级：只有「同一条通道被重复抓取」（同 id）才允许；不同 id = 两笔真实消费（拒）。
     return incomingPlatformId == existingPlatformId
 }
 

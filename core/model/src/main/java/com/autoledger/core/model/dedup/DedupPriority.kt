@@ -35,7 +35,7 @@ object DedupPriority {
      * - **R0 用户权威**：任一方 `platformSource == USER` ⇒ 该方为 primary。
      *   双方都是 USER ⇒ 保留 existing（不改写历史）。
      * - **R1 层级高者胜**：[incomingRank] > [existingRank] ⇒ incoming 为 primary
-     *   （美团 ORDER=3 > 微信/支付宝 PAYMENT=2 > 银行卡 BANK=1）。
+     *   （美团 ORDER=4 > 微信/支付宝 PAYMENT=3 > 数币/云闪付 E_WALLET=2 > 银行卡 BANK=1）。
      * - **R2/R3 同层级或层级更低** ⇒ 保留 existing。
      *   刻意保留历史而不是取 incoming：主记录反复易主会让 UI 上「这条归到哪个平台」
      *   每来一条通知就跳一次；且合并前的记录才是用户已经看过的。

@@ -8,6 +8,7 @@ import com.autoledger.core.model.capture.CaptureSourceIds
 import com.autoledger.core.model.dedup.DedupPriority
 import com.autoledger.core.model.platform.priorityOf
 import com.autoledger.core.model.platform.PlatformCatalog
+import com.autoledger.core.model.platform.PlatformPriority
 import com.autoledger.core.model.platform.PlatformSource
 import kotlin.test.Test
 import kotlin.test.assertEquals
@@ -80,11 +81,13 @@ class Tier2ComplementaryMatchTest {
     fun `the guard table maps every platform tier pair as designed`() {
         val order = "meituan"
         val pay = "alipay"
+        val eWallet = "digital_rmb"
         val bank = PlatformCatalog.BANK_ID
         val none = PlatformCatalog.UNKNOWN_ID
 
-        // 三格允许静默自动合并
+        // 恰好一侧是 ORDER ⇒ 允许静默自动合并（消费场所 + 资金通道，一笔消费的上下游）
         assertEquals(ComplementaryVerdict.AUTO_MERGE, complementaryVerdict(order, pay), "美团下单 + 微信/支付宝付款")
+        assertEquals(ComplementaryVerdict.AUTO_MERGE, complementaryVerdict(order, eWallet), "美团下单 + 数币/云闪付")
         assertEquals(ComplementaryVerdict.AUTO_MERGE, complementaryVerdict(order, bank), "美团下单 + 银行卡扣款")
         assertEquals(ComplementaryVerdict.AUTO_MERGE, complementaryVerdict(order, none), "美团通知 + 未识别出平台的银行短信")
         // 对称性：判定与「谁是 incoming」无关
@@ -92,17 +95,24 @@ class Tier2ComplementaryMatchTest {
         assertEquals(ComplementaryVerdict.AUTO_MERGE, complementaryVerdict(bank, order))
         assertEquals(ComplementaryVerdict.AUTO_MERGE, complementaryVerdict(none, order))
 
-        // 唯一真实歧义：交用户（是**候选**，但不自动合并）
+        // 资金通道之间的三种组合：都交用户（是**候选**，但不自动合并）
+        assertEquals(ComplementaryVerdict.REVIEW, complementaryVerdict(pay, eWallet), "两个支付通道互斥，但保守起见给用户看")
+        assertEquals(ComplementaryVerdict.REVIEW, complementaryVerdict(eWallet, pay))
         assertEquals(ComplementaryVerdict.REVIEW, complementaryVerdict(pay, bank), "微信支付 88 + 银行卡扣 88")
         assertEquals(ComplementaryVerdict.REVIEW, complementaryVerdict(bank, pay))
+        assertEquals(ComplementaryVerdict.REVIEW, complementaryVerdict(eWallet, bank), "用户拍板：宁可保守，也不静默吞掉真实消费")
+        assertEquals(ComplementaryVerdict.REVIEW, complementaryVerdict(bank, eWallet))
 
-        // 层级不互补：连候选都不是
-        assertEquals(ComplementaryVerdict.REJECT, complementaryVerdict(pay, pay), "一次消费只有一个支付通道")
-        assertEquals(ComplementaryVerdict.REJECT, complementaryVerdict(order, order), "两个消费场所 = 两笔消费")
-        // 必修⑤：同一条 bank 通道被重复抓取（目录里 BANK 只有唯一 ID）⇒ 交用户（既非 REJECT、也非 AUTO_MERGE）
+        // 同层级：**同 id** ⇒ 同一类通道被重复抓取 ⇒ 交用户；**不同 id** ⇒ 连候选都不是
         assertEquals(ComplementaryVerdict.REVIEW, complementaryVerdict(bank, bank))
+        assertEquals(ComplementaryVerdict.REVIEW, complementaryVerdict(pay, pay), "同一条支付通道被重复抓取")
+        assertEquals(ComplementaryVerdict.REJECT, complementaryVerdict(pay, "wechat"), "两个支付通道 = 两笔消费")
+        assertEquals(ComplementaryVerdict.REJECT, complementaryVerdict(order, "taobao"), "两个消费场所 = 两笔消费")
+
+        // 无互补证据：拒绝
         assertEquals(ComplementaryVerdict.REJECT, complementaryVerdict(none, none), "无层级信息")
         assertEquals(ComplementaryVerdict.REJECT, complementaryVerdict(pay, none), "保守：没有互补证据")
+        assertEquals(ComplementaryVerdict.REJECT, complementaryVerdict(eWallet, none))
         assertEquals(ComplementaryVerdict.REJECT, complementaryVerdict(bank, none))
         // 未收录 ID 一律按 NONE 处理，绝不抛异常
         assertEquals(ComplementaryVerdict.REJECT, complementaryVerdict("未收录", none))
@@ -110,41 +120,31 @@ class Tier2ComplementaryMatchTest {
     }
 
     @Test
-    fun `same tier with different channels is rejected, and so is every same tier pair except the single bank channel`() {
-        // 不变量①：同 tier 且**不同通道**（微信 vs 支付宝、美团 vs 淘宝）⇒ 一律 REJECT，无例外。
-        for (a in listOf("wechat", "alipay")) for (b in listOf("wechat", "alipay")) {
-            if (a != b) {
-                assertEquals(
-                    ComplementaryVerdict.REJECT,
-                    complementaryVerdict(a, b),
-                    "两个支付通道 = 两笔消费：$a ↔ $b",
-                )
-            }
-        }
-        for (a in listOf("meituan", "taobao")) for (b in listOf("meituan", "taobao")) {
-            if (a != b) {
-                assertEquals(
-                    ComplementaryVerdict.REJECT,
-                    complementaryVerdict(a, b),
-                    "两个下单平台 = 两笔消费：$a ↔ $b",
-                )
-            }
+    fun `same tier same id goes to review, same tier different id is rejected, none is rejected`() {
+        // 不变量①：同层级且**不同 id**（微信 vs 支付宝、美团 vs 淘宝、数币 vs 云闪付）⇒ 一律 REJECT。
+        for ((a, b) in listOf(
+            "wechat" to "alipay",
+            "meituan" to "taobao",
+            "digital_rmb" to "unionpay",
+        )) {
+            assertEquals(ComplementaryVerdict.REJECT, complementaryVerdict(a, b), "同层级不同通道 = 两笔：$a ↔ $b")
+            assertEquals(ComplementaryVerdict.REJECT, complementaryVerdict(b, a), "判定必须对称：$b ↔ $a")
         }
 
-        // 不变量②：同 tier 且**同通道**（同一 platformId、同金额、短窗）⇒ 一般是两笔真实消费 ⇒ REJECT。
-        // ⚠️ 唯一例外是 bank↔bank（必修⑤）：BANK 只有唯一 ID `bank`，银行短信 + 银行 App 动账通知
-        // 是**同一条通道被重复抓取** ⇒ REVIEW（交用户），既不能静默合并、也不能静默双记。
-        for (p in listOf("meituan", "alipay", PlatformCatalog.UNKNOWN_ID)) {
+        // 不变量②：同层级且**同 id**（同一条通道 + 同金额 + 短窗，但商户名不同 ⇒ 走 Tier-2）⇒ REVIEW。
+        // 判据是「同一类通道被重复抓取」，与层级无关 —— 四个层级都有这一格。
+        for (p in listOf("meituan", "alipay", PlatformCatalog.BANK_ID, "digital_rmb")) {
             assertEquals(
-                ComplementaryVerdict.REJECT,
+                ComplementaryVerdict.REVIEW,
                 complementaryVerdict(p, p),
-                "同通道且非 bank 的 $p ↔ $p 必须不合并（防同金额两笔真实消费被吞）",
+                "同一条通道被重复抓取 ⇒ 交用户（既不能静默合并、也不能静默双记）：$p",
             )
         }
+
+        // 不变量③：双方都无层级信息 ⇒ REJECT（连候选都不是）。
         assertEquals(
-            ComplementaryVerdict.REVIEW,
-            complementaryVerdict(PlatformCatalog.BANK_ID, PlatformCatalog.BANK_ID),
-            "必修⑤ 的唯一例外：同一条 bank 通道被重复抓取 ⇒ 交用户",
+            ComplementaryVerdict.REJECT,
+            complementaryVerdict(PlatformCatalog.UNKNOWN_ID, PlatformCatalog.UNKNOWN_ID),
         )
     }
 
@@ -165,7 +165,8 @@ class Tier2ComplementaryMatchTest {
         assertEquals(meituan.id, candidate.txnId)
         assertEquals(MatchTier.COMPLEMENTARY, candidate.tier, "走的是 Tier-2 通道")
         assertEquals("meituan", candidate.platformId)
-        assertEquals(3, candidate.priorityRank)
+        // ORDER 层级的 rank（加入 E_WALLET 后重排为 4；见 PlatformPriority）
+        assertEquals(PlatformPriority.ORDER.rank, candidate.priorityRank)
         assertTrue(candidate.crossSource, "sms 与 notify 必须跨渠道")
         assertTrue(resolver.canAutoMerge(bankSms, candidate), "ORDER ↔ BANK 允许静默合并")
 
@@ -190,7 +191,7 @@ class Tier2ComplementaryMatchTest {
         assertEquals(MatchTier.FINGERPRINT, dups.single().tier, "商户名一致时不该绕道 Tier-2")
         assertTrue(resolver.canAutoMerge(meituan, dups.single()))
 
-        // 层级裁决：美团(ORDER=3) > 微信(PAYMENT=2) —— 主记录必须是「美团」，与谁先入库无关
+        // 层级裁决：美团(ORDER) > 微信(PAYMENT) —— 主记录必须是「美团」，与谁先入库无关
         val choice = DedupPriority.choosePrimary(
             incomingId = meituan.id, incomingRank = priorityOf("meituan").rank, incomingIsUser = false,
             existingId = wechat.id, existingRank = dups.single().priorityRank, existingIsUser = false,
@@ -324,7 +325,7 @@ class Tier2ComplementaryMatchTest {
         val candidate = dups.first()
         assertEquals(MatchTier.FINGERPRINT, candidate.tier)
         assertEquals("wechat", candidate.platformId, "候选必须带上平台，供主记录裁决使用")
-        assertEquals(2, candidate.priorityRank)
+        assertEquals(PlatformPriority.PAYMENT.rank, candidate.priorityRank)
         assertEquals(PlatformSource.AUTO, candidate.platformSource)
         assertTrue(resolver.canAutoMerge(incoming, candidate), "跨渠道 + 商户非空 ⇒ 允许自动合并")
     }
