@@ -90,7 +90,7 @@ fun complementaryVerdict(incomingPlatformId: String, existingPlatformId: String)
  * 降级成待确认等于**功能倒退**。Tier-1 的商户名**完全相同**（指纹相同）⇒ 证据比 Tier-2 更强，
  * 护栏可以放宽。
  *
- * ## 判定（只拒绝「同层级」，且区分「同一条通道」）
+ * ## 判定（只拒绝「同层级 **且不同通道**」）
  * | 组合 | 是否允许自动合并 | 理由 |
  * |---|---|---|
  * | 层级不同（`ORDER↔PAYMENT` / `ORDER↔BANK` / `ORDER↔NONE` …） | ✅ 允许 | 层级互补 ⇒ 同一笔的两个侧面 |
@@ -102,7 +102,15 @@ fun complementaryVerdict(incomingPlatformId: String, existingPlatformId: String)
  * 关键区分：**判定「同层级」时，`BANK` 这个目录里只有**一个** ID（`bank`）**，
  * 所以「同层级 + 同 platformId」= 同一条银行通道被两个采集来源抓到 ⇒ 是重复抓取，必须合并；
  * 而「同层级 + 不同 platformId」（微信 vs 支付宝、美团 vs 淘宝）才是两笔真实消费。
- * 因此不能笼统地「同层级一律拒绝」——那会把 Bug 2 的修复一起回退掉。
+ *
+ * ## ⚠️ 不要改成「同层级一律拒绝」（防后人照旧设计稿"修"回去）
+ * 正确的判据是「**同层级 且 不同通道**」，**不是**「同层级」。若笼统地改成"同层级一律拒绝"：
+ * `bank` 只有单一 ID，银行短信与银行 App 通知**都是 `bank`**，会被一起拒掉 ⇒
+ * **同一笔银行流水被记两次**（正是 1.1.2 修过的 Bug 2）。
+ * 而这条能力**只有跑完整链路才测得到** —— `CrossChannelBankMergeTest` 现在明确走
+ * `findDuplicates → canAutoMerge → merge`（见该文件的端到端用例），改错了会红。
+ * （教训：该能力原先只被"直接调 `merge()`、绕过 `canAutoMerge`"的用例覆盖，
+ *  字面版实现即使回退 v1.0 能力，**全量测试仍然全绿** —— 变异验证才发现这份盲区。）
  */
 fun tierOneAllowsAutoMerge(incomingPlatformId: String, existingPlatformId: String): Boolean {
     val incoming = priorityOf(incomingPlatformId)

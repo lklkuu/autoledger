@@ -3,6 +3,7 @@ package com.autoledger.feature.dedup
 import com.autoledger.core.model.LedgerTransaction
 import com.autoledger.core.model.TxnStatus
 import com.autoledger.core.model.TxnType
+import com.autoledger.core.model.platform.PlatformCatalog
 import kotlin.test.Test
 import kotlin.test.assertEquals
 import kotlin.test.assertFalse
@@ -40,6 +41,15 @@ class CrossChannelBankMergeTest {
         counterparty: String = "工商银行",
         status: TxnStatus = TxnStatus.RAW,
         fingerprint: String = "",
+        /**
+         * 银行流水一律落 `bank`（`工商银行` 含 bank 弱词「银行」）。
+         *
+         * ⚠️ 这个默认值**不能省**：`canAutoMerge` 的 Tier-1 分支会走层级护栏
+         * （`tierOneAllowsAutoMerge`），而「银行短信 + 银行 App 通知」正是 `bank ↔ bank`。
+         * 若这里留 `unknown`，护栏会按 `NONE↔NONE` 拒绝自动合并，本文件的端到端用例就会红 ——
+         * 那正是「护栏写严了会回退 Bug 2」的报警信号，必须保持 `bank`。
+         */
+        platformId: String = PlatformCatalog.BANK_ID,
     ) = LedgerTransaction(
         id = id,
         amountMinor = amountMinor,
@@ -50,6 +60,7 @@ class CrossChannelBankMergeTest {
         sourceRef = "$sourceId:$id",
         status = status,
         fingerprint = fingerprint,
+        platformId = platformId,
     )
 
     private fun resolver(vararg existing: LedgerTransaction): Pair<LedgerDuplicateResolver, FakeLedgerRepository> {
@@ -127,7 +138,16 @@ class CrossChannelBankMergeTest {
         assertEquals("sms-1", dups.first().txnId)
         assertTrue(dups.first().crossSource, "sms 与 notify 属于跨渠道")
 
-        // ③ 合并：重复的被标记 MERGED，保留的那条置 CONFIRMED
+        // ③ **完整链路护栏**：必须经过 canAutoMerge（护栏的最终出口），而不是直接调 merge()。
+        // 为什么关键：`canAutoMerge` 的 Tier-1 分支增加了层级护栏（tierOneAllowsAutoMerge）——
+        // 「银行短信 + 银行 App 通知」是 bank↔bank（同一条通道被重复抓取）⇒ 必须放行。
+        // 若谁把护栏改成"同层级一律拒绝"，这一步会红，避免 1.1.2 修好的 Bug 2 被无声回退。
+        assertTrue(
+            r.canAutoMerge(second, dups.first()),
+            "银行短信 + 银行 App 动账通知是同一条 bank 通道被重复抓取 ⇒ 完整链路必须允许自动合并",
+        )
+
+        // ④ 合并：重复的被标记 MERGED，保留的那条置 CONFIRMED
         r.merge(dups.first().txnId, listOf(second.id))
 
         val snapshot = repo.snapshot()
