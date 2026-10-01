@@ -543,6 +543,26 @@ fun SettingsScreen(container: AppContainer) {
                     }
                     Switch(checked = notifyOnRecord, onCheckedChange = container::setNotifyOnRecord)
                 }
+                // Android 13+：发通知需运行时权限 POST_NOTIFICATIONS。首次启动会自动弹一次请求；
+                // 一旦被拒就**不再死缠**（反复弹会被系统永久拒绝）⇒ 这里保留一个直达系统设置的兜底入口。
+                // 低版本系统自动授予、granted 恒为 true，本按钮不出现。
+                val notifyPermissionGranted by container.notifyPermission.granted.collectAsState()
+                if (!notifyPermissionGranted) {
+                    val permContext = LocalContext.current
+                    Button(
+                        onClick = {
+                            if (!container.notifyPermission.launchAppNotificationSettings()) {
+                                Toast.makeText(
+                                    permContext,
+                                    "无法自动打开，请到 系统设置 → 应用 → 通知 手动开启",
+                                    Toast.LENGTH_LONG,
+                                ).show()
+                            }
+                        },
+                        modifier = Modifier.padding(top = 8.dp),
+                        colors = ButtonDefaults.buttonColors(containerColor = LedgerPalette.Muted),
+                    ) { Text("去系统设置开启通知") }
+                }
             }
         }
 

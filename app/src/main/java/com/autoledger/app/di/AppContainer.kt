@@ -56,6 +56,7 @@ import com.autoledger.feature.stats.MetricRegistry
 import com.autoledger.feature.stats.MonthlyTrendMetric
 import com.autoledger.feature.stats.TimeCostMetric
 import com.autoledger.app.notif.NotificationAccessGate
+import com.autoledger.app.notif.NotificationPermissionGate
 import com.autoledger.app.notif.PermissionIntroGate
 import com.autoledger.app.notif.SmsAccessGate
 import kotlinx.coroutines.CoroutineExceptionHandler
@@ -190,6 +191,12 @@ class AppContainer(context: Context) {
 
     /** 短信读取权限引导（需求 1）：未授权时每次打开都提示。 */
     val smsAccess: SmsAccessGate by lazy { SmsAccessGate(applicationContext) }
+
+    /**
+     * 「通知发送」权限（`POST_NOTIFICATIONS`）引导 —— **Android 13 / API 33+** 才需要。
+     * v1.1.3 只声明未请求 ⇒ 新装用户收不到「已自动记一笔账」等通知，本门控补上运行时请求。
+     */
+    val notifyPermission: NotificationPermissionGate by lazy { NotificationPermissionGate(applicationContext) }
 
     /** 首次启动权限说明（需求 2）：一次性说明各项权限用途。 */
     val permissionIntro: PermissionIntroGate by lazy { PermissionIntroGate(applicationContext) }

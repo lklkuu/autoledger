@@ -89,6 +89,8 @@ class MainActivity : ComponentActivity() {
         (application as LedgerApp).container.notificationAccess.onAppForeground()
         // 短信权限：未授权时每次回到前台都提示（需求 1）
         (application as LedgerApp).container.smsAccess.onAppForeground()
+        // 通知发送权限（POST_NOTIFICATIONS，Android 13+）：首次提示一次，之后不再自动弹
+        (application as LedgerApp).container.notifyPermission.onAppForeground()
     }
 
     /**
@@ -137,13 +139,20 @@ fun AppShell(container: AppContainer) {
     // 通知使用权引导（首次必弹；之后按冷却/不再提醒策略控制频率）
     val notifContext = LocalContext.current
     val showNotifPrompt by container.notificationAccess.shouldShowPrompt.collectAsState()
+    // 通知发送权限（POST_NOTIFICATIONS，Android 13+）：首启说明之后提示一次
+    val showNotifyPermissionPrompt by container.notifyPermission.shouldShowPrompt.collectAsState()
     // 短信授权（需求 1：未授权时每次打开都提示）
     val showSmsPrompt by container.smsAccess.shouldShowPrompt.collectAsState()
     val smsPermissionLauncher = rememberLauncherForActivityResult(
         ActivityResultContracts.RequestPermission(),
     ) { granted -> if (granted) container.smsAccess.markGranted() }
+    // 通知发送权限请求（与上面短信的写法对称，便于后人对照维护）。
+    // 由于发起请求前已 markRequested()，这里只在"授予成功"时清 never-ask 标记；拒绝则维持不再自动弹。
+    val notifyPermissionLauncher = rememberLauncherForActivityResult(
+        ActivityResultContracts.RequestPermission(),
+    ) { granted -> if (granted) container.notifyPermission.markGranted() }
 
-    // 同一时刻只弹一个，优先级：存储告知 > 权限说明 > 通知使用权 > 短信授权
+    // 同一时刻只弹一个，优先级：存储告知 > 权限说明 > 通知发送权限 > 通知使用权 > 短信授权
     when {
         storageNotice != null && !noticeDismissed -> {
             AlertDialog(
@@ -165,13 +174,38 @@ fun AppShell(container: AppContainer) {
                         "本 App 会申请以下权限，全部只用于记账、不用于其它目的，数据一律本地加密、不上传：\n\n" +
                             "· 通知使用权：读取微信/支付宝/银行 App 的支付通知，自动记一笔账（不读取其它通知内容）。\n" +
                             "· 短信读取（可选）：扫描银行扣款短信补录，可随时关闭。\n" +
-                            "· 网络/热点（仅换机迁移时）：只在两台设备间直连传输你的账本。\n\n" +
+                            "· 网络/热点（仅换机迁移时）：只在两台设备间直连传输你的账本。\n" +
+                            "· 通知发送：自动记账后提醒你一声（可在系统设置里关闭）。\n\n" +
                             "以上权限都可拒绝，App 其余功能照常可用。",
                         style = MaterialTheme.typography.bodyMedium,
                     )
                 },
                 confirmButton = {
                     TextButton(onClick = { container.permissionIntro.markSeen() }) { Text("知道了") }
+                },
+            )
+        }
+
+        showNotifyPermissionPrompt -> {
+            AlertDialog(
+                onDismissRequest = { container.notifyPermission.markRequested() },
+                title = { Text("开启记账提醒") },
+                text = {
+                    Text(
+                        "记账后，本 App 会发一条系统通知，让你知道「刚刚自动记了一笔」。\n\n" +
+                            "需要你允许「发送通知」。即使不允许，App 其余功能照常；之后也可到 系统设置 → 通知 里再开。",
+                        style = MaterialTheme.typography.bodyMedium,
+                    )
+                },
+                confirmButton = {
+                    TextButton(onClick = {
+                        // 先记录"已处理"，再拉起系统框：避免弹框期间 onResume 再次触发引导（闪一下）
+                        container.notifyPermission.markRequested()
+                        notifyPermissionLauncher.launch(Manifest.permission.POST_NOTIFICATIONS)
+                    }) { Text("允许") }
+                },
+                dismissButton = {
+                    TextButton(onClick = { container.notifyPermission.markRequested() }) { Text("暂不") }
                 },
             )
         }

@@ -22,6 +22,16 @@
   修法（纯配置，引擎零改动）：① 触发词补**组合词** `支付给 / 钱包支付 / 数字人民币支付 / 数字钱包 / 数字人民币钱包`
   （**刻意不加裸「支付」**，避免把还款提醒 / 营销短信吸成支出）；② `digital_rmb` 补中词「数字钱包」
   ⇒ 「数字钱包」类通知从 `bank(0.35)` 纠正为 `digital_rmb(0.60)`
+- **Android 13+ 新装用户收不到任何通知（线上准入缺口）**：`AndroidManifest` 声明了 `POST_NOTIFICATIONS`
+  却**从未在运行期请求** ⇒ Android 13+ 默认不授予，「已自动记一笔账」「记账提醒」一条都发不出，
+  而前者正是用户**感知"自动记账在正常工作"的唯一途径**。修法：
+  - 新增 `NotificationPermissionGate` 运行时请求 `POST_NOTIFICATIONS`（**仅 API 33+**，低版本系统自动授予、不弹）；
+  - 时机放在**首启说明之后**（用户先读到"为什么要通知"，再弹系统框才不突兀）；
+  - **拒绝后不死缠**：系统框只弹一次（一次性节奏），改由「设置 → 记账提醒 → 去系统设置开启通知」兜底；
+  - 首启说明补一条「通知发送：自动记账后提醒你一声（可在系统设置里关闭）」。
+- **消除三套权限门控的重复逻辑**：抽薄基类 `PermissionPromptGate`（never-ask / 授权即清标记 / 回前台重判）
+  + 纯函数 `PermissionPromptPolicy`（`shouldAutoPrompt` / `needsRuntimeRequest`），
+  `NotificationAccessGate` / `SmsAccessGate` 改为继承，**行为不变**；决策内核可纯 JVM 单测
 - 设计文档 `docs/design/multi-channel-platform-and-dedup-priority.md` §4.2 判定表与 §10 修订记录（⑨/⑩/⑪）同步
 
 ### 计划中
