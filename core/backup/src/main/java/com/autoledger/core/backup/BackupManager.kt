@@ -255,6 +255,10 @@ class BackupManager(
             repo.listUserPlatforms(includeArchived = true).map { it.toPlatformEntry() },
         )
 
+        // 导入是一次性批量写入（最多 upsert 数千条流水）⇒ outbox 会被一口气塞满；
+        // 导入完成后淘汰一次，封住 outbox 无限膨胀。淘汰是运维动作，**绝不**放进单笔写事务。
+        repo.trimOutbox()
+
         return ImportOutcome(
             fileVersion = fileVersion,
             migratedToVersion = finalVersion,

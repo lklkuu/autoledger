@@ -255,6 +255,21 @@ interface SyncOutboxDao {
     @Update suspend fun update(op: SyncOutboxEntity)
     @Query("DELETE FROM sync_outbox WHERE opId = :opId") suspend fun remove(opId: String)
     @Query("SELECT COUNT(*) FROM sync_outbox") fun observePendingCount(): Flow<Int>
+
+    /**
+     * 条数上限淘汰：只保留最近 [keep] 条（createdAtMillis 降序），其余删除。
+     *
+     * 同毫秒用 opId 降序 tie-break —— 淘汰必须**确定**（同毫秒两行谁留谁删不能取决于
+     * SQLite 的扫描顺序），否则单测无法钉住行为。
+     */
+    @Query(
+        """
+        DELETE FROM sync_outbox WHERE opId NOT IN (
+            SELECT opId FROM sync_outbox ORDER BY createdAtMillis DESC, opId DESC LIMIT :keep
+        )
+        """,
+    )
+    suspend fun trim(keep: Int)
 }
 
 @Dao

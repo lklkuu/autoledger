@@ -198,6 +198,24 @@ class RoomLedgerRepository(private val db: LedgerDatabase) : LedgerRepository {
 
     suspend fun clearAllTransactions() = txnDao.clearAll()
 
+    /**
+     * 淘汰 sync_outbox 里最旧的条目，只保留最近 [keep] 条（默认 [DEFAULT_OUTBOX_KEEP]）。
+     *
+     * outbox 是「本地变更登记」，只增不删（当前没有真正消费它的 CloudSyncClient）⇒
+     * 长期使用会无限膨胀。按 createdAtMillis 降序保留最近 [keep] 条、删掉其余；
+     * 同毫秒用 opId 降序 tie-break，淘汰**确定**可单测。
+     *
+     * ⚠️ 调用点**只有两处**：App 启动（[com.autoledger.app.di.AppContainer.bootstrap]）与
+     * 备份导入完成（BackupManager.import）。**绝不放进每笔写事务** —— 淘汰是运维动作，
+     * 塞进写路径会让每笔记账多付一次全表排序的代价。
+     */
+    suspend fun trimOutbox(keep: Int = DEFAULT_OUTBOX_KEEP) = outbox.trim(keep)
+
+    companion object {
+        /** sync_outbox 保留上限：对「将来做增量同步」绰绰有余，又能封住无限膨胀。 */
+        const val DEFAULT_OUTBOX_KEEP = 5_000
+    }
+
     // ---------------- 内部 ----------------
 
     private suspend fun enqueue(entityType: String, entityId: String, operation: String) {

@@ -319,6 +319,9 @@ class AppContainer(context: Context) {
                 // 后台预热：在 IO 线程先把加密库与设置建好，避免 UI 首次触碰时主线程兜底加载。
                 runCatching { database }
                 runCatching { settings }
+                // outbox 条数上限淘汰（保留最近 5000 条）：sync_outbox 只增不删，长期使用会无限膨胀。
+                // 放在启动时做一次（导入完成后 BackupManager 也会做一次），**绝不**放进每笔写事务。
+                runCatching { repository.trimOutbox() }
                 // 出厂分类与规则只在首次生效：upsert 是按主键覆盖，重复启动不会累加
                 repository.upsertCategories(DefaultSeed.categories())
                 ruleSource.upsertRules(DefaultRulePack.rules())
