@@ -26,10 +26,12 @@ import com.autoledger.feature.capture.notify.NotificationParser
 import com.autoledger.feature.dedup.ComplementaryVerdict
 import com.autoledger.feature.dedup.LedgerDuplicateResolver
 import com.autoledger.feature.dedup.complementaryVerdict
+import com.autoledger.feature.dedup.tierOneAllowsAutoMerge
 import com.autoledger.feature.platform.KeywordPlatformResolver
 import javax.crypto.spec.SecretKeySpec
 import kotlin.test.Test
 import kotlin.test.assertEquals
+import kotlin.test.assertFalse
 import kotlin.test.assertNotEquals
 import kotlin.test.assertTrue
 import kotlinx.coroutines.flow.Flow
@@ -398,6 +400,15 @@ class DigitalRmbNotificationReproTest {
         assertEquals(ComplementaryVerdict.REJECT, complementaryVerdict("digital_rmb", "unionpay"), "数币 ↔ 云闪付")
         assertEquals(ComplementaryVerdict.AUTO_MERGE, complementaryVerdict("digital_rmb", "meituan"), "ORDER ↔ E_WALLET")
         assertEquals(ComplementaryVerdict.REVIEW, complementaryVerdict("digital_rmb", "alipay"), "PAYMENT ↔ E_WALLET")
+
+        // Tier-1（指纹精确）**实测现状**（team-lead 要求核对，不凭猜）：
+        // 判据「层级不同 ⇒ 放行；同层级仅同 id 放行」。E_WALLET 独立成层后，本批**未**新增特判。
+        println("[REPRO] tierOne(E_WALLET,BANK)=${tierOneAllowsAutoMerge("digital_rmb", "bank")} / " +
+            "tierOne(数币,云闪付)=${tierOneAllowsAutoMerge("digital_rmb", "unionpay")} / " +
+            "tierOne(bank,bank)=${tierOneAllowsAutoMerge("bank", "bank")}")
+        assertTrue(tierOneAllowsAutoMerge("digital_rmb", "bank"), "E_WALLET ↔ BANK 层级不同 ⇒ Tier-1 放行")
+        assertFalse(tierOneAllowsAutoMerge("digital_rmb", "unionpay"), "同层级不同 id（数币↔云闪付）⇒ Tier-1 拒绝")
+        assertTrue(tierOneAllowsAutoMerge("bank", "bank"), "同一条 bank 通道 ⇒ Tier-1 放行（Bug 2 能力）")
     }
 
     // ------------------------------------------------------------------ 夹具
