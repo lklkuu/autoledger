@@ -10,6 +10,7 @@ import android.os.Build
 import androidx.core.app.NotificationCompat
 import androidx.core.app.NotificationManagerCompat
 import com.autoledger.app.R
+import com.autoledger.app.NotifyOnRecordDefault
 import com.autoledger.app.UserSettings
 import com.autoledger.app.ui.MainActivity
 import com.autoledger.app.ui.nav.Destination
@@ -210,8 +211,24 @@ class AppContainer(context: Context) {
     private val _backgroundImagePath = MutableStateFlow<String?>(uiPrefs.getString("background_image", null))
     val backgroundImagePath: StateFlow<String?> = _backgroundImagePath.asStateFlow()
 
-    /** 「记账时弹通知」开关：开启后每次自动记录一笔账都发一条系统通知。设备本地偏好，不进备份。 */
-    private val _notifyOnRecord = MutableStateFlow(uiPrefs.getBoolean("notify_on_record", false))
+    /**
+     * 「记账时弹通知」开关：开启后每次自动记录一笔账都发一条系统通知。设备本地偏好，不进备份。
+     *
+     * **默认「开」**（新用户装上就该看到「已自动记一笔账」，否则补 `POST_NOTIFICATIONS` 的收益为 0）。
+     * ⚠️ 默认值的解析走三态，**绝不覆盖用户明确关掉的开关**：
+     * 只有用户**拨动过**开关才会落盘 [KEY_NOTIFY_ON_RECORD]（`setNotifyOnRecord` 总是 `putBoolean`），
+     * 故用 [android.content.SharedPreferences.contains] 区分「键不存在 = 从没设置过」（跟随默认 `true`）
+     * 与「键存在且为 false = 用户主动关过」（保持 `false`）。见 [NotifyOnRecordDefault.resolve]。
+     */
+    private val _notifyOnRecord = MutableStateFlow(
+        NotifyOnRecordDefault.resolve(
+            stored = if (uiPrefs.contains(KEY_NOTIFY_ON_RECORD)) {
+                uiPrefs.getBoolean(KEY_NOTIFY_ON_RECORD, false)
+            } else {
+                null
+            },
+        ),
+    )
     val notifyOnRecord: StateFlow<Boolean> = _notifyOnRecord.asStateFlow()
 
     fun setDarkTheme(enabled: Boolean) {
@@ -227,7 +244,8 @@ class AppContainer(context: Context) {
 
     fun setNotifyOnRecord(enabled: Boolean) {
         _notifyOnRecord.value = enabled
-        uiPrefs.edit().putBoolean("notify_on_record", enabled).apply()
+        // 总是显式落盘（开 / 关都写），这样"用户主动关过"与"从没设置过"才能被 contains 区分开。
+        uiPrefs.edit().putBoolean(KEY_NOTIFY_ON_RECORD, enabled).apply()
     }
 
     val backupManager: BackupManager by lazy { BackupManager(database, repository) }
@@ -422,6 +440,12 @@ class AppContainer(context: Context) {
 
         /** 「记账提醒」通知渠道 id（Android 8+ 必需）。 */
         private const val RECORD_CHANNEL_ID = "autoledger_record"
+
+        /**
+         * 「记账时弹通知」开关在 [android.content.SharedPreferences] 里的键。
+         * **只有用户拨动过开关才会落盘** ⇒ 用它 + `contains` 区分"从没设置过"与"主动关过"。
+         */
+        private const val KEY_NOTIFY_ON_RECORD = "notify_on_record"
 
         /** 提醒通知 id 起始值，避免与其它通知 id 冲突。 */
         private const val RECORD_NOTIFY_BASE_ID = 10_000

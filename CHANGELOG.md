@@ -32,6 +32,11 @@
 - **消除三套权限门控的重复逻辑**：抽薄基类 `PermissionPromptGate`（never-ask / 授权即清标记 / 回前台重判）
   + 纯函数 `PermissionPromptPolicy`（`shouldAutoPrompt` / `needsRuntimeRequest`），
   `NotificationAccessGate` / `SmsAccessGate` 改为继承，**行为不变**；决策内核可纯 JVM 单测
+- **「记账时弹通知」默认改为「开」**：新用户装上就能看到「已自动记一笔账」，否则本轮补的 `POST_NOTIFICATIONS`
+  运行时请求收益为 0。⚠️ **不覆盖用户明确关过的开关**：只有用户拨动过开关才落盘该键，用
+  `SharedPreferences.contains` 区分「从没设置过」（跟随默认 `true`）与「主动关过」（保持 `false`）。
+  **影响**：升级前**从未动过**该开关的老用户，升级后会**开始**收到记账提醒（"改默认值"的正常语义）；
+  曾**主动关过**的老用户**不受影响**、保持关闭。
 - 设计文档 `docs/design/multi-channel-platform-and-dedup-priority.md` §4.2 判定表与 §10 修订记录（⑨/⑩/⑪）同步
 
 ### 计划中
