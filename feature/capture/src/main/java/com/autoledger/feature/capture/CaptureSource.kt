@@ -2,6 +2,8 @@ package com.autoledger.feature.capture
 
 import android.content.Context
 import com.autoledger.core.model.RawEnvelope
+import kotlinx.coroutines.sync.Mutex
+import kotlinx.coroutines.sync.withLock
 
 /**
  * **采集渠道插件契约**（工程要求 1：采集渠道模块化可插拔）。
@@ -66,12 +68,25 @@ object CaptureDispatcher {
 
     private val listeners = mutableListOf<suspend (RawEnvelope) -> Unit>()
 
+    /**
+     * **串行化门**：杜绝「两条通知同刻到达 ⇒ 各自查重都查不到对方 ⇒ 同一笔被记两次」的竞态。
+     *
+     * ingest 的「查重 → 写入 → 合并」段存在 TOCTOU：两条通知几乎同时到达时，
+     * 两个协程各自查重都查不到对方，双双落库且永不合并 —— 而这正是
+     * 「一笔数字人民币支付会同时触发银行短信 + 银行 App + 数币 App 多条通知」的核心场景。
+     *
+     * 分发本身只是转发，串行化不影响吞吐（通知到达频率远低于处理速度）。
+     */
+    private val ingestGate = Mutex()
+
     fun subscribe(listener: suspend (RawEnvelope) -> Unit) {
         synchronized(listeners) { listeners.add(listener) }
     }
 
     suspend fun submit(envelope: RawEnvelope) {
         val snapshot = synchronized(listeners) { listeners.toList() }
-        snapshot.forEach { runCatching { it(envelope) } }
+        ingestGate.withLock {
+            snapshot.forEach { runCatching { it(envelope) } }
+        }
     }
 }
