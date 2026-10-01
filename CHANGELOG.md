@@ -6,6 +6,27 @@
 
 ## [Unreleased]
 
+### 计划中
+- 多币种（当前金额一律按 CNY 处理）
+- 云同步真实后端（当前仅有接口与空实现，不发送任何数据）
+- 其余页面接入 Room Flow 实时刷新（账单 / 采集箱 / 发现 / 自由 / 退款 / 分类管理）
+- 加密备份的 UI 入口（后端能力已具备，当前设置页只有明文导出/导入）
+- 自适应布局（当前为手机竖屏优化）
+
+## [1.1.5] - 2026-10-01
+
+### 修复
+- **CI 偶发红灯（`UserPlatformIntegrationTest` 竞态）**：Robolectric 会为 `:app` 的每个测试方法
+  实例化 manifest 里真实的 `LedgerApp` ⇒ `AppContainer.bootstrap()` 在 `Dispatchers.Default`
+  后台协程里执行 `syncUserPlatformsToCatalog()`，读到 App 自己的空库后调用
+  `PlatformCatalog.replaceExtras(空列表)`，与测试线程刚注入目录的自定义平台产生竞态
+  （同一次 CI 运行 debug 失败 / release 通过可证为线程调度问题，非确定性平台差异）。
+  修法（一行配置）：模块级 `app/src/test/resources/robolectric.properties` 指定
+  `application=android.app.Application`，全部 `:app` 单测不再触发真实 App 的后台启动流程
+  （含 SQLCipher 重试、种子写入、目录清空、采集循环订阅）。
+
+## [1.1.4] - 2026-10-01
+
 ### 修复
 - **一笔数字人民币支付被记成多条**：「数字人民币」「云闪付」新增独立的「**官方数字通道**」中间层
   （`PlatformKind.E_WALLET`），**高于银行卡、低于微信 / 支付宝**（不再与银行卡同级）。
@@ -38,13 +59,6 @@
   **影响**：升级前**从未动过**该开关的老用户，升级后会**开始**收到记账提醒（"改默认值"的正常语义）；
   曾**主动关过**的老用户**不受影响**、保持关闭。
 - 设计文档 `docs/design/multi-channel-platform-and-dedup-priority.md` §4.2 判定表与 §10 修订记录（⑨/⑩/⑪）同步
-
-### 计划中
-- 多币种（当前金额一律按 CNY 处理）
-- 云同步真实后端（当前仅有接口与空实现，不发送任何数据）
-- 其余页面接入 Room Flow 实时刷新（账单 / 采集箱 / 发现 / 自由 / 退款 / 分类管理）
-- 加密备份的 UI 入口（后端能力已具备，当前设置页只有明文导出/导入）
-- 自适应布局（当前为手机竖屏优化）
 
 ## [1.1.3] - 2026-10-01
 
