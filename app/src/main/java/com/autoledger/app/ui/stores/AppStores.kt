@@ -145,18 +145,26 @@ class HomeStore(private val container: AppContainer) {
      *   补录一笔更早日期的流水时窗口集合不变，但待确认卡片仍要刷新（R3）。
      */
     private suspend fun observe() {
-        val month = TimeRange.thisMonth(System.currentTimeMillis())
+        // 月初锚点订阅时取一次即可（本订阅生命周期内不变）；
+        // 右端（now）**不在订阅时定死** —— 每次发射都经 [spendingWindow] 重新取实时 now，
+        // 否则长驻订阅里「今天刚落的流水」会被订阅时刻的旧右端裁掉，首页看起来"没记上"。
+        val monthStart = TimeRange.thisMonth(System.currentTimeMillis()).startMillis
         combine(
-            container.repository.observeSince(month.startMillis),
+            container.repository.observeSince(monthStart),
             container.repository.observeRawCount(),
-        ) { rawList, rawCount -> clipToMonthSpending(rawList, month) to rawCount }
+        ) { rawList, rawCount ->
+            // 裁剪在 flowOn(Dispatchers.Default) 上游执行（R5，离主线程）
+            clipToMonthSpending(rawList, spendingWindow(monthStart, System.currentTimeMillis())) to rawCount
+        }
             .flowOn(Dispatchers.Default) // 过滤/聚合移出主线程（R5）
             .catch { e ->
                 // 上游（Room Flow）发射异常不能打崩进程，收敛为可见错误态（R2）。
                 _state.value = _state.value.copy(loading = false, error = e.message ?: "加载失败")
             }
             .collect { (monthTxns, rawCount) ->
-                applyResult(catching { compute(month, monthTxns, rawCount) })
+                // 统计卡片的窗口同样用发射时的实时右端（与裁剪窗一致）
+                val fresh = spendingWindow(monthStart, System.currentTimeMillis())
+                applyResult(catching { compute(fresh, monthTxns, rawCount) })
             }
     }
 
@@ -793,13 +801,28 @@ class InsightsStore(private val container: AppContainer) {
         val zone = ZoneId.systemDefault()
         // 读一次快照：_selected 可能在本轮订阅期间被 selectMonth 改掉，那会由 load() 重新订阅。
         val selected = _selected.value
-        val month = TimeRange.monthOf(selected, System.currentTimeMillis())
-        // 注意：includeTransfers=false 会连 REFUND 一起剔除（见 RoomLedgerRepository.filterTypes），
-        // 本页口径需要退款参与，故取全量后自行剔除内部划转（口径计算见 computeInsightsFacts）。
-        container.repository.observeRange(month.startMillis, month.endInclusiveMillis, includeTransfers = true)
+        val isCurrentMonth = selected == YearMonth.now()
+        // 过去月的窗口两端在订阅时定死即可（该月最后一毫秒不会变）；
+        // **当前月不行**：右端必须随「现在」推进 —— observeRange 固定右端会把窗口焊死在订阅时刻，
+        // 「今天刚落的流水」要等切页/重试才出现。当前月只给左边界（observeSince），
+        // 右端在 collect 内经 TimeRange.monthOf(selected, 实时 now) 夹紧。
+        val monthStart = TimeRange.monthOf(selected, System.currentTimeMillis()).startMillis
+        val upstream = if (isCurrentMonth) {
+            container.repository.observeSince(monthStart)
+        } else {
+            val fixed = TimeRange.monthOf(selected, System.currentTimeMillis())
+            container.repository.observeRange(fixed.startMillis, fixed.endInclusiveMillis, includeTransfers = true)
+        }
+        // 注意：observeSince 不过滤类型（含 REFUND 与 TRANSFER），本页口径需要退款参与
+        //（划转由 computeInsightsFacts / 快照契约自行剔除）。
+        upstream
             .flowOn(Dispatchers.Default)
             .catch { e -> _state.value = _state.value.copy(loading = false, error = e.message ?: "加载失败") }
-            .collect { allMonth ->
+            .collect { raw ->
+                // 发射时实时窗口：当前月右端 = now（未来日期的流水不得混入本月）；
+                // 过去月右端 = 该月最后一毫秒（与订阅的 observeRange 双端一致，此处仅做同一裁剪）。
+                val fresh = TimeRange.monthOf(selected, System.currentTimeMillis())
+                val allMonth = raw.filter { it.occurredAtMillis <= fresh.endInclusiveMillis }
                 val days = elapsedDays(selected, zone)
                 val facts = computeInsightsFacts(
                     allMonth = allMonth,
@@ -815,10 +838,10 @@ class InsightsStore(private val container: AppContainer) {
                     // 三卡（商户/平台/时间成本）复用同一份窗口快照：allMonth 已含退款，
                     // 只需剔除内部划转即满足 MetricSnapshot 契约 —— 数据库整月窗口只查一次。
                     val snap = MetricSnapshot(
-                        range = month,
+                        range = fresh,
                         txns = allMonth.filter { it.type != TxnType.TRANSFER },
                     )
-                    it.compute(month, container.repository, snap)
+                    it.compute(fresh, container.repository, snap)
                 }
                 // 用 copy 而非新建 State：保住 availableMonths 这类"不随月份重算"的字段。
                 val months = _state.value.availableMonths

@@ -25,3 +25,15 @@ internal fun clipToMonthSpending(
         // 左闭右闭：`in start..end` 同时保证下边界（>= 月初）与上边界（<= 当前时刻）。
         .filter { it.occurredAtMillis in month.startMillis..month.endInclusiveMillis }
         .toList()
+
+/**
+ * 首页聚合的时间窗：左端 = 月初锚点（订阅时定死，本订阅生命周期内不变），
+ * 右端 = **发射时的实时 now**。
+ *
+ * 为什么右端不能在订阅时定死：HomeStore 的数据库订阅是长驻的，
+ * 订阅时刻取的 now 只对第一帧正确；此后每一条新发射仍用旧右端的话，
+ * 「今天刚落库的一笔」会被裁掉，直到下次整订阅重建（切页/重试）才消失 ——
+ * 用户会看到"刚记的账首页不出现"。右端随每次发射实时取 now，窗口才与用户看到的这一刻一致。
+ */
+internal fun spendingWindow(monthStartMillis: Long, nowMillis: Long): TimeRange =
+    TimeRange(monthStartMillis, nowMillis)

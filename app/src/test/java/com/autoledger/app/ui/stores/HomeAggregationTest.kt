@@ -108,4 +108,29 @@ class HomeAggregationTest {
         )
         assertTrue(result.any { it.status == TxnStatus.RAW })
     }
+
+    @Test
+    fun `spending window right endpoint is the realtime now of the emission`() {
+        // 修复语义钉死：窗口右端必须是「发射时的实时 now」，不得在订阅时刻焊死。
+        // 复现：订阅时右端 = monthEnd，之后 rightNow 推进到 monthEnd + 5 并落了新流水 ——
+        // 旧窗口会把它裁掉（首页"没记上"），实时窗口必须能看到。
+        val stale = TimeRange(monthStart, monthEnd)
+        val rightNow = monthEnd + 5
+        val fresh = spendingWindow(monthStart, rightNow)
+
+        assertEquals(monthStart, fresh.startMillis, "左端 = 月初锚点，不变")
+        assertEquals(rightNow, fresh.endInclusiveMillis, "右端 = 发射时的实时 now")
+
+        val justLanded = listOf(txn("just-landed", occurredAt = rightNow))
+        assertEquals(
+            emptyList(),
+            clipToMonthSpending(justLanded, stale).map { it.id },
+            "旧右端（订阅时刻）会把刚落的流水裁掉——这正是要修的 bug",
+        )
+        assertEquals(
+            listOf("just-landed"),
+            clipToMonthSpending(justLanded, fresh).map { it.id },
+            "实时右端必须能看到刚落的流水",
+        )
+    }
 }

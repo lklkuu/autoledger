@@ -1,8 +1,11 @@
 package com.autoledger.app.ui.stores
 
 import com.autoledger.core.model.LedgerTransaction
+import com.autoledger.core.model.TimeRange
 import com.autoledger.core.model.TxnStatus
 import com.autoledger.core.model.TxnType
+import java.time.LocalDateTime
+import java.time.YearMonth
 import java.time.ZoneId
 import kotlin.test.Test
 import kotlin.test.assertEquals
@@ -119,5 +122,46 @@ class InsightsAggregationTest {
             zone = zone,
         )
         assertEquals(2, facts.recordCount, "支出 + 退款 = 2；内部划转剔除")
+    }
+
+    // ------------------------------------------------------------ 聚合时间窗右端点（实时 now）
+
+    private fun millis(y: Int, mo: Int, d: Int, h: Int = 0, mi: Int = 0): Long =
+        LocalDateTime.of(y, mo, d, h, mi).atZone(zone).toInstant().toEpochMilli()
+
+    @Test
+    fun `current month raw stream is clamped to the fresh window right endpoint`() {
+        // 修复语义钉死：当前月订阅只有左边界（observeSince，无右端），
+        // 右端必须在 collect 内夹到「发射时的实时 now」——未来日期的流水不得混入本月，
+        // 且「now 这一刻刚落的流水」必须立即可见。
+        val selected = YearMonth.of(2026, 3)
+        val rightNow = millis(2026, 3, 15, 12)
+        val fresh = TimeRange.monthOf(selected, rightNow)
+
+        assertEquals(rightNow, fresh.endInclusiveMillis, "当前月右端 = 发射时的实时 now")
+
+        val raw = listOf(
+            txn("in", TxnType.EXPENSE, -1_000L, occurredAt = millis(2026, 3, 10)),
+            txn("just-landed", TxnType.EXPENSE, -2_000L, occurredAt = rightNow),
+            txn("future", TxnType.EXPENSE, -5_000L, occurredAt = rightNow + 1),
+        )
+        val allMonth = raw.filter { it.occurredAtMillis <= fresh.endInclusiveMillis }
+        assertEquals(
+            listOf("in", "just-landed"),
+            allMonth.map { it.id },
+            "夹紧后：now 这一刻及之前的保留、未来日期剔除",
+        )
+    }
+
+    @Test
+    fun `past month window keeps both ends fixed at the month boundary`() {
+        // 查看过去的月份：窗口两端固定（右端 = 该月最后一毫秒），**不是** now ——
+        // 否则查看 2 月时，3 月上半月的流水会漏进 2 月视图。
+        val selected = YearMonth.of(2026, 2)
+        val viewingNow = millis(2026, 3, 15, 12)
+        val fresh = TimeRange.monthOf(selected, viewingNow)
+
+        assertEquals(millis(2026, 3, 1) - 1, fresh.endInclusiveMillis, "过去月右端 = 次月 1 日 00:00 − 1ms")
+        assertEquals(millis(2026, 2, 1), fresh.startMillis, "过去月左端 = 该月 1 日 00:00")
     }
 }
