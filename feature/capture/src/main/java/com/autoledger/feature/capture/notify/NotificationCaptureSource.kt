@@ -4,6 +4,7 @@ import android.content.Context
 import android.content.Intent
 import android.provider.Settings
 import androidx.core.content.ContextCompat
+import com.autoledger.core.model.capture.CaptureSourceIds
 import com.autoledger.feature.capture.CaptureAction
 import com.autoledger.feature.capture.CaptureSource
 import com.autoledger.feature.capture.PermissionState
@@ -42,5 +43,5 @@ class NotificationCaptureSource : CaptureSource {
         }
     }
 
-    companion object { const val ID = "notify" }
+    companion object { const val ID = CaptureSourceIds.NOTIFY }
 }

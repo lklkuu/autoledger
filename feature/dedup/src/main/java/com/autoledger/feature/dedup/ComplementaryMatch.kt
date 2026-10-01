@@ -1,5 +1,6 @@
 package com.autoledger.feature.dedup
 
+import com.autoledger.core.model.capture.CaptureSourceIds
 import com.autoledger.core.model.platform.PlatformPriority
 import com.autoledger.core.model.platform.priorityOf
 
@@ -124,4 +125,135 @@ fun tierOneAllowsAutoMerge(incomingPlatformId: String, existingPlatformId: Strin
 
     // 同层级：只有「同一条通道被重复抓取」才允许自动合并；不同通道 = 两笔真实消费。
     return incomingPlatformId == existingPlatformId
+}
+
+// =====================================================================================
+// 必修③【P0-2】不同门店护栏：normalize() 抹括号后不能再靠市场区分同品牌不同门店
+// =====================================================================================
+
+/**
+ * 从原始商户名里抽取**括号中的门店信息**（可能多段，**排序后**用 `|` 连接），已去空白 + 小写。
+ *
+ * 例：`中石化(朝阳站)` → `朝阳站`；`星巴克（国贸店）(2F)` → `2f|国贸店`；`星巴克` → `""`。
+ *
+ * 半/全角括号都可识别；**统一小写**与 [com.autoledger.feature.dedup.LedgerDuplicateResolver]
+ * 的 `normalize()` 口径一致；**多段排序**使比较与括号出现顺序无关
+ * （`星巴克（国贸店）(2F)` 与 `星巴克(2F)(国贸店)` 视为同一门店，避免假冲突）。
+ */
+private val PARENTHETICAL: Regex = Regex("""[（(](.*?)[)）]""")
+
+private fun branchHintsOf(counterparty: String): String = PARENTHETICAL
+    .findAll(counterparty)
+    .map { it.groupValues[1].trim().lowercase() }
+    .filter { it.isNotEmpty() }
+    .sorted()
+    .joinToString("|")
+
+/**
+ * **门店护栏**：`true` = 两条记录的原始商户名**指向不同门店**，Tier-1 不得自动合并。
+ *
+ * ## 为什么必须加这条（本批 P0-2）
+ * Tier-1 的指纹 = `sha256(金额 | normalize(商户))`，而 `normalize()` 会**抹掉括号内容**
+ * （这是有意的：让「星巴克(国贸店)」与「星巴克」能匹配上，见 `normalize()` 的 KDoc）。
+ *
+ * 但抹括号的副作用是：「`中石化(朝阳站)`」与「`中石化(海淀站)`」归一化后**都变成「中石化」**，
+ * 指纹相同 ⇒ 被当成同一条。若两侧平台**层级不同**（例如微信支付通知 = `PAYMENT`、
+ * 银行 POS 短信 = `BANK`），[tierOneAllowsAutoMerge] 会**放行**（它只拒绝「同层级且不同通道」）
+ * ⇒ 两笔不同加油站、不同车的真实消费被**静默合并**，吞掉一笔。
+ *
+ * 团队原先的兜底理由是「这种情形两侧平台通常同层级或都是 unknown，护栏能拦住」——
+ * 该理由**不成立**（上例就是跨层级）。
+ *
+ * ## 为什么不能靠「不抹括号」解决
+ * 抹括号是 Tier-1 的**核心能力**：银行短信写「星巴克(国贸店)」、微信通知写「星巴克」，
+ * 不抹就会算成两个指纹 ⇒ **同一笔永远合并不了**。所以 `normalize()` **一个字都不能改**；
+ * 只能在自动合并出口处，用**原始串**再补一道判据。
+ *
+ * ## 判据（刻意保守，只拒绝最强的情形）
+ * | incoming 括号 | existing 括号 | 冲突? | 理由 |
+ * |---|---|---|---|
+ * | `朝阳站` | `海淀站` | ✅ 冲突 | 两侧都指明门店，且不同 ⇒ 两个门店的两笔真实消费 |
+ * | `国贸店` | （无） | ❌ 不冲突 | 一侧没带门店 ⇒ 很可能是同一笔的两渠道描述（保住 Tier-1 的核心价值） |
+ * | （无） | （无） | ❌ 不冲突 | 没有门店信息可比 |
+ * | `国贸店` | `国贸店` | ❌ 不冲突 | 同一门店 |
+ *
+ * 即：**只有当两侧原始商户名的括号内容都非空且不同时**才判为冲突 —— 这是「抹括号会出错」
+ * 的**唯一确定证据**。判为冲突时，该对记录**降级为待确认**（候选仍浮出，交用户裁决），
+ * 而不是静默合并，也不是直接丢弃候选：宁可多一步确认，也不吞真实消费。
+ */
+fun branchSuffixesConflict(incomingCounterparty: String, existingCounterparty: String): Boolean {
+    val incomingBranch = branchHintsOf(incomingCounterparty)
+    val existingBranch = branchHintsOf(existingCounterparty)
+    // 只有「两侧都带了门店信息 且 不同」才算冲突；任一侧为空都不是确定证据（见判据表）。
+    return incomingBranch.isNotEmpty() && existingBranch.isNotEmpty() && incomingBranch != existingBranch
+}
+
+// =====================================================================================
+// 必修④【P0-4】权威来源护栏：unknown 一侧若是手工录入 / 账单导入，不得被静默吸收
+// =====================================================================================
+
+/**
+ * **权威 / 导入来源**：记录的是**既有事实**（用户亲手录入、官方账单导出），
+ * 而非「靠正则从文本里猜出来」的自动结果。
+ *
+ * 这些来源的 `platformId` 常常就是 `unknown`（没识别出平台），但 `unknown` 在这里的含义是
+ * **「不知道在哪花的」**，绝不是「某笔订单的银行侧」—— 两者不可等同。
+ *
+ * 取值来自 [CaptureSourceIds]（单一真源，见其 KDoc 为何不能写字面量）。
+ *
+ * ## 关于账单导入来源的两种写线
+ * 账单导入的**规范 ID** 是 [CaptureSourceIds.BILL_IMPORT]（= `"bill_import"`，见 `BillImportCaptureSource`）。
+ * 但本仓库既有的**测试夹具**长期用短写 `"bill"` 表示账单导入行
+ * （见 `TierTwoGapAuditTest` / `Tier2ComplementaryMatchTest` / `TierOneGuardrailAuditTest`）。
+ * 护栏一并纳入两种写线 —— 否则「夹具与实现的字面差异」会让这一整类权威来源**静默漏过**，
+ * 而这正是本护栏要堵的漏洞。纳入不存在的写线在生产中**零副作用**（生产不会有 `sourceId == "bill"` 的行）。
+ */
+val AUTHORITATIVE_PLATFORM_SOURCES: Set<String> = setOf(
+    CaptureSourceIds.MANUAL,
+    CaptureSourceIds.BILL_IMPORT,
+    BILL_IMPORT_FIXTURE_ALIAS,
+)
+
+/**
+ * 账单导入来源在本仓库**测试夹具**里的短写别名（`"bill"`）。
+ *
+ * 独立命名的理由：**规范 ID 是 [CaptureSourceIds.BILL_IMPORT]**，本常量只是为兼容既有夹具写线，
+ * 二者不可混为一谈；将来夹具统一到常量后，删掉本常量 + `AUTHORITATIVE_PLATFORM_SOURCES` 里的引用即可。
+ */
+private const val BILL_IMPORT_FIXTURE_ALIAS = "bill"
+
+/**
+ * **Tier-2 的权威来源护栏**：`true` = 该对记录中**处于 [PlatformPriority.NONE]（unknown）一侧**
+ * 的那条来自权威 / 导入来源 ⇒ 不得静默自动合并。
+ *
+ * ## 反例（本批 P0-4）
+ * 12:00 用户**手工**记「菜市场 现金 25 元」（`sourceId=manual`、平台 `unknown`）；
+ * 12:01 美团外卖通知 25 元（`ORDER`）。两条**商户不同** ⇒ 指纹不同 ⇒ Tier-1 不命中；
+ * 但符合 Tier-2 的「同金额 + 3 分钟 + 跨 source + 层级互补（`ORDER↔NONE`）」⇒
+ * [complementaryVerdict] 判 [ComplementaryVerdict.AUTO_MERGE] ⇒ **用户的现金消费被静默吸收并隐藏**。
+ *
+ * 用户录的那笔是**独立发生的事实**，不能被同金额的外卖订单吞掉。
+ * 因此：`ORDER↔NONE` 这条通道上，**unknown 一侧必须排除权威 / 导入来源**。
+ *
+ * ## 为什么只排除「NONE 一侧」
+ * 权威来源若**自己也带了确定平台**（用户手选了微信 / 银行），那它就不是 unknown 一侧，
+ * 走的是正常的层级互补判定（例如 `PAYMENT↔BANK` 本就只能 [ComplementaryVerdict.REVIEW]），
+ * 不需要额外收紧。本护栏只堵「unknown 冒充银行侧」这一个缝隙。
+ *
+ * ## 为什么只对 Tier-2，不扩大到 Tier-1
+ * Tier-1 要求**指纹（含商户名）完全相同**，证据比 Tier-2 强得多；而且 Tier-1 已由
+ * [branchSuffixesConflict] + [tierOneAllowsAutoMerge] 两道闸守着。此处不叠加，避免过度收紧。
+ */
+fun noneSideIsAuthoritative(
+    incomingPlatformId: String,
+    incomingSourceId: String,
+    existingPlatformId: String,
+    existingSourceId: String,
+): Boolean {
+    val incomingIsNone = priorityOf(incomingPlatformId) == PlatformPriority.NONE
+    val existingIsNone = priorityOf(existingPlatformId) == PlatformPriority.NONE
+    // 任一侧「是 unknown 且来自权威来源」即阻断。
+    // （两侧同为 unknown 的场景轮不到这里 —— Tier-2 的 [complementaryVerdict] 已把 `NONE↔NONE` 判为 REJECT。）
+    return (incomingIsNone && incomingSourceId in AUTHORITATIVE_PLATFORM_SOURCES) ||
+        (existingIsNone && existingSourceId in AUTHORITATIVE_PLATFORM_SOURCES)
 }

@@ -6,6 +6,7 @@ import android.content.pm.PackageManager
 import android.provider.Telephony
 import androidx.core.content.ContextCompat
 import com.autoledger.core.model.RawEnvelope
+import com.autoledger.core.model.capture.CaptureSourceIds
 import com.autoledger.feature.capture.CaptureAction
 import com.autoledger.feature.capture.CaptureSource
 import com.autoledger.feature.capture.PermissionState
@@ -93,7 +94,7 @@ class SmsCaptureSource(
     }
 
     companion object {
-        const val ID = "sms"
+        const val ID = CaptureSourceIds.SMS
         /** 短信解析时传这个作为「包名」，让它落到通用 / 短信规则而不是微信专用规则上 */
         const val SOURCE_SMS_KEY = "sms:inbox"
         const val DEFAULT_LIMIT = 500

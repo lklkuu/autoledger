@@ -259,7 +259,8 @@ class LedgerDuplicateResolverTest {
     fun `tier1 known boundary - same brand different stores collide on fingerprint but are not auto merged`() = runBlocking {
         // normalize **有意**抹掉括号门店后缀（同一笔常一个带门店、一个不带），
         // 已知边界：同品牌不同门店 + 同金额 + 3 分钟 + 跨渠道 ⇒ 指纹也会撞上。
-        // 兜底靠层级护栏：两侧通常同层级（都 unknown / 都 bank）⇒ 拒绝自动合并 ⇒ 降级待确认。
+        // 两道护栏都会拦下它：本例两侧都是 unknown ⇒ 层级护栏(NONE↔NONE)拒绝；
+        // 即便两侧层级不同，门店护栏 [branchSuffixesConflict]（两侧门店名非空且不同）也会拒绝 ⇒ 降级待确认。
         val a = txn("a", -3300, "星巴克(国贸店)", sourceId = "notify")
         val b = txn("b", -3300, "星巴克(南京西路店)", sourceId = "sms")
         assertEquals(fpOf(-3300, "星巴克"), LedgerDuplicateResolver(FakeLedgerRepository()).fingerprintOf(a), "抹括号是既定行为")

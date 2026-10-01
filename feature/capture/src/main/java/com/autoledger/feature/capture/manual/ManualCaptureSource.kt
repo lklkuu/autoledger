@@ -2,6 +2,7 @@ package com.autoledger.feature.capture.manual
 
 import android.content.Context
 import com.autoledger.core.model.RawEnvelope
+import com.autoledger.core.model.capture.CaptureSourceIds
 import com.autoledger.feature.capture.CaptureSource
 import com.autoledger.feature.capture.PermissionState
 import java.util.UUID
@@ -43,5 +44,6 @@ class ManualCaptureSource : CaptureSource {
             explicitType = explicitType,
         )
 
-    companion object { const val ID = "manual" }
+    // ID 的单一真源在 core:model（去重护栏也要按它识别「权威来源」，见 CaptureSourceIds）。
+    companion object { const val ID = CaptureSourceIds.MANUAL }
 }

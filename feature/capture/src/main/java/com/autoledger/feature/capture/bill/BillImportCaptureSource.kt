@@ -4,6 +4,7 @@ import android.content.Context
 import android.net.Uri
 import com.autoledger.core.model.RawEnvelope
 import com.autoledger.core.model.TxnType
+import com.autoledger.core.model.capture.CaptureSourceIds
 import com.autoledger.feature.capture.CaptureAction
 import com.autoledger.feature.capture.CaptureSource
 import com.autoledger.feature.capture.PermissionState
@@ -145,7 +146,8 @@ class BillImportCaptureSource : CaptureSource {
         }.getOrNull()
     }
 
-    companion object { const val ID = "bill_import" }
+    // ID 的单一真源在 core:model（去重护栏也要按它识别「权威来源」，见 CaptureSourceIds）。
+    companion object { const val ID = CaptureSourceIds.BILL_IMPORT }
 }
 
 /**

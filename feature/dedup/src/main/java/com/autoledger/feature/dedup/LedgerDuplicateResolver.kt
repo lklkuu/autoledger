@@ -86,6 +86,10 @@ class LedgerDuplicateResolver(
             priorityRank = priorityOf(other.platformId).rank,
             platformSource = other.platformSource,
             tier = MatchTier.FINGERPRINT,
+            // 原始商户名与来源带进候选：前者供「不同门店」护栏用（normalize 抹了括号，候选必须保留原文），
+            // 后者供 Tier-2 的「权威来源」护栏用（Tier-1 也会填，保持一致）。
+            sourceId = other.sourceId,
+            counterparty = other.counterparty,
         )
     }
 
@@ -127,6 +131,9 @@ class LedgerDuplicateResolver(
                 priorityRank = priorityOf(other.platformId).rank,
                 platformSource = other.platformSource,
                 tier = MatchTier.COMPLEMENTARY,
+                // 权威来源护栏要用候选的 sourceId（unknown 一侧若是手工录入 / 账单导入 ⇒ 不得静默吸收）。
+                sourceId = other.sourceId,
+                counterparty = other.counterparty,
             )
         }.sortedByDescending { it.score }
     }
@@ -148,15 +155,29 @@ class LedgerDuplicateResolver(
             MatchTier.FINGERPRINT ->
                 candidate.crossSource &&
                     isAutoMergeSafe(txn) &&
-                    // ⚠️ 层级护栏（本批 P0）：Tier-1 曾经**完全不看层级**，
+                    // ⚠️ 层级护栏（P0-1）：Tier-1 曾经**完全不看层级**，
                     // 使「微信通知 + 支付宝通知」（同店同金额）被静默合并 —— 那是两笔真实消费。
                     // 见 [tierOneAllowsAutoMerge]：只拒绝「同层级且不同通道」，
                     // 保留「同一条银行通道被重复抓取 ⇒ 合并」（Bug 2 的核心能力）。
-                    tierOneAllowsAutoMerge(txn.platformId, candidate.platformId)
+                    tierOneAllowsAutoMerge(txn.platformId, candidate.platformId) &&
+                    // ⚠️ 门店护栏（P0-2）：`normalize()` 抹括号 ⇒「中石化(朝阳站)」与「中石化(海淀站)」
+                    // 指纹相同；两侧层级不同（微信通知 = PAYMENT / 银行短信 = BANK）时，上面那条层级护栏
+                    // 会放行 ⇒ 两笔真实消费被吞。见 [branchSuffixesConflict]：仅当**两侧原始商户名
+                    // 都带门店信息且不同**时才拒绝（降级待确认，候选仍浮出）。
+                    !branchSuffixesConflict(txn.counterparty, candidate.counterparty)
             MatchTier.COMPLEMENTARY ->
                 txn.amountMinor != 0L &&
                     candidate.crossSource &&
-                    complementaryVerdict(txn.platformId, candidate.platformId) == ComplementaryVerdict.AUTO_MERGE
+                    complementaryVerdict(txn.platformId, candidate.platformId) == ComplementaryVerdict.AUTO_MERGE &&
+                    // ⚠️ 权威来源护栏（P0-4）：`unknown` 一侧若是「手工录入 / 账单导入」，
+                    // 它只是**没识别出平台**，并不代表是某笔订单的银行侧 ⇒ 不得被静默吸收。
+                    // 见 [noneSideIsAuthoritative]。
+                    !noneSideIsAuthoritative(
+                        txn.platformId,
+                        txn.sourceId,
+                        candidate.platformId,
+                        candidate.sourceId,
+                    )
         }
 
     /**
@@ -192,11 +213,14 @@ class LedgerDuplicateResolver(
      * 银行短信写「星巴克(国贸店)」、微信通知写「星巴克」。不抹括号，这两条会被算成
      * 两个不同的指纹 ⇒ **同一笔永远合并不了**（这正是 Tier-1 的核心价值）。
      *
-     * **已知边界（有意的取舍，不修）**：抹括号会（极小概率地）把「同一品牌的两个不同门店、
-     * 同金额、3 分钟内」的两笔**真实消费**算成同一指纹。剩余风险由层级护栏兜住 ——
-     * 这种情形两侧平台通常都是同一层级（如同一品牌的 POS 都落 `bank`），
-     * 或干脆都是 `unknown`（NONE↔NONE），[tierOneAllowsAutoMerge] 会拒绝自动合并、
-     * 降级为待确认（见 `LedgerDuplicateResolverTest` 的「同品牌不同门店」用例）。
+     * **已知边界（抹括号的副作用，已由 [branchSuffixesConflict] 兜住，本函数仍不改）**：
+     * 抹括号会把「同一品牌的两个不同门店、同金额、3 分钟内」的两笔**真实消费**算成同一指纹。
+     * 原先以为「层级护栏能兜住（两侧通常同层级或都是 unknown）」—— 这个理由**是错的**：
+     * 微信支付通知（`PAYMENT`）「中石化(朝阳站)」+ 银行 POS 短信（`BANK`）「中石化(海淀站)」
+     * 层级不同 ⇒ [tierOneAllowsAutoMerge] 会放行 ⇒ 吞账。
+     * 因此自动合并出口处另加了 [branchSuffixesConflict]：**两侧原始商户名的括号内容都非空且不同
+     * ⇒ 不自动合并**（降级待确认）。它**不能**靠「不抹括号」实现 —— 抹括号正是 Tier-1 的核心能力
+     * （银行短信「星巴克(国贸店)」要能匹配微信通知「星巴克」），所以本函数一个字都不改。
      * 「宁可多一步确认，也不静默吞掉真实消费」是本模块一贯口径。
      */
     private fun normalize(name: String): String = name

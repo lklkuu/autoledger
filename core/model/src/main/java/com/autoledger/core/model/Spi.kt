@@ -115,6 +115,22 @@ data class DuplicateCandidate(
         com.autoledger.core.model.platform.PlatformSource.AUTO,
     /** 命中走的是哪条通道，见 [MatchTier]。默认 [MatchTier.FINGERPRINT] 以兼容既有构造点。 */
     val tier: MatchTier = MatchTier.FINGERPRINT,
+    /**
+     * 候选记录的**采集来源**（`CaptureSource.id`，技术字段）。
+     *
+     * 为什么带进候选：Tier-2 的护栏要能识别「unknown 一侧是不是**权威来源**」
+     * （手工录入 / 账单导入）。它们只是**没识别出平台**，并不代表是某笔订单的银行侧，
+     * 静默吸收会吞掉一笔真实消费 —— 见 `ComplementaryMatch.noneSideIsAuthoritative`。
+     * 空串 = 未知来源，按「非权威」保守处理（不额外阻断，交由既有层级护栏裁决）。
+     */
+    val sourceId: String = "",
+    /**
+     * 候选记录的**原始商户名**（未归一化）。Tier-1 的门店护栏要靠它比对括号里的门店信息：
+     * `normalize()` 会抹掉括号 ⇒「中石化(朝阳站)」与「中石化(海淀站)」指纹相同，
+     * 只有回到原始串才能区分它们 —— 见 `ComplementaryMatch.branchSuffixesConflict`。
+     * 空串 = 未提供商户名，按「无门店信息」保守处理。
+     */
+    val counterparty: String = "",
 )
 
 interface DuplicateResolver {
