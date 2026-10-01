@@ -230,33 +230,11 @@ fun branchSuffixesConflict(incomingCounterparty: String, existingCounterparty: S
  * **「不知道在哪花的」**，绝不是「某笔订单的银行侧」—— 两者不可等同。
  *
  * 取值来自 [CaptureSourceIds]（单一真源，见其 KDoc 为何不能写字面量）。
- *
- * ## 关于账单导入来源的两种写线
- * 账单导入的**规范 ID** 是 [CaptureSourceIds.BILL_IMPORT]（= `"bill_import"`，见 `BillImportCaptureSource`）。
- * 但本仓库既有的**测试夹具**长期用短写 `"bill"` 表示账单导入行
- * （见 `TierTwoGapAuditTest` / `Tier2ComplementaryMatchTest` / `TierOneGuardrailAuditTest`）。
- * 护栏一并纳入两种写线 —— 否则「夹具与实现的字面差异」会让这一整类权威来源**静默漏过**，
- * 而这正是本护栏要堵的漏洞。纳入不存在的写线在生产中**零副作用**（生产不会有 `sourceId == "bill"` 的行）。
- *
- * ⚠️ **这是临时债**：`"bill"` 只是夹具写线，**待 QA 统一夹具到 [CaptureSourceIds.BILL_IMPORT] 后删除**（见下）。
  */
 val AUTHORITATIVE_PLATFORM_SOURCES: Set<String> = setOf(
     CaptureSourceIds.MANUAL,
     CaptureSourceIds.BILL_IMPORT,
-    BILL_IMPORT_FIXTURE_ALIAS,
 )
-
-/**
- * 账单导入来源在本仓库**测试夹具**里的短写别名（`"bill"`）。
- *
- * ⚠️ **临时债 —— 待 QA 统一夹具后删除**。
- *
- * 独立命名的理由：**规范 ID 是 [CaptureSourceIds.BILL_IMPORT]**，本常量只是为兼容既有夹具写线，
- * 二者不可混为一谈。生产代码**只应认** [CaptureSourceIds.MANUAL] / [CaptureSourceIds.BILL_IMPORT]；
- * 一旦 QA 把夹具统一到常量，**立即删除本常量 + `AUTHORITATIVE_PLATFORM_SOURCES` 里的引用**，
- * 让 `CaptureSourceIds` 重新成为"只有一处定义"的真源。
- */
-private const val BILL_IMPORT_FIXTURE_ALIAS = "bill"
 
 /**
  * **Tier-2 的权威来源护栏**：`true` = 该对记录中**处于 [PlatformPriority.NONE]（unknown）一侧**

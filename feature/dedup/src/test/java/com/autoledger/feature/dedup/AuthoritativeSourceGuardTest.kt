@@ -81,15 +81,6 @@ class AuthoritativeSourceGuardTest {
     }
 
     @Test
-    fun `the bill-import fixture alias is also treated as authoritative`() {
-        // 规范 ID 是 `bill_import`；但既有测试夹具长期用短写 `"bill"` 表示账单导入行。
-        // 护栏一并纳入（见 AUTHORITATIVE_PLATFORM_SOURCES 的说明），否则夹具与实现的字面差异会让
-        // 这一整类权威来源静默漏过 —— QA 的 TierTwoGapAuditTest 正是用 `"bill"`。
-        assertTrue(noneSideIsAuthoritative(none, "bill", meituan, notify), "短写 bill 也要认得")
-        assertTrue(noneSideIsAuthoritative(meituan, notify, none, "bill"))
-    }
-
-    @Test
     fun `an unknown side from an automatic channel does not block auto merge`() {
         // 银行短信(unknown, sms) / 通知(unknown, notify) 是「自动抓来的银行侧」的正常情形，不得阻断。
         assertFalse(noneSideIsAuthoritative(none, sms, meituan, notify), "sms 来源不是权威来源")

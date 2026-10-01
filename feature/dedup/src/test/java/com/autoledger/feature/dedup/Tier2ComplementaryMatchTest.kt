@@ -4,6 +4,7 @@ import com.autoledger.core.model.LedgerTransaction
 import com.autoledger.core.model.MatchTier
 import com.autoledger.core.model.TxnStatus
 import com.autoledger.core.model.TxnType
+import com.autoledger.core.model.capture.CaptureSourceIds
 import com.autoledger.core.model.dedup.DedupPriority
 import com.autoledger.core.model.platform.priorityOf
 import com.autoledger.core.model.platform.PlatformCatalog
@@ -250,7 +251,7 @@ class Tier2ComplementaryMatchTest {
     @Test
     fun `D8 - same amount with different merchants and no platform complementarity is not merged`() = runBlocking<Unit> {
         val unknownA = txn("a", platformId = PlatformCatalog.UNKNOWN_ID, sourceId = "sms", counterparty = "商户甲")
-        val unknownB = txn("b", platformId = PlatformCatalog.UNKNOWN_ID, sourceId = "bill", counterparty = "商户乙")
+        val unknownB = txn("b", platformId = PlatformCatalog.UNKNOWN_ID, sourceId = CaptureSourceIds.BILL_IMPORT, counterparty = "商户乙")
         val (resolver, _) = resolver(unknownA)
 
         assertTrue(
