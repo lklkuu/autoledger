@@ -11,6 +11,7 @@ import com.autoledger.core.model.TimeRange
 import com.autoledger.core.model.WageProfile
 import com.autoledger.core.model.formatYuan
 import com.autoledger.core.model.platform.PlatformCatalog
+import java.time.YearMonth
 
 /**
  * 统计维度插件集合（工程要求 1：统计维度模块化可插拔）。
@@ -115,7 +116,14 @@ class PlatformShareMetric(private val topN: Int = 8) : MetricProvider {
 }
 
 /** 近 6 个月趋势 */
-class MonthlyTrendMetric(private val months: Int = 6) : MetricProvider {
+class MonthlyTrendMetric(
+    private val months: Int = 6,
+    /**
+     * 时钟注入点：生产默认取系统时钟。
+     * 「当前月柱右端 = now」这条口径必须可被确定性断言，故把 now 提为构造参数（测试注入固定值）。
+     */
+    private val nowMillis: () -> Long = System::currentTimeMillis,
+) : MetricProvider {
     override val id: String = TREND_ID
     override val title: String = "月度趋势"
     override val dimension: Dimension = Dimension.TIME
@@ -124,12 +132,19 @@ class MonthlyTrendMetric(private val months: Int = 6) : MetricProvider {
     override suspend fun compute(range: TimeRange, repo: LedgerRepository): MetricResult {
         val zone = java.time.ZoneId.systemDefault()
         val anchor = java.time.Instant.ofEpochMilli(range.endInclusiveMillis).atZone(zone).toLocalDate()
+        val now = nowMillis()
         val points = (months - 1 downTo 0).map { offset ->
             val month = anchor.minusMonths(offset.toLong())
-            val start = month.withDayOfMonth(1).atStartOfDay(zone).toInstant().toEpochMilli()
-            val end = month.withDayOfMonth(month.lengthOfMonth()).atTime(23, 59, 59).atZone(zone).toInstant().toEpochMilli()
+            // 月末边界统一走 TimeRange.monthOf（月度口径的单一真源）：
+            // 旧实现自算的右端 = 「最后一天 23:59:59.000」，会漏掉 23:59:59.001–.999 这 999ms 内的流水；
+            // monthOf 的右端 = 「次月 1 日 00:00 − 1ms」，闰年 2 月也自动正确。
+            // 口径微调（有意为之，见 CHANGELOG）：当前月右端从「月末 23:59:59」变为 now ——
+            // 与首页 / 发现页的本月口径一致，且不再计入未来日期的流水。
+            val window = TimeRange.monthOf(YearMonth.from(month), now)
             // 趋势柱不做负值：退款多于支出时夹到 0
-            val total = ExpenseMath.netExpenseMinor(repo.listRange(start, end)).coerceAtLeast(0L)
+            val total = ExpenseMath.netExpenseMinor(
+                repo.listRange(window.startMillis, window.endInclusiveMillis),
+            ).coerceAtLeast(0L)
             MetricResult.Trend.Point("${month.monthValue}月", total)
         }
         return MetricResult.Trend(TREND_ID, title, null, "元", points)

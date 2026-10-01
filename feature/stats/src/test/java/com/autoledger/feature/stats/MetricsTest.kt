@@ -194,6 +194,70 @@ class MetricsTest {
         assertEquals(0L, result.points.first().valueMinor)
     }
 
+    // ---------------- 月末 999ms 边界（月度口径统一到 TimeRange.monthOf）----------------
+
+    private val zone: java.time.ZoneId get() = java.time.ZoneId.systemDefault()
+
+    private fun millis(y: Int, mo: Int, d: Int, h: Int = 0, mi: Int = 0, s: Int = 0, nano: Int = 0): Long =
+        java.time.LocalDateTime.of(y, mo, d, h, mi, s, nano).atZone(zone).toInstant().toEpochMilli()
+
+    /** 固定时钟注入，让「当前月右端 = now」的口径可以被确定性断言（不依赖测试真实运行时刻）。 */
+    private fun trendAt(months: Int, now: Long) = MonthlyTrendMetric(months = months, nowMillis = { now })
+
+    @Test
+    fun `a transaction in the last 999ms of a month counts into that month`() = runBlocking {
+        // 2026-09-30T23:59:59.500：旧实现自算右端 23:59:59.000 会漏掉这条（回归钉子）
+        val r = FakeLedgerRepository(
+            listOf(Fixtures.txn("a", -1_000, occurredAtMillis = millis(2026, 9, 30, 23, 59, 59, 500_000_000))),
+        )
+        val result = trendAt(months = 2, now = millis(2026, 10, 15, 12))
+            .compute(TimeRange(millis(2026, 10, 1), millis(2026, 10, 15, 12)), r) as MetricResult.Trend
+        assertEquals(2, result.points.size)
+        assertEquals(1_000L, result.points.first().valueMinor, "9 月柱必须计入 23:59:59.500 的流水")
+        assertEquals(0L, result.points.last().valueMinor)
+    }
+
+    @Test
+    fun `the first millisecond of the next month does not leak into the previous month`() = runBlocking {
+        val r = FakeLedgerRepository(
+            listOf(Fixtures.txn("a", -1_000, occurredAtMillis = millis(2026, 10, 1))),
+        )
+        val result = trendAt(months = 2, now = millis(2026, 10, 15, 12))
+            .compute(TimeRange(millis(2026, 10, 1), millis(2026, 10, 15, 12)), r) as MetricResult.Trend
+        assertEquals(0L, result.points.first().valueMinor, "10/1 00:00:00.000 不得计入 9 月柱")
+        assertEquals(1_000L, result.points.last().valueMinor)
+    }
+
+    @Test
+    fun `leap february boundaries are both counted`() = runBlocking {
+        val r = FakeLedgerRepository(
+            listOf(
+                Fixtures.txn("a", -1_000, occurredAtMillis = millis(2028, 2, 28, 23, 59, 59, 999_000_000)),
+                Fixtures.txn("b", -2_000, occurredAtMillis = millis(2028, 2, 29, 23, 59, 59, 500_000_000)),
+            ),
+        )
+        val result = trendAt(months = 2, now = millis(2028, 3, 15, 12))
+            .compute(TimeRange(millis(2028, 3, 1), millis(2028, 3, 15, 12)), r) as MetricResult.Trend
+        assertEquals(2, result.points.size)
+        assertEquals(3_000L, result.points.first().valueMinor, "闰年 2 月最后 1ms 内的两条都必须计入")
+        assertEquals(0L, result.points.last().valueMinor)
+    }
+
+    @Test
+    fun `the current month bar excludes transactions dated after now`() = runBlocking {
+        val now = millis(2026, 10, 15, 12)
+        val r = FakeLedgerRepository(
+            listOf(
+                Fixtures.txn("a", -1_000, occurredAtMillis = now),
+                Fixtures.txn("future", -5_000, occurredAtMillis = now + 3_600_000L),
+            ),
+        )
+        val result = trendAt(months = 1, now = now)
+            .compute(TimeRange(now - 30L * 24 * 3600_000, now), r) as MetricResult.Trend
+        assertEquals(1, result.points.size)
+        assertEquals(1_000L, result.points.single().valueMinor, "当前月柱右端 = now，未来日期的流水不得计入")
+    }
+
     // ------------------------------------------------------------ 时间成本
 
     @Test
