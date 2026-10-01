@@ -14,6 +14,32 @@ jobs:
       - name: Checkout
         uses: actions/checkout@v4
 
+      # 固定签名：从仓库 Secrets 还原签名钥匙（与本地 signing/autoledger.jks 是同一把），
+      # 使 CI 构建的 APK 与本地/历史版本签名一致，可覆盖安装升级。
+      # Secrets 未设置时仅警告并跳过 —— 构建链不断，但 APK 用临时 debug 钥匙签名
+      # （与历史版本不兼容，不能覆盖升级）。
+      - name: Restore signing keystore
+        env:
+          AUTOLEDGER_KEYSTORE_B64: ${{ secrets.AUTOLEDGER_KEYSTORE_BASE64 }}
+          AUTOLEDGER_STORE_PASSWORD: ${{ secrets.AUTOLEDGER_STORE_PASSWORD }}
+          AUTOLEDGER_KEY_ALIAS: ${{ secrets.AUTOLEDGER_KEY_ALIAS }}
+          AUTOLEDGER_KEY_PASSWORD: ${{ secrets.AUTOLEDGER_KEY_PASSWORD }}
+        run: |
+          if [ -z "$AUTOLEDGER_KEYSTORE_B64" ]; then
+            echo "::warning::AUTOLEDGER_KEYSTORE_BASE64 未设置 —— APK 将用临时 debug 钥匙签名（无法覆盖升级）"
+            exit 0
+          fi
+          mkdir -p signing
+          echo "$AUTOLEDGER_KEYSTORE_B64" | base64 -d > signing/autoledger.jks
+          {
+            echo "storeFile=signing/autoledger.jks"
+            echo "storePassword=$AUTOLEDGER_STORE_PASSWORD"
+            echo "keyAlias=$AUTOLEDGER_KEY_ALIAS"
+            echo "keyPassword=$AUTOLEDGER_KEY_PASSWORD"
+          } > keystore.properties
+          echo "keystore restored (cert fingerprint check):"
+          keytool -list -v -keystore signing/autoledger.jks -storepass "$AUTOLEDGER_STORE_PASSWORD" -alias "$AUTOLEDGER_KEY_ALIAS" | grep SHA256:
+
       - name: Set up JDK 17
         uses: actions/setup-java@v4
         with:

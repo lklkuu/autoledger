@@ -37,7 +37,10 @@ android {
     if (hasReleaseKeystore) {
         signingConfigs {
             create("release") {
-                storeFile = file(keystoreProps.getProperty("storeFile"))
+                // 相对路径一律以**仓库根**解析（rootProject.file）：keystore.properties 本身就在根目录，
+                // 写 storeFile=signing/autoledger.jks 这类相对值最直观；用 app 模块的 file() 会错误地
+                // 解析成 app/signing/…（v1.1.5 发版时实证）。绝对路径写法不受影响。
+                storeFile = rootProject.file(keystoreProps.getProperty("storeFile"))
                 storePassword = keystoreProps.getProperty("storePassword")
                 keyAlias = keystoreProps.getProperty("keyAlias")
                 keyPassword = keystoreProps.getProperty("keyPassword")
@@ -46,6 +49,17 @@ android {
     }
 
     buildTypes {
+        debug {
+            // ⚠️ debug 包同样用项目固定钥匙签名（keystore.properties 存在时）：
+            // 否则 CI 每次构建用「临时生成的 debug 钥匙」签名 ⇒ APK 与历史版本签名不一致，
+            // 用户无法覆盖安装升级（只能卸载重装，账本数据丢失）。
+            // 本地不受影响：signing/autoledger.jks 就是本机 ~/.android/debug.keystore 的副本，
+            // 与既往本地构建产物的签名完全相同（证书 EC:5A:E7…C9:6F）。
+            // keystore.properties 缺失（刚 clone / 密钥未配）时回退默认 debug 签名，构建链不断。
+            if (hasReleaseKeystore) {
+                signingConfig = signingConfigs.getByName("release")
+            }
+        }
         release {
             // 仅当提供了 keystore.properties 时才签名；否则产出未签名包，
             // 交由 `gradle assembleRelease` 的使用者自行签名。
