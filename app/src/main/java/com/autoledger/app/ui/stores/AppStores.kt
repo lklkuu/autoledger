@@ -15,6 +15,7 @@ import com.autoledger.core.model.TimeRange
 import com.autoledger.core.model.TxnStatus
 import com.autoledger.core.model.TxnType
 import com.autoledger.core.model.TxnExtras
+import com.autoledger.core.model.capture.CaptureSourceIds
 import com.autoledger.core.model.txnExtras
 import com.autoledger.core.model.refund.DeductionKind
 import com.autoledger.core.model.refund.OrderDeduction
@@ -1028,7 +1029,7 @@ class RefundStore(private val container: AppContainer) {
                     status = OrderStatus.PAID,
                     occurredAtMillis = System.currentTimeMillis(),
                     refundDeadlineMillis = null,
-                    sourceId = "manual",
+                    sourceId = CaptureSourceIds.MANUAL,
                     sourceRef = orderNo.trim(),
                 )
                 val deductions = buildList {

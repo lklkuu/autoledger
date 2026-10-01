@@ -5,6 +5,7 @@ import com.autoledger.core.model.LedgerSchema
 import com.autoledger.core.model.LedgerTransaction
 import com.autoledger.core.model.TxnStatus
 import com.autoledger.core.model.TxnType
+import com.autoledger.core.model.capture.CaptureSourceIds
 import com.autoledger.core.model.platform.PlatformCatalog
 import com.autoledger.core.model.platform.PlatformSource
 import org.json.JSONArray
@@ -62,7 +63,10 @@ internal fun JSONArray.toTransactions(): List<LedgerTransaction> = (0 until leng
         platformSource = runCatching { PlatformSource.valueOf(o.optString("platformSource", "AUTO")) }
             .getOrDefault(PlatformSource.AUTO),
         note = o.optString("note").takeIf { it.isNotBlank() },
-        sourceId = o.optString("sourceId", "manual"),
+        // 缺失字段的兜底值用单一真源常量，而不是字面量 —— 与采集侧（CaptureSource.id）同源，
+        // 避免「采集侧改了 ID、备份兜底不知道」的静默失配。
+        // ⚠️ 仅当**缺失**时才兜底为 MANUAL；档案里已有的其它 sourceId 值（历史遗留）必须原样保留。
+        sourceId = o.optString("sourceId", CaptureSourceIds.MANUAL),
         sourceRef = o.optString("sourceRef", ""),
         accountId = o.optString("accountId").takeIf { it.isNotBlank() },
         categoryId = o.optString("categoryId").takeIf { it.isNotBlank() },

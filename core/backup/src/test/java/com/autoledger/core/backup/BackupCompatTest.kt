@@ -4,6 +4,7 @@ import com.autoledger.core.model.Direction
 import com.autoledger.core.model.LedgerTransaction
 import com.autoledger.core.model.TxnStatus
 import com.autoledger.core.model.TxnType
+import com.autoledger.core.model.capture.CaptureSourceIds
 import com.autoledger.core.model.platform.PlatformCatalog
 import com.autoledger.core.model.platform.PlatformSource
 import kotlin.test.assertEquals
@@ -134,5 +135,38 @@ class BackupCompatTest {
         val back = json.toTransactions().single()
         assertEquals("meituan", back.platformId, "平台 ID 仍在")
         assertEquals(PlatformSource.AUTO, back.platformSource, "脏枚举值兜底为 AUTO，不得抛异常")
+    }
+
+    // ------------------------------------------------------------ sourceId 兜底（单一真源常量）
+
+    /** 缺 sourceId 的最小行（比 v4 还老：连 sourceId / sourceRef 都没有）。 */
+    private fun minimalRow(id: String): String = buildString {
+        appendLine("{")
+        appendLine("""  "id": "$id",""")
+        appendLine("""  "amountMinor": -100,""")
+        appendLine("""  "currency": "CNY",""")
+        appendLine("""  "occurredAtMillis": 1700000000000,""")
+        appendLine("""  "type": "EXPENSE",""")
+        appendLine("""  "direction": "OUT",""")
+        appendLine("""  "counterparty": "某店",""")
+        appendLine("""  "status": "CONFIRMED",""")
+        appendLine("""  "confidence": 1.0,""")
+        appendLine("""  "schemaVersion": 4""")
+        append("}")
+    }
+
+    @Test
+    fun `missing sourceId falls back to the single source of truth MANUAL constant`() {
+        // 断言用常量而不用字面量：若哪天 MANUAL 常量被改动，这条会立刻暴露「兜底值与真源脱钩」
+        val back = JSONArray().put(org.json.JSONObject(minimalRow("no-src"))).toTransactions().single()
+        assertEquals(CaptureSourceIds.MANUAL, back.sourceId, "缺失 sourceId 兜底为 CaptureSourceIds.MANUAL")
+    }
+
+    @Test
+    fun `a present sourceId value is preserved verbatim`() {
+        // 历史档案里已有的任何 sourceId 值必须原样保留 —— 兜底只针对「缺失」，不「统一」旧值
+        val row = org.json.JSONObject(minimalRow("with-src")).put("sourceId", CaptureSourceIds.SMS)
+        val back = JSONArray().put(row).toTransactions().single()
+        assertEquals(CaptureSourceIds.SMS, back.sourceId, "已有的 sourceId 必须原样保留")
     }
 }
