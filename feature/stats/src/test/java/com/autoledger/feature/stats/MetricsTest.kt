@@ -346,6 +346,51 @@ class MetricsTest {
         )
     }
 
+    @Test
+    fun `stale snapshot with mismatched range falls back to repo query`() = runBlocking {
+        // P3-1 护栏：resolveTxns 的防御分支（takeIf { snapshot.range == range }）。
+        // 快照装着**另一个窗口**的数据 + 失配的 range：实现必须识别失配并回退自查，
+        // 绝不能把别的窗口的数据当成本次结果 —— 窗口串味（多算/漏算整月）比多查一次库严重得多。
+        val r = range(t0, t0 + day)
+        val stale = MetricSnapshot(
+            range = TimeRange(t0 - day, t0), // 与查询窗口 r 不一致
+            txns = listOf(Fixtures.txn("stale", -9_999, categoryId = "cat_food", occurredAtMillis = t0 - 1)),
+            categories = listOf(Fixtures.food),
+        )
+        val repo = CountingRepo(
+            listOf(Fixtures.txn("fresh", -500, categoryId = "cat_food", occurredAtMillis = t0)),
+            listOf(Fixtures.food),
+        )
+        val result = CategoryShareMetric().compute(r, repo, stale) as MetricResult.Breakdown
+        assertEquals(1, repo.listRangeCalls, "快照窗口失配必须回退自查 listRange")
+        assertEquals(
+            500L,
+            result.totalMinor,
+            "结果必须来自仓储当前窗口，而不是失配快照（若误用快照会得到 9_999）",
+        )
+    }
+
+    @Test
+    fun `transfers pulled into the wide window never leak into monthly buckets`() = runBlocking {
+        // P3-2 护栏：MonthlyTrend 宽窗查询带 includeTransfers=true（为让退款参与冲抵），
+        // 内部划转因此也会被拉进内存 —— 钉死它不进任何月份桶、不污染柱值（口径泄漏到全链路）。
+        val now = millis(2026, 5, 15, 12)
+        val r = TimeRange(millis(2026, 5, 1), now)
+        val repo = CountingRepo(
+            listOf(
+                Fixtures.txn("may", -4_000, occurredAtMillis = millis(2026, 5, 3)),
+                Fixtures.txn("transfer", -50_000, type = TxnType.TRANSFER, occurredAtMillis = millis(2026, 5, 7)),
+            ),
+            emptyList(),
+        )
+        val result = trendAt(months = 1, now = now).compute(r, repo) as MetricResult.Trend
+        assertEquals(
+            4_000L,
+            result.points.single().valueMinor,
+            "TRANSFER 被宽窗拉进内存后不得计入月份柱（若泄漏会得到 54_000）",
+        )
+    }
+
     // ------------------------------------------------------------ 时间成本
 
     @Test
