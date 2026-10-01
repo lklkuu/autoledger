@@ -11,6 +11,7 @@ import com.autoledger.core.model.FreedomMath
 import com.autoledger.core.model.LedgerTransaction
 import com.autoledger.core.model.UserPlatform
 import com.autoledger.core.model.MetricResult
+import com.autoledger.core.model.MetricSnapshot
 import com.autoledger.core.model.TimeRange
 import com.autoledger.core.model.TxnStatus
 import com.autoledger.core.model.TxnType
@@ -177,9 +178,14 @@ class HomeStore(private val container: AppContainer) {
         val now = System.currentTimeMillis()
         val today = TimeRange.today(now)
         val todayTxns = monthTransactions.filter { it.occurredAtMillis in today.startMillis..today.endInclusiveMillis }
+        // 上提公共取数：分类字典查一次；窗口流水本就在内存里（Flow 推送的 monthTransactions），
+        // 装进快照传给各统计卡片，四张卡不再各自 listRange 把同一窗口重复拉 N 遍。
+        // 快照口径：monthTransactions 已剔除 TRANSFER、保留 REFUND、由 Flow 排除 MERGED（契约见 MetricSnapshot）。
+        val categories = container.repository.listCategories()
+        val snap = MetricSnapshot(range = month, txns = monthTransactions, categories = categories)
         val metrics = container.metricRegistry.providers()
             .filter { it.id != PlatformShareMetric.PLATFORM_ID }
-            .map { it.compute(month, container.repository) }
+            .map { it.compute(month, container.repository, snap) }
         State(
             loading = false,
             // 净支出（退款冲抵），口径唯一真源见 ExpenseMath
@@ -190,7 +196,7 @@ class HomeStore(private val container: AppContainer) {
             monthRefundMinor = ExpenseMath.refundMinor(monthTransactions),
             realHourly = container.settings.wage.value.realHourly,
             recent = monthTransactions.sortedByDescending { it.occurredAtMillis }.take(4),
-            categories = container.repository.listCategories().associateBy { it.id },
+            categories = categories.associateBy { it.id },
             metrics = metrics,
             pendingReview = rawCount,
         )
@@ -805,7 +811,15 @@ class InsightsStore(private val container: AppContainer) {
                     it.id == com.autoledger.feature.stats.MerchantTopMetric.MERCHANT_ID ||
                         it.id == PlatformShareMetric.PLATFORM_ID ||
                         it.id == com.autoledger.feature.stats.TimeCostMetric.TIME_COST_ID
-                }.map { it.compute(month, container.repository) }
+                }.map {
+                    // 三卡（商户/平台/时间成本）复用同一份窗口快照：allMonth 已含退款，
+                    // 只需剔除内部划转即满足 MetricSnapshot 契约 —— 数据库整月窗口只查一次。
+                    val snap = MetricSnapshot(
+                        range = month,
+                        txns = allMonth.filter { it.type != TxnType.TRANSFER },
+                    )
+                    it.compute(month, container.repository, snap)
+                }
                 // 用 copy 而非新建 State：保住 availableMonths 这类"不随月份重算"的字段。
                 val months = _state.value.availableMonths
                 _state.value = _state.value.copy(

@@ -6,12 +6,25 @@ import com.autoledger.core.model.LedgerRepository
 import com.autoledger.core.model.LedgerTransaction
 import com.autoledger.core.model.MetricProvider
 import com.autoledger.core.model.MetricResult
+import com.autoledger.core.model.MetricSnapshot
 import com.autoledger.core.model.Money
 import com.autoledger.core.model.TimeRange
 import com.autoledger.core.model.WageProfile
 import com.autoledger.core.model.formatYuan
 import com.autoledger.core.model.platform.PlatformCatalog
 import java.time.YearMonth
+
+/**
+ * 同一批聚合里「快照优先、自查回退」的统一取数：快照存在且窗口一致时**不得**再查库。
+ * 抽成一个函数，避免每张卡片各写一份 `snapshot?.takeIf { ... } ?: repo.listRange(...)`。
+ */
+private suspend fun resolveTxns(
+    snapshot: MetricSnapshot?,
+    range: TimeRange,
+    repo: LedgerRepository,
+): List<LedgerTransaction> =
+    snapshot?.takeIf { it.range == range }?.txns
+        ?: repo.listRange(range.startMillis, range.endInclusiveMillis)
 
 /**
  * 统计维度插件集合（工程要求 1：统计维度模块化可插拔）。
@@ -27,9 +40,11 @@ class CategoryShareMetric : MetricProvider {
     override val dimension: Dimension = Dimension.CATEGORY
     override val order: Int = 10
 
-    override suspend fun compute(range: TimeRange, repo: LedgerRepository): MetricResult {
-        val categories = repo.listCategories().associateBy { it.id }
-        val txns = repo.listRange(range.startMillis, range.endInclusiveMillis)
+    override suspend fun compute(range: TimeRange, repo: LedgerRepository, snapshot: MetricSnapshot?): MetricResult {
+        // 分类字典优先取快照（快照非空时省掉一次 listCategories），空则照旧自查
+        val categories = (snapshot?.categories?.takeIf { it.isNotEmpty() } ?: repo.listCategories())
+            .associateBy { it.id }
+        val txns = resolveTxns(snapshot, range, repo)
         // 退款按分类冲抵支出（口径唯一真源见 ExpenseMath）
         val buckets = ExpenseMath.netBy(txns) { it.categoryId.orEmpty() }
         val slices = buckets.entries.sortedByDescending { it.value }.map { (rawKey, minor) ->
@@ -60,8 +75,8 @@ class MerchantTopMetric(private val topN: Int = 8) : MetricProvider {
     override val dimension: Dimension = Dimension.MERCHANT
     override val order: Int = 20
 
-    override suspend fun compute(range: TimeRange, repo: LedgerRepository): MetricResult {
-        val txns = repo.listRange(range.startMillis, range.endInclusiveMillis)
+    override suspend fun compute(range: TimeRange, repo: LedgerRepository, snapshot: MetricSnapshot?): MetricResult {
+        val txns = resolveTxns(snapshot, range, repo)
         val buckets = ExpenseMath.netBy(txns) { it.counterparty.ifBlank { "未知商户" } }
         val ranked = buckets.entries.sortedByDescending { it.value }.take(topN)
         val palette = listOf("#16856F", "#5C88B8", "#F6C95F", "#D95F5F", "#9B6AD0", "#116B5B", "#708786", "#163B3D")
@@ -87,8 +102,8 @@ class PlatformShareMetric(private val topN: Int = 8) : MetricProvider {
     override val dimension: Dimension = Dimension.PLATFORM
     override val order: Int = 30
 
-    override suspend fun compute(range: TimeRange, repo: LedgerRepository): MetricResult {
-        val txns = repo.listRange(range.startMillis, range.endInclusiveMillis)
+    override suspend fun compute(range: TimeRange, repo: LedgerRepository, snapshot: MetricSnapshot?): MetricResult {
+        val txns = resolveTxns(snapshot, range, repo)
         val buckets = ExpenseMath.netBy(txns) { it.platformId }
         val ranked = buckets.entries.sortedByDescending { it.value }.take(topN)
         val slices = ranked.mapIndexed { i, (rawKey, minor) ->
@@ -129,29 +144,54 @@ class MonthlyTrendMetric(
     override val dimension: Dimension = Dimension.TIME
     override val order: Int = 40
 
-    override suspend fun compute(range: TimeRange, repo: LedgerRepository): MetricResult {
+    override suspend fun compute(range: TimeRange, repo: LedgerRepository, snapshot: MetricSnapshot?): MetricResult {
+        // 趋势卡**忽略快照**：快照只装着本次聚合的当月窗口，而趋势需要最近 N 个月的宽窗，口径不同，
+        // 误用会把其余月份算成 0。这里一律自查一次宽窗（见 [monthlyWideWindow]）。
         val zone = java.time.ZoneId.systemDefault()
         val anchor = java.time.Instant.ofEpochMilli(range.endInclusiveMillis).atZone(zone).toLocalDate()
         val now = nowMillis()
-        val points = (months - 1 downTo 0).map { offset ->
-            val month = anchor.minusMonths(offset.toLong())
-            // 月末边界统一走 TimeRange.monthOf（月度口径的单一真源）：
-            // 旧实现自算的右端 = 「最后一天 23:59:59.000」，会漏掉 23:59:59.001–.999 这 999ms 内的流水；
-            // monthOf 的右端 = 「次月 1 日 00:00 − 1ms」，闰年 2 月也自动正确。
-            // 口径微调（有意为之，见 CHANGELOG）：当前月右端从「月末 23:59:59」变为 now ——
-            // 与首页 / 发现页的本月口径一致，且不再计入未来日期的流水。
-            val window = TimeRange.monthOf(YearMonth.from(month), now)
-            // 趋势柱不做负值：退款多于支出时夹到 0
-            val total = ExpenseMath.netExpenseMinor(
-                repo.listRange(window.startMillis, window.endInclusiveMillis),
-            ).coerceAtLeast(0L)
-            MetricResult.Trend.Point("${month.monthValue}月", total)
-        }
-        return MetricResult.Trend(TREND_ID, title, null, "元", points)
+        val anchorMonth = YearMonth.from(anchor)
+        val wide = monthlyWideWindow(months, anchorMonth, now)
+        // 一次宽窗查询 + 内存分桶，替代旧实现逐月 6 次独立 listRange（数据库往返 6 次 → 1 次）。
+        // includeTransfers=true：宽窗必须**带退款**——退款冲抵趋势柱是本次口径修正的一部分
+        // （旧实现的默认 listRange 把 REFUND 一并剔除，退款从不参与趋势）。netExpenseMinor
+        // 只认 EXPENSE/REFUND，混进来的 TRANSFER 会被自动忽略，无需预过滤。
+        val txns = repo.listRange(wide.startMillis, wide.endInclusiveMillis, includeTransfers = true)
+        return MetricResult.Trend(TREND_ID, title, null, "元", monthlyBuckets(txns, months, anchorMonth, now))
     }
 
     companion object { const val TREND_ID = "monthly_trend" }
 }
+
+/**
+ * [MonthlyTrendMetric] 的宽窗：**首月初 00:00 → now**（右端实时 now，与当前月柱口径一致；
+ * 过去月的右端反正小于 now，宽窗不会多吃未来流水）。
+ */
+internal fun monthlyWideWindow(months: Int, anchorMonth: YearMonth, nowMillis: Long): TimeRange {
+    val earliest = TimeRange.monthOf(anchorMonth.minusMonths((months - 1).coerceAtLeast(0).toLong()), nowMillis)
+    return TimeRange(earliest.startMillis, nowMillis)
+}
+
+/**
+ * [MonthlyTrendMetric] 的内存分桶（纯函数）：把宽窗流水按 [TimeRange.monthOf] 的月度口径切回各月。
+ *
+ * 月末边界统一走 monthOf（月度口径的单一真源）：右端 = 「次月 1 日 00:00 − 1ms」（双闭区间），
+ * 闰年 2 月自动正确；当前月右端夹到 now，不再计入未来日期的流水。
+ * 趋势柱不做负值：退款多于支出时夹到 0。
+ */
+internal fun monthlyBuckets(
+    txns: List<LedgerTransaction>,
+    months: Int,
+    anchorMonth: YearMonth,
+    nowMillis: Long,
+): List<MetricResult.Trend.Point> =
+    (months - 1 downTo 0).map { offset ->
+        val month = anchorMonth.minusMonths(offset.toLong())
+        val window = TimeRange.monthOf(month, nowMillis)
+        val inMonth = txns.filter { it.occurredAtMillis in window.startMillis..window.endInclusiveMillis }
+        val total = ExpenseMath.netExpenseMinor(inMonth).coerceAtLeast(0L)
+        MetricResult.Trend.Point("${month.monthValue}月", total)
+    }
 
 /**
  * 把钱换算成时间 —— 参考仪表盘的招牌指标。
@@ -163,10 +203,10 @@ class TimeCostMetric(private val profileProvider: () -> WageProfile) : MetricPro
     override val dimension: Dimension = Dimension.TIME
     override val order: Int = 5
 
-    override suspend fun compute(range: TimeRange, repo: LedgerRepository): MetricResult {
+    override suspend fun compute(range: TimeRange, repo: LedgerRepository, snapshot: MetricSnapshot?): MetricResult {
         val profile = profileProvider()
         val totalMinor = ExpenseMath.netExpenseMinor(
-            repo.listRange(range.startMillis, range.endInclusiveMillis)
+            resolveTxns(snapshot, range, repo),
         ).coerceAtLeast(0L)
         val minutes = profile.minutesOfWork(totalMinor)
         val hoursText = "%.1f".format(minutes / 60.0)

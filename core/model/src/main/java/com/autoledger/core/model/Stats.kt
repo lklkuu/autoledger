@@ -112,11 +112,42 @@ data class TimeRange(val startMillis: Long, val endInclusiveMillis: Long) {
     }
 }
 
+/**
+ * 一次聚合批次内可复用的数据快照。
+ *
+ * 背景：首页（HomeStore）与发现页（InsightsStore）在**同一轮聚合**里渲染多张统计卡片，
+ * 而每张卡片各自 `repo.listRange(...)` 会把同一窗口的流水从数据库重复拉 N 遍。
+ * 上层把窗口流水取一次装进快照传下来，各卡片直接复用，数据库只查一次。
+ *
+ * **快照口径契约**（构造方负责遵守，卡片实现侧也应防御性校验）：
+ * - [txns] **含退款（REFUND）**——退款冲抵是统计口径的一部分；
+ * - [txns] **不含内部划转（TRANSFER）**；
+ * - 不含 MERGED / IGNORED 状态的流水；
+ * - [range] 必须等于本次 `compute` 收到的 range —— 不一致时实现侧必须回退自查；
+ * - [categories] 可为空：不涉及分类维度的调用方不必为此多查一次字典。
+ */
+data class MetricSnapshot(
+    val range: TimeRange,
+    val txns: List<LedgerTransaction>,
+    val categories: List<Category> = emptyList(),
+)
+
 interface MetricProvider {
     val id: String
     val title: String
     val dimension: Dimension
     /** 数值越小越靠前 */
     val order: Int
-    suspend fun compute(range: TimeRange, repo: LedgerRepository): MetricResult
+
+    /**
+     * 计算卡片。
+     *
+     * @param snapshot 上层预取的窗口快照，可复用则**不得**再查库；`null` 或
+     *   `snapshot.range != range` 时回退自行 `repo.listRange(...)`（行为与快照口径一致）。
+     */
+    suspend fun compute(
+        range: TimeRange,
+        repo: LedgerRepository,
+        snapshot: MetricSnapshot? = null,
+    ): MetricResult
 }

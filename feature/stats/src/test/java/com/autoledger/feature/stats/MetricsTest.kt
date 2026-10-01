@@ -1,7 +1,9 @@
 package com.autoledger.feature.stats
 
+import com.autoledger.core.model.Category
 import com.autoledger.core.model.LedgerTransaction
 import com.autoledger.core.model.MetricResult
+import com.autoledger.core.model.MetricSnapshot
 import com.autoledger.core.model.TimeRange
 import com.autoledger.core.model.ExpenseMath
 import com.autoledger.core.model.TxnType
@@ -29,6 +31,23 @@ class MetricsTest {
 
     private fun repo(vararg txns: LedgerTransaction) =
         FakeLedgerRepository(txns.toList(), listOf(Fixtures.food, Fixtures.transport, Fixtures.income))
+
+    /** 记录 listRange 调用次数：快照复用的核心断言是「带快照时不再查库」。 */
+    private class CountingRepo(
+        initial: List<LedgerTransaction>,
+        categories: List<Category>,
+    ) : FakeLedgerRepository(initial, categories) {
+        var listRangeCalls: Int = 0
+            private set
+        override suspend fun listRange(
+            fromMillis: Long,
+            toMillis: Long,
+            includeTransfers: Boolean,
+        ): List<LedgerTransaction> {
+            listRangeCalls += 1
+            return super.listRange(fromMillis, toMillis, includeTransfers)
+        }
+    }
 
     // ------------------------------------------------------------ 净额口径（ExpenseMath）
 
@@ -256,6 +275,75 @@ class MetricsTest {
             .compute(TimeRange(now - 30L * 24 * 3600_000, now), r) as MetricResult.Trend
         assertEquals(1, result.points.size)
         assertEquals(1_000L, result.points.single().valueMinor, "当前月柱右端 = now，未来日期的流水不得计入")
+    }
+
+    // ------------------------------------------------------------ 快照复用（MetricSnapshot）
+
+    @Test
+    fun `snapshot reuse means listRange is never queried`() = runBlocking {
+        val r = range(t0, t0 + day)
+        val txn = Fixtures.txn("e1", -500, categoryId = "cat_food", occurredAtMillis = t0)
+        val snap = MetricSnapshot(
+            range = r,
+            txns = listOf(txn),
+            categories = listOf(Fixtures.food),
+        )
+        val repo = CountingRepo(listOf(txn), listOf(Fixtures.food))
+        val result = CategoryShareMetric().compute(r, repo, snap) as MetricResult.Breakdown
+        assertEquals(0, repo.listRangeCalls, "带快照且窗口一致时绝不能再查 listRange")
+        assertEquals(500L, result.totalMinor, "切片数据必须来自快照")
+        assertEquals("餐饮", result.slices.single().label, "分类字典同样应来自快照")
+    }
+
+    @Test
+    fun `null snapshot falls back to repo query`() = runBlocking {
+        val r = range(t0, t0 + day)
+        val repo = CountingRepo(listOf(Fixtures.txn("m1", -300, occurredAtMillis = t0)), emptyList())
+        val result = MerchantTopMetric().compute(r, repo, snapshot = null) as MetricResult.Breakdown
+        assertEquals(1, repo.listRangeCalls, "无快照必须回退自查 listRange")
+        assertEquals(300L, result.totalMinor)
+        assertEquals("某商户", result.slices.single().key)
+    }
+
+    @Test
+    fun `wide window buckets three months in one query including refunds`() = runBlocking {
+        val now = millis(2026, 3, 15)
+        val r = TimeRange(millis(2026, 3, 1), now)
+        val repo = CountingRepo(
+            listOf(
+                Fixtures.txn("jan", -10_000, occurredAtMillis = millis(2026, 1, 10)),
+                Fixtures.txn("feb", -5_000, occurredAtMillis = millis(2026, 2, 5)),
+                Fixtures.txn("feb-refund", 2_000, type = TxnType.REFUND, occurredAtMillis = millis(2026, 2, 20)),
+                Fixtures.txn("mar", -3_000, occurredAtMillis = millis(2026, 3, 3)),
+            ),
+            emptyList(),
+        )
+        val result = trendAt(months = 3, now = now).compute(r, repo) as MetricResult.Trend
+        assertEquals(1, repo.listRangeCalls, "整段趋势必须只查一次宽窗（旧实现逐月 6 次查询）")
+        assertEquals(
+            listOf(10_000L, 3_000L, 3_000L),
+            result.points.map { it.valueMinor },
+            "分桶口径 = 净支出（毛支出 − 退款），退款必须参与所在月的冲抵",
+        )
+        assertEquals(listOf("1月", "2月", "3月"), result.points.map { it.label })
+    }
+
+    @Test
+    fun `snapshot containing refund nets category slice to gross minus refund`() = runBlocking {
+        val r = range(t0, t0 + day)
+        val txns = listOf(
+            Fixtures.txn("e1", -10_000, categoryId = "cat_food", occurredAtMillis = t0),
+            Fixtures.txn("r1", 4_000, categoryId = "cat_food", type = TxnType.REFUND, occurredAtMillis = t0),
+        )
+        val snap = MetricSnapshot(range = r, txns = txns, categories = listOf(Fixtures.food))
+        val repo = CountingRepo(txns, listOf(Fixtures.food))
+        val result = CategoryShareMetric().compute(r, repo, snap) as MetricResult.Breakdown
+        assertEquals(1, result.slices.size)
+        assertEquals(
+            6_000L,
+            result.slices.single().minor,
+            "快照含 REFUND 时分类切片 = 毛支出 − 退款（口径修正：退款冲抵开始生效）",
+        )
     }
 
     // ------------------------------------------------------------ 时间成本

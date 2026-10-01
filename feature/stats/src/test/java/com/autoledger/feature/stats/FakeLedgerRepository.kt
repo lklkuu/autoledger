@@ -19,7 +19,7 @@ import kotlinx.coroutines.flow.map
  * 额外提供 `listRange`，与 RoomLedgerRepository:73 语义一致（闭区间 + 过滤划转/退款），
  * 并提供 observeSince / observeRawCount 的等价实现，保证新增契约后测试源集可独立编译。
  */
-class FakeLedgerRepository(
+open class FakeLedgerRepository(
     initial: List<LedgerTransaction> = emptyList(),
     val categories: List<Category> = emptyList(),
     val accounts: List<Account> = emptyList(),
@@ -77,8 +77,8 @@ class FakeLedgerRepository(
             kotlin.math.abs(txn.occurredAtMillis - anchor) <= windowMillis
     }
 
-    /** 闭区间查询，对齐 RoomLedgerRepository.listRange。 */
-    override suspend fun listRange(
+    /** 闭区间查询，对齐 RoomLedgerRepository.listRange。（open：供测试子类插桩计数） */
+    open override suspend fun listRange(
         fromMillis: Long,
         toMillis: Long,
         includeTransfers: Boolean,
