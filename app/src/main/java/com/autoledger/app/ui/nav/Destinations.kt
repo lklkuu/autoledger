@@ -26,6 +26,7 @@ enum class Destination(
     SETTINGS("设置", false, LedgerIcons.Settings),
     CATEGORY("分类管理", false, LedgerIcons.Category),
     REFUND("订单退款", false, LedgerIcons.Download),
+    PLATFORM("消费平台", false, LedgerIcons.Category),
     ;
 
     companion object {

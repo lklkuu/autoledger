@@ -61,6 +61,10 @@ class KeywordPlatformResolver : PlatformResolver {
 
         for (entry in PlatformCatalog.all()) {
             if (entry.id == PlatformCatalog.UNKNOWN_ID) continue
+            // 已停用的自定义平台**不再参与识别**（用户停用后不该再有新流水落到它上面）。
+            // 注意：它仍在目录里，所以 find()/displayNameOf() 照样能查到 ——
+            // 这是必须的：历史流水的平台名还要靠它显示，否则会塌成「未知平台」（R7）。
+            if (entry.archived) continue
 
             if (pkg.isNotEmpty() && entry.packageNames.any { it.equals(pkg, ignoreCase = true) }) {
                 keepBest(best, PlatformMatch(entry.id, SCORE_PACKAGE, "包名 $pkg"))

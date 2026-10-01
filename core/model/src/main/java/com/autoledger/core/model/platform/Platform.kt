@@ -113,6 +113,11 @@ fun priorityOf(platformId: String): PlatformPriority =
  * @property weakKeywords Tier C（0.35）：间接线索，如「财付通」（微信持牌主体，但也可能出现在银行短信对手方描述里）
  * @property packageNames 通知来源包名，命中即最强信号（0.95）
  * @property sortOrder 同分时的稳定排序（候选顺序不随 map 遍历顺序抖动）
+ * @property archived 软删除标记。**只对用户自定义平台有意义**（内置条目恒为 false）。
+ *   语义是「不再参与**识别与指派**」，但**仍然可被 [PlatformCatalog.find]/[PlatformCatalog.displayNameOf] 查到**
+ *   —— 历史流水的 `platformId` 指向这一条，若彻底查不到，那些流水的平台名会塌成「未知平台」，
+ *   用户会以为数据坏了（见设计风险 R7）。因此识别层必须**显式跳过** [archived] 条目，
+ *   而不是靠"不注册它"来实现停用。
  */
 data class PlatformEntry(
     val id: String,
@@ -123,6 +128,7 @@ data class PlatformEntry(
     val weakKeywords: List<String> = emptyList(),
     val packageNames: Set<String> = emptySet(),
     val sortOrder: Int = Int.MAX_VALUE,
+    val archived: Boolean = false,
 )
 
 /**
@@ -281,8 +287,17 @@ object PlatformCatalog {
     fun all(): List<PlatformEntry> =
         cached ?: (BUILT_IN + extra).sortedBy { it.sortOrder }.also { cached = it }
 
-    /** 按 ID 查条目；未收录返回 null。 */
+    /** 按 ID 查条目；未收录返回 null。**包含归档条目**（历史流水靠它显示原名）。 */
     fun find(id: String): PlatformEntry? = all().firstOrNull { it.id == id }
+
+    /**
+     * 可以「指派给新流水」的条目 = 排除已归档的。
+     *
+     * 与 [all] 的分工必须分清：
+     * - **展示**用 [find] / [displayNameOf] / [all]：要能看到归档条目，否则历史流水的平台名会塌成「未知平台」（R7）；
+     * - **选择器与识别**用本方法：已停用的平台不该再被选到、也不该再被识别出来。
+     */
+    fun selectable(): List<PlatformEntry> = all().filter { !it.archived }
 
     /**
      * ID → 展示名。**未收录的 ID 返回 [UNKNOWN_DISPLAY_NAME]，绝不抛异常**

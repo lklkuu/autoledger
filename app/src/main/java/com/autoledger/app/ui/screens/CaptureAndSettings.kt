@@ -396,6 +396,16 @@ fun SettingsScreen(container: AppContainer) {
 
         item {
             AppCard {
+                SectionTitle("消费平台管理", "自己加平台（京东、山姆…），参与识别与统计")
+                Button(
+                    onClick = { container.nav.navigate(com.autoledger.app.ui.nav.Destination.PLATFORM) },
+                    Modifier.padding(top = 10.dp),
+                ) { Icon(LedgerIcons.Category, null); Text(" 管理消费平台") }
+            }
+        }
+
+        item {
+            AppCard {
                 SectionTitle("反馈问题", "记错账 / 打不开 / 想要新功能")
                 Text(
                     "覆盖安装新版不会丢数据（只要包名和签名一致）；升级前建议先「导出 JSON」备份一次。",

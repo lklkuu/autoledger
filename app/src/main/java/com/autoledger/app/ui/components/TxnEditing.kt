@@ -128,6 +128,10 @@ fun TxnEditDialog(
     store: LedgerStore,
     txn: LedgerTransaction,
     onDismiss: () -> Unit,
+    /** 这条流水**吸收掉**的记录（`mergeGroupOf(txn.id)`）。空 = 它不是合并后的主记录。 */
+    mergedInto: List<LedgerTransaction> = emptyList(),
+    /** 撤销某条被吸收记录（传 null = 该入口不可用，例如从只读视图打开）。 */
+    onUnmerge: ((String) -> Unit)? = null,
 ) {
     val amountDateEditable = TxnEditRules.canEditAmountAndDate(txn)
     val blockReason = TxnEditRules.blockReason(txn)
@@ -247,6 +251,41 @@ fun TxnEditDialog(
                     style = MaterialTheme.typography.bodySmall,
                     color = MaterialTheme.colorScheme.onSurfaceVariant,
                 )
+                // 合并组：这条是"主记录"，它吸收过来的那些记录仍**原样留在库里**
+                // （各自的平台、来源、原文都没被改），只是不再单独计入账单。
+                // 这里把它们列出来，用户能看清"这笔记了两次，分别来自哪两个渠道"，也能逐条撤销。
+                if (mergedInto.isNotEmpty()) {
+                    Text(
+                        "已合并 ${mergedInto.size} 条",
+                        Modifier.padding(top = 12.dp),
+                        style = MaterialTheme.typography.labelMedium,
+                        color = LedgerPalette.Blue,
+                    )
+                    mergedInto.forEach { absorbed ->
+                        Row(
+                            Modifier.fillMaxWidth().padding(top = 4.dp),
+                            verticalAlignment = Alignment.CenterVertically,
+                        ) {
+                            Text(
+                                "· ${PlatformCatalog.displayNameOf(absorbed.platformId)}" +
+                                    "（${absorbed.sourceId}）" +
+                                    absorbed.counterparty.takeIf { it.isNotBlank() }?.let { "　$it" }.orEmpty(),
+                                Modifier.weight(1f),
+                                style = MaterialTheme.typography.bodySmall,
+                                color = MaterialTheme.colorScheme.onSurfaceVariant,
+                            )
+                            onUnmerge?.let { unmerge ->
+                                TextButton(onClick = { unmerge(absorbed.id) }) { Text("撤销") }
+                            }
+                        }
+                    }
+                    Text(
+                        "撤销后该条回到「待确认」；主记录的商户/平台可能仍含合并时补上的值，请核对。",
+                        Modifier.padding(top = 4.dp),
+                        style = MaterialTheme.typography.bodySmall,
+                        color = LedgerPalette.Warning,
+                    )
+                }
             }
         },
         confirmButton = {
@@ -272,7 +311,12 @@ fun TxnEditDialog(
     )
 }
 
-/** 消费平台选择器：内置平台 + 未知，流式排列。 */
+/**
+ * 消费平台选择器：内置平台 + 用户自定义平台 + 未知，流式排列。
+ *
+ * 用 [PlatformCatalog.selectable] 而不是 `all()`：已停用的自定义平台不该再被指派给新流水。
+ * 顺序天然是「内置在前、自定义在后」—— 内置 `sortOrder` 最大 90，自定义从 1000 起，unknown 排最后。
+ */
 @OptIn(ExperimentalLayoutApi::class)
 @Composable
 fun PlatformPicker(selected: String, onSelect: (String) -> Unit) {
@@ -281,7 +325,12 @@ fun PlatformPicker(selected: String, onSelect: (String) -> Unit) {
         verticalArrangement = Arrangement.spacedBy(4.dp),
         modifier = Modifier.fillMaxWidth().padding(top = 6.dp),
     ) {
-        PlatformCatalog.all().forEach { entry ->
+        // 当前选中的若是已停用平台，仍然要显示出来 —— 否则用户打开编辑框会看到"没有选中任何平台"
+        val entries = PlatformCatalog.selectable().let { list ->
+            val current = PlatformCatalog.find(selected)
+            if (current != null && current.archived && list.none { it.id == current.id }) list + current else list
+        }
+        entries.forEach { entry ->
             FilterChip(
                 selected = entry.id == selected,
                 onClick = { onSelect(entry.id) },

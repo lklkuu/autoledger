@@ -47,7 +47,9 @@ import com.autoledger.feature.dedup.LedgerDuplicateResolver
 import com.autoledger.feature.dedup.TransferPairMatcher
 import com.autoledger.feature.stats.CategoryShareMetric
 import com.autoledger.feature.stats.PlatformShareMetric
+import com.autoledger.core.model.platform.PlatformCatalog
 import com.autoledger.core.model.platform.PlatformResolver
+import com.autoledger.core.model.toPlatformEntry
 import com.autoledger.feature.platform.KeywordPlatformResolver
 import com.autoledger.feature.stats.MerchantTopMetric
 import com.autoledger.feature.stats.MetricRegistry
@@ -295,12 +297,32 @@ class AppContainer(context: Context) {
                 // 出厂分类与规则只在首次生效：upsert 是按主键覆盖，重复启动不会累加
                 repository.upsertCategories(DefaultSeed.categories())
                 ruleSource.upsertRules(DefaultRulePack.rules())
+                // ⚠️ 必须在 startCaptureLoop() **之前**：目录注入是"进程内缓存"，
+                // 晚一步的话，采集循环启动到注入完成之间的那个窗口里到达的通知
+                // 会用**不含用户自定义平台**的目录去识别，那几笔会落成 unknown（设计风险 R6）。
+                syncUserPlatformsToCatalog()
                 startCaptureLoop()
             } catch (e: Throwable) {
                 // 初始化失败不崩进程，转为可见错误；用户可据此判断是加密库/存储问题。
                 _startupError.value = StartupError(e.message ?: "初始化失败", e)
             }
         }
+    }
+
+    /**
+     * 把「用户自定义消费平台」注入进程内目录（`PlatformCatalog`）。
+     *
+     * **含归档条目**：归档只表示「今后不再识别与指派」，历史流水的 `platformId` 仍指向它，
+     * 展示时必须查得到（否则那些流水会显示「未知平台」= 用户以为数据坏了，见 R7）。
+     * 「归档不进识别候选」由识别层显式跳过 `archived` 实现，不是靠不注册它。
+     *
+     * 用 [PlatformCatalog.replaceExtras]（原子整体替换）而不是「先清空再逐个注册」：
+     * 后者存在一个「自定义平台全部消失」的窗口，而采集循环可能正在并发识别。
+     */
+    suspend fun syncUserPlatformsToCatalog() {
+        val platforms = runCatching { repository.listUserPlatforms(includeArchived = true) }
+            .getOrDefault(emptyList())
+        PlatformCatalog.replaceExtras(platforms.map { it.toPlatformEntry() })
     }
 
     /** 供 UI 在错误页点击「重试」时调用 */

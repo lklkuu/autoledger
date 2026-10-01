@@ -60,6 +60,7 @@ import com.autoledger.app.ui.screens.FreedomScreen
 import com.autoledger.app.ui.screens.HourlyScreen
 import com.autoledger.app.ui.screens.InsightsScreen
 import com.autoledger.app.ui.screens.MonthlyScreen
+import com.autoledger.app.ui.screens.PlatformManageScreen
 import com.autoledger.app.ui.screens.RefundScreen
 import com.autoledger.app.ui.screens.SettingsScreen
 import com.autoledger.app.ui.theme.LedgerIcons
@@ -295,6 +296,7 @@ fun AppShell(container: AppContainer) {
                 Destination.SETTINGS -> SettingsScreen(container)
                 Destination.CATEGORY -> CategoryManageScreen(container)
                 Destination.REFUND -> RefundScreen(container)
+                Destination.PLATFORM -> PlatformManageScreen(container)
             }
         }
     }

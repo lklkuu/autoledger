@@ -69,9 +69,9 @@ fun newUserPlatformId(): String = UserPlatform.ID_PREFIX + UUID.randomUUID().toS
 /**
  * 领域类型 → 目录条目（单向派生，供 [com.autoledger.core.model.platform.PlatformCatalog.register] 使用）。
  *
- * 归档条目**也允许**转换并注册：识别引擎只遍历候选，而展示需要它仍在目录里
- * （否则历史流水的平台名会塌成「未知平台」）。
- * 「归档的不进候选」由调用方（注入时过滤 `archived`）或识别层负责，见设计文档 §2.3。
+ * **归档条目也要转换并注册**：识别层会显式跳过 `archived = true` 的条目（见
+ * [PlatformEntry.archived]），但展示层需要它仍在目录里 —— 否则历史流水的平台名会塌成
+ * 「未知平台」，用户会以为数据坏了（设计风险 R7）。
  */
 fun UserPlatform.toPlatformEntry(): PlatformEntry = PlatformEntry(
     id = id,
@@ -82,4 +82,5 @@ fun UserPlatform.toPlatformEntry(): PlatformEntry = PlatformEntry(
     weakKeywords = weakKeywords,
     packageNames = packageNames,
     sortOrder = sortOrder,
+    archived = archived,
 )

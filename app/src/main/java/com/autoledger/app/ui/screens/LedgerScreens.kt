@@ -58,6 +58,8 @@ import com.autoledger.core.model.LedgerTransaction
 import com.autoledger.core.model.TxnType
 import com.autoledger.core.model.txnExtras
 import com.autoledger.core.model.MetricResult
+import com.autoledger.core.model.platform.PlatformCatalog
+import com.autoledger.core.model.platform.PlatformEntry
 import com.autoledger.feature.stats.BudgetCalculator
 import kotlinx.coroutines.launch
 import java.time.Instant
@@ -179,7 +181,9 @@ fun ExpensesScreen(container: AppContainer) {
                     horizontalArrangement = Arrangement.spacedBy(6.dp),
                     verticalArrangement = Arrangement.spacedBy(4.dp),
                 ) {
-                    com.autoledger.core.model.platform.PlatformCatalog.all().forEach { entry ->
+                    // 已停用平台不再出现在筛选条里；正被筛选的那个除外 ——
+                    // 否则用户看到列表被过滤了、却找不到是哪个平台在起作用。
+                    platformFilterChips(state.platformFilter).forEach { entry ->
                         FilterChip(
                             selected = state.platformFilter == entry.id,
                             onClick = { store.setPlatformFilter(entry.id) },
@@ -259,7 +263,16 @@ fun ExpensesScreen(container: AppContainer) {
 
     // 修正对话框：商户名 / 备注 / 消费平台 / 金额 / 日期（两页共用同一实现）
     editing?.let { txn ->
-        TxnEditDialog(store = store, txn = txn, onDismiss = { editing = null })
+        // 合并组要按「当前打开的这条」加载：它是不是主记录、吸收了几条，只有查了才知道。
+        val mergeGroup by store.mergeGroup.collectAsState()
+        LaunchedEffect(txn.id) { store.loadMergeGroup(txn.id) }
+        TxnEditDialog(
+            store = store,
+            txn = txn,
+            onDismiss = { editing = null; store.clearMergeGroup() },
+            mergedInto = mergeGroup,
+            onUnmerge = { mergedId -> store.unmerge(mergedId, txn.id) },
+        )
     }
 }
 
@@ -510,7 +523,15 @@ fun MonthlyScreen(container: AppContainer) {
 
     // 修正对话框：与记账页共用 TxnEditDialog（商户名 / 备注 / 消费平台 / 金额 / 日期）
     editing?.let { txn ->
-        TxnEditDialog(store = store, txn = txn, onDismiss = { editing = null })
+        val mergeGroup by store.mergeGroup.collectAsState()
+        LaunchedEffect(txn.id) { store.loadMergeGroup(txn.id) }
+        TxnEditDialog(
+            store = store,
+            txn = txn,
+            onDismiss = { editing = null; store.clearMergeGroup() },
+            mergedInto = mergeGroup,
+            onUnmerge = { mergedId -> store.unmerge(mergedId, txn.id) },
+        )
     }
 }
 
@@ -523,5 +544,24 @@ private fun PaymentRefundTiles(grossMinor: Long, refundMinor: Long) {
     ) {
         BreakdownTile("付款总额", "¥${grossMinor.yuan()}", LedgerPalette.Danger, Modifier.weight(1f))
         BreakdownTile("退款总额", "¥${refundMinor.yuan()}", LedgerPalette.Blue, Modifier.weight(1f))
+    }
+}
+
+/**
+ * 平台筛选条的条目：**可指派**的平台 + **当前正在筛选的那个**（即便它已被停用）。
+ *
+ * 抽成纯函数是为了能直接单测这条容易漏的规则：用户把某个自定义平台停用后，
+ * 若恰好还在按它筛选，筛选条上必须仍能看到它 ——
+ * 否则会出现「列表被过滤了、却找不到是哪个平台在起作用」这种查不出原因的怪状态。
+ *
+ * 顺序天然是「内置在前、自定义在后」（`sortOrder`：内置 ≤ 90，自定义 1000 起，unknown 最后）。
+ */
+internal fun platformFilterChips(currentFilter: String?): List<PlatformEntry> {
+    val selectable = PlatformCatalog.selectable()
+    val current = currentFilter?.let { PlatformCatalog.find(it) }
+    return if (current != null && current.archived && selectable.none { it.id == current.id }) {
+        selectable + current
+    } else {
+        selectable
     }
 }
