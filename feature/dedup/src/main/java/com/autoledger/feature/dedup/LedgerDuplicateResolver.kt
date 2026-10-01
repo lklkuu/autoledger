@@ -145,7 +145,14 @@ class LedgerDuplicateResolver(
      */
     override fun canAutoMerge(txn: LedgerTransaction, candidate: DuplicateCandidate): Boolean =
         when (candidate.tier) {
-            MatchTier.FINGERPRINT -> candidate.crossSource && isAutoMergeSafe(txn)
+            MatchTier.FINGERPRINT ->
+                candidate.crossSource &&
+                    isAutoMergeSafe(txn) &&
+                    // ⚠️ 层级护栏（本批 P0）：Tier-1 曾经**完全不看层级**，
+                    // 使「微信通知 + 支付宝通知」（同店同金额）被静默合并 —— 那是两笔真实消费。
+                    // 见 [tierOneAllowsAutoMerge]：只拒绝「同层级且不同通道」，
+                    // 保留「同一条银行通道被重复抓取 ⇒ 合并」（Bug 2 的核心能力）。
+                    tierOneAllowsAutoMerge(txn.platformId, candidate.platformId)
             MatchTier.COMPLEMENTARY ->
                 txn.amountMinor != 0L &&
                     candidate.crossSource &&
@@ -178,6 +185,20 @@ class LedgerDuplicateResolver(
         return if (sameSource) timeScore / 2 else timeScore
     }
 
+    /**
+     * 商户名归一化：抹掉括号门店后缀、标点与大小写差异，取前 32 字符。
+     *
+     * **为什么要抹括号内容**（勿删）：同笔交易的两个渠道常常一个带门店、一个不带 ——
+     * 银行短信写「星巴克(国贸店)」、微信通知写「星巴克」。不抹括号，这两条会被算成
+     * 两个不同的指纹 ⇒ **同一笔永远合并不了**（这正是 Tier-1 的核心价值）。
+     *
+     * **已知边界（有意的取舍，不修）**：抹括号会（极小概率地）把「同一品牌的两个不同门店、
+     * 同金额、3 分钟内」的两笔**真实消费**算成同一指纹。剩余风险由层级护栏兜住 ——
+     * 这种情形两侧平台通常都是同一层级（如同一品牌的 POS 都落 `bank`），
+     * 或干脆都是 `unknown`（NONE↔NONE），[tierOneAllowsAutoMerge] 会拒绝自动合并、
+     * 降级为待确认（见 `LedgerDuplicateResolverTest` 的「同品牌不同门店」用例）。
+     * 「宁可多一步确认，也不静默吞掉真实消费」是本模块一贯口径。
+     */
     private fun normalize(name: String): String = name
         .replace(Regex("""[（(].*?[)）]"""), "")
         .replace(Regex("""[^\p{L}\p{N}]"""), "")

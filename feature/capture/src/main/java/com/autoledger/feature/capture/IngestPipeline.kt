@@ -148,11 +148,19 @@ class IngestPipeline(
         )
         repository.upsert(final)
 
+        // P2-3：多候选时**按护栏结论择一**，而不是盲目取 `duplicates.first()`。
+        // Tier-2 的候选分都是固定 50，排序对「能不能自动合并」是无关的 ——
+        // 若一个 REVIEW 候选恰好排在前面，就会把本可 AUTO_MERGE 的候选挡掉，
+        // 白白退化成「待确认」。这里直接挑出第一个**通过护栏**的候选来合并。
+        val mergeable = if (autoMergeDuplicates) {
+            duplicates.firstOrNull { duplicateResolver.canAutoMerge(typed, it) }
+        } else {
+            null
+        }
+
         return when {
             unresolvedAmount -> Outcome.NeedsReview(final.id, "未解析出金额，请在待确认里补全")
-            duplicates.isNotEmpty() && autoMergeDuplicates &&
-                duplicateResolver.canAutoMerge(typed, duplicates.first()) -> {
-                val absorbed = duplicates.first()
+            mergeable != null -> {
                 // 「谁留下」不再简单地让"先入库的那条"当主记录 —— 那会让同一笔账归到哪个平台
                 // 取决于哪条通知先到，用户真正关心的下单平台（美团）会被银行短信盖掉。
                 val choice = DedupPriority.choosePrimary(
@@ -160,9 +168,9 @@ class IngestPipeline(
                     incomingRank = priorityOf(final.platformId).rank,
                     // ingest 阶段恒为 AUTO（平台要么是识别结果，要么还没被用户改过）。
                     incomingIsUser = final.platformSource == PlatformSource.USER,
-                    existingId = absorbed.txnId,
-                    existingRank = absorbed.priorityRank,
-                    existingIsUser = absorbed.platformSource == PlatformSource.USER,
+                    existingId = mergeable.txnId,
+                    existingRank = mergeable.priorityRank,
+                    existingIsUser = mergeable.platformSource == PlatformSource.USER,
                 )
                 duplicateResolver.merge(choice.primaryId, listOf(choice.mergedId))
                 // 合并后把被吸收那条的**有效信息补进主记录的空白**（只补空白，绝不覆盖）。

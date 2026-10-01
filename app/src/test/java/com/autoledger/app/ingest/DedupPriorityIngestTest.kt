@@ -81,10 +81,14 @@ class DedupPriorityIngestTest {
     )
 
     /**
-     * 银行短信：只有「尾号 / 储蓄卡」这类**银行弱线索**，商户「财付通」。
+     * 银行短信：只有「尾号 / 储蓄卡」这类**银行弱线索**，商户「肯德基」。
      *
-     * 商户刻意用「财付通」——它是微信的持牌主体，也会出现在银行短信的对手方描述里；
-     * 正是这种"两边都说得通"的模糊性让 Tier-1 无从下手。
+     * ⚠️ 商户刻意**不**用「财付通」：它虽是微信的持牌主体、也常出现在银行短信对手方，
+     * 但「财付通」的 wechat 弱词(0.35) 与「尾号 / 储蓄卡」的 bank 弱词(0.35) **同分**，
+     * 同分时按 `sortOrder` tie-break（wechat=10 < bank=70）⇒ 这条会被判成 **wechat(支付通道)**，
+     * 于是「D1 = 下单平台 ↔ 银行卡」的前提与实际不符（实测是 ORDER↔PAYMENT）。
+     * 换成一个不含任何通道关键词的 POS 商户名后，它才**真的**落 `bank`（测试数据必须让
+     * 被验证的路径成为唯一解释）。
      */
     private fun bankSmsEnvelope(at: Long = anchor + 35_000L, amount: Long = -8_800L) = RawEnvelope(
         envelopeId = "e-bank",
@@ -92,7 +96,7 @@ class DedupPriorityIngestTest {
         sourceRef = "sms:9527",
         occurredAtMillis = at,
         rawText = "您尾号1234的储蓄卡于10月3日 POS 消费 88.00 元，余额 8,000.00 元",
-        counterpartyHint = "财付通",
+        counterpartyHint = "肯德基",
         amountHint = amount,
         packageName = "sms:inbox",
     )
@@ -135,13 +139,20 @@ class DedupPriorityIngestTest {
         val incomingPlatform = KeywordPlatformResolver().resolve(
             PlatformContext(
                 rawText = bankSmsEnvelope().rawText,
-                counterparty = "财付通",
+                counterparty = bankSmsEnvelope().counterpartyHint,
                 packageName = "sms:inbox",
             )
         )
+        // 前提校验：这条**必须**真的落 `bank`，否则这一格测的就不是「下单平台 ↔ 银行卡」
+        assertEquals(
+            PlatformCatalog.BANK_ID,
+            incomingPlatform.platformId,
+            "银行短信必须落 bank，否则 D1 的前提与实际不符",
+        )
         val probe = LedgerTransaction(
             id = "probe", amountMinor = -8_800L, occurredAtMillis = anchor + 35_000L,
-            type = TxnType.EXPENSE, counterparty = "财付通", sourceId = "sms", sourceRef = "sms:9527",
+            type = TxnType.EXPENSE, counterparty = bankSmsEnvelope().counterpartyHint.orEmpty(),
+            sourceId = "sms", sourceRef = "sms:9527",
             platformId = incomingPlatform.platformId,
         ).let { it.copy(fingerprint = dupResolver.fingerprintOf(it)) }
 
@@ -167,6 +178,12 @@ class DedupPriorityIngestTest {
         val outcome = pipeline.ingest(bankSmsEnvelope())
 
         val merged = asMerged(outcome)
+        // 前提校验：银行那条确实落 bank ⇒ D1 才是真正的「ORDER ↔ BANK」互补，而不是 ORDER↔PAYMENT
+        assertEquals(
+            PlatformCatalog.BANK_ID,
+            repo.findById(merged.txnId)?.platformId,
+            "银行短信必须落 bank，否则 D1 的前提与实际不符",
+        )
         assertEquals(meituan.txnId, merged.primaryId, "先入库的美团那条当主记录")
 
         val alive = repo.only()
@@ -186,6 +203,11 @@ class DedupPriorityIngestTest {
         val meituan = pipeline.ingest(meituanEnvelope())
 
         val merged = asMerged(meituan)
+        assertEquals(
+            PlatformCatalog.BANK_ID,
+            repo.findById(bank.txnId)?.platformId,
+            "银行短信必须落 bank，否则 D1 的前提与实际不符",
+        )
         assertEquals(meituan.txnId, merged.primaryId, "后入库但层级更高 ⇒ 它才是主记录")
         assertTrue(merged.primaryId != bank.txnId, "绝不能因为银行短信先到就让它当主记录")
 

@@ -54,6 +54,19 @@ interface TransactionDao {
     @Query("SELECT * FROM transactions WHERE status <> 'MERGED' AND status <> 'IGNORED' ORDER BY occurredAtMillis DESC")
     suspend fun listAll(): List<TransactionEntity>
 
+    /**
+     * **备份导出专用**：全表流水，**不过滤任何状态**（含 `MERGED` / `IGNORED`）。
+     *
+     * 为什么必须单开一个查询，而不是复用 [listAll]：被吸收（`MERGED`）的行在正常查询里被隐藏，
+     * 若导出也不带上它，导出 JSON 里 `mergedIntoId` 恒为 null ⇒ **换机后"这笔分别来自微信
+     * 和银行卡"这条合并链彻底丢失**，用户也无法撤销合并（见《必修②》）。
+     * `IGNORED`（用户主动忽略）同理：那是**用户的决定**，换机后必须保留。
+     *
+     * 只用于备份，**不得**用于账单 / 统计等展示路径（那两处必须继续排除隐藏行）。
+     */
+    @Query("SELECT * FROM transactions ORDER BY occurredAtMillis DESC")
+    suspend fun listAllIncludingHidden(): List<TransactionEntity>
+
     /** B4：全量流水的实时订阅（账单页）。 */
     @Query("SELECT * FROM transactions WHERE status <> 'MERGED' AND status <> 'IGNORED' ORDER BY occurredAtMillis DESC")
     fun observeAll(): Flow<List<TransactionEntity>>

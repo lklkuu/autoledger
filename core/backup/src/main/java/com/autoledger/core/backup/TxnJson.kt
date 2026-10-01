@@ -37,8 +37,10 @@ internal fun LedgerTransaction.toJson(): JSONObject = JSONObject().apply {
     put("status", status.name); put("confidence", confidence)
     put("rawTextSealed", rawTextSealed); put("extras", extras); put("schemaVersion", schemaVersion)
     put("orderId", orderId); put("refundId", refundId)
-    // v6：合并溯源。被吸收的记录会连同它自己的 platformId 一起备份，
-    // 所以「这笔记了两次，分别来自微信和银行卡」在导入后仍然可查。
+    // v6：合并溯源。被吸收的记录（status=MERGED）**会一起导出**（见
+    // BackupManager.buildPayload 用 listAllForBackup），并连同它自己的 platformId 落盘，
+    // 所以「这笔记了两次，分别来自微信和银行卡」这条合并链在**换机导入后仍然可查、可撤销**。
+    // 注意 status（上方）与 mergedIntoId 都必须原样往返：丢掉状态会让被吸收行"复活"成重复流水。
     put("mergedIntoId", mergedIntoId)
 }
 

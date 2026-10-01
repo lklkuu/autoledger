@@ -125,6 +125,19 @@ class RoomLedgerRepository(private val db: LedgerDatabase) : LedgerRepository {
 
     suspend fun countAll(): Int = txnDao.listAll().size
 
+    /**
+     * **备份导出专用**的全量读取：**包含** `MERGED` / `IGNORED` 行。
+     *
+     * 与 [listAll] 的区别是**有意为之**：展示路径必须隐藏这两种状态（否则被合并 / 被忽略的流水
+     * 会重复计入账单与统计），但备份是"把用户的整库搬走"，必须原样带上 ——
+     * 否则换机后合并链（`mergedIntoId`）与被忽略的决定都会丢。
+     *
+     * 刻意**不**放进 [LedgerRepository] 接口：它只为 [com.autoledger.core.backup.BackupManager]
+     * 服务（后者直接持具体实现类），放进接口会迫使所有测试夹具为它写实现却没有语义价值。
+     */
+    suspend fun listAllForBackup(): List<LedgerTransaction> =
+        txnDao.listAllIncludingHidden().map { it.toDomain() }
+
     // ---------------- 用户自定义消费平台 ----------------
 
     /** @param includeArchived 默认含归档：**展示**需要它（否则历史流水塌成「未知平台」）。 */

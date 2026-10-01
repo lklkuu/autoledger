@@ -80,7 +80,10 @@ class BackupManager(
 
     private suspend fun buildPayload(transform: (LedgerTransaction) -> LedgerTransaction): JSONObject {
         val transactions = JSONArray().apply {
-            repo.listAll(includeTransfers = true).forEach { t -> put(transform(t).toJson()) }
+            // ⚠️ 用 listAllForBackup() 而**不是** repo.listAll(true)：后者会排除 MERGED / IGNORED，
+            // 导致被吸收的行不导出 ⇒ 导出 JSON 里 mergedIntoId 恒为 null ⇒ 换机后合并链丢失。
+            // 备份要"把整库搬走"，隐藏状态（被合并 / 被忽略）必须原样带上。
+            repo.listAllForBackup().forEach { t -> put(transform(t).toJson()) }
         }
         val categories = JSONArray().apply {
             repo.listCategories().forEach { c ->
