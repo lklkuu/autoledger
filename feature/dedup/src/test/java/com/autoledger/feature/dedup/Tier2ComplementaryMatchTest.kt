@@ -98,7 +98,8 @@ class Tier2ComplementaryMatchTest {
         // 层级不互补：连候选都不是
         assertEquals(ComplementaryVerdict.REJECT, complementaryVerdict(pay, pay), "一次消费只有一个支付通道")
         assertEquals(ComplementaryVerdict.REJECT, complementaryVerdict(order, order), "两个消费场所 = 两笔消费")
-        assertEquals(ComplementaryVerdict.REJECT, complementaryVerdict(bank, bank))
+        // 必修⑤：同一条 bank 通道被重复抓取（目录里 BANK 只有唯一 ID）⇒ 交用户（既非 REJECT、也非 AUTO_MERGE）
+        assertEquals(ComplementaryVerdict.REVIEW, complementaryVerdict(bank, bank))
         assertEquals(ComplementaryVerdict.REJECT, complementaryVerdict(none, none), "无层级信息")
         assertEquals(ComplementaryVerdict.REJECT, complementaryVerdict(pay, none), "保守：没有互补证据")
         assertEquals(ComplementaryVerdict.REJECT, complementaryVerdict(bank, none))
@@ -108,24 +109,42 @@ class Tier2ComplementaryMatchTest {
     }
 
     @Test
-    fun `the guard rejects exactly the same tier and the both unknown case`() {
-        // 穷举 4×4：确认「同 tier 一律 REJECT」这条不变量没有例外
-        val tiers = listOf("meituan" /*ORDER*/, "alipay" /*PAYMENT*/, PlatformCatalog.BANK_ID, PlatformCatalog.UNKNOWN_ID)
-        for (a in tiers) {
-            for (b in tiers) {
-                val verdict = complementaryVerdict(a, b)
-                val bothOrder = a == "meituan" && b == "meituan"
-                val sameTier = (a == b) && !bothOrder
-                if (sameTier) {
-                    assertEquals(
-                        ComplementaryVerdict.REJECT,
-                        verdict,
-                        "同 tier 组合 $a ↔ $b 必须不合并（防同店同金额两笔真实消费被吞）",
-                    )
-                }
+    fun `same tier with different channels is rejected, and so is every same tier pair except the single bank channel`() {
+        // 不变量①：同 tier 且**不同通道**（微信 vs 支付宝、美团 vs 淘宝）⇒ 一律 REJECT，无例外。
+        for (a in listOf("wechat", "alipay")) for (b in listOf("wechat", "alipay")) {
+            if (a != b) {
+                assertEquals(
+                    ComplementaryVerdict.REJECT,
+                    complementaryVerdict(a, b),
+                    "两个支付通道 = 两笔消费：$a ↔ $b",
+                )
             }
         }
-        assertEquals(ComplementaryVerdict.REJECT, complementaryVerdict("meituan", "meituan"))
+        for (a in listOf("meituan", "taobao")) for (b in listOf("meituan", "taobao")) {
+            if (a != b) {
+                assertEquals(
+                    ComplementaryVerdict.REJECT,
+                    complementaryVerdict(a, b),
+                    "两个下单平台 = 两笔消费：$a ↔ $b",
+                )
+            }
+        }
+
+        // 不变量②：同 tier 且**同通道**（同一 platformId、同金额、短窗）⇒ 一般是两笔真实消费 ⇒ REJECT。
+        // ⚠️ 唯一例外是 bank↔bank（必修⑤）：BANK 只有唯一 ID `bank`，银行短信 + 银行 App 动账通知
+        // 是**同一条通道被重复抓取** ⇒ REVIEW（交用户），既不能静默合并、也不能静默双记。
+        for (p in listOf("meituan", "alipay", PlatformCatalog.UNKNOWN_ID)) {
+            assertEquals(
+                ComplementaryVerdict.REJECT,
+                complementaryVerdict(p, p),
+                "同通道且非 bank 的 $p ↔ $p 必须不合并（防同金额两笔真实消费被吞）",
+            )
+        }
+        assertEquals(
+            ComplementaryVerdict.REVIEW,
+            complementaryVerdict(PlatformCatalog.BANK_ID, PlatformCatalog.BANK_ID),
+            "必修⑤ 的唯一例外：同一条 bank 通道被重复抓取 ⇒ 交用户",
+        )
     }
 
     // ------------------------------------------------------------------ D1 / D2：需求主场景

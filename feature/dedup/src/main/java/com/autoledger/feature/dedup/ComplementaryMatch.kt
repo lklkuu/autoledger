@@ -53,12 +53,28 @@ enum class ComplementaryVerdict {
  * | `PAYMENT ↔ BANK` | [REVIEW] | 唯一真实歧义组合，交用户 |
  * | `PAYMENT ↔ PAYMENT` | [REJECT] | 一次消费只有一个支付通道 |
  * | `ORDER ↔ ORDER` | [REJECT] | 两个消费场所 = 两笔消费 |
- * | `BANK ↔ BANK` | [REJECT] | 同层级，落回 Tier-1 规则 |
+ * | `BANK ↔ BANK` | [REVIEW] | **同一条**银行通道被重复抓取（目录里 `BANK` 只有唯一 ID `bank`）⇒ 疑似同一笔，交用户（必修⑤） |
  * | `NONE ↔ NONE` | [REJECT] | 无层级信息，不合并 |
  * | `PAYMENT ↔ NONE` / `BANK ↔ NONE` | [REJECT] | 保守：unknown 那条可能什么都没识别出，没有互补证据 |
  *
  * 实现上「恰好一侧是 ORDER ⇒ AUTO_MERGE」一句覆盖了前三行与全部 `ORDER↔ORDER` 情况，
  * 不存在"某一格被写反"的空间。
+ *
+ * ## ⚠️ 同一个 `BANK ↔ BANK` 在两条通道上判定**不同**（有意为之，勿"统一"）
+ *
+ * | 通道 | 判据 | 判定 | 理由 |
+ * |---|---|---|---|
+ * | Tier-1（指纹精确） | 商户名**完全相同** | ✅ [AUTO_MERGE] | 银行短信 + 银行 App 通知写同一个银行名 ⇒ 同一条通道被重复抓取，**证据强** |
+ * | Tier-2（层级互补） | 商户名**不同或为空** | ⚖️ [REVIEW] | 银行短信常常抽不出商户名，无法排除「同金额的两笔真实银行扣款」⇒ **证据弱**，交用户 |
+ *
+ * 分层的**唯一尺度是证据强度**：同一条通道的两条记录，商户名一致（Tier-1）时证据强 ⇒ 自动合并；
+ * 商户名不同/为空（Tier-2）时证据弱 ⇒ 浮出候选交用户（既不静默合并、也不静默双记）。
+ * 这是设计本意，**不是** bug —— 把两条通道"统一"成同一个判定，要么丢能力（Tier-1 退化），
+ * 要么吞账（Tier-2 变成静默合并）。
+ *
+ * ⚠️ 目前 `BANK` 层级**只有唯一 ID `bank`**，所以「同层级」即「同一条通道」。
+ * 若将来 `BANK` 出现第二个 ID（例如给不同银行不同 ID），本行必须收紧为
+ * **仅当 `incomingPlatformId == existingPlatformId` 才 REVIEW**（不同的两张卡 = 两笔真实消费）。
  */
 fun complementaryVerdict(incomingPlatformId: String, existingPlatformId: String): ComplementaryVerdict {
     val incoming = priorityOf(incomingPlatformId)
@@ -72,6 +88,14 @@ fun complementaryVerdict(incomingPlatformId: String, existingPlatformId: String)
     // 支付通道 ↔ 银行卡：两侧都只说「钱从哪出」，但一张卡可能就是该通道绑的卡 ⇒ 证据不足，交给用户。
     if (incoming == PlatformPriority.PAYMENT && existing == PlatformPriority.BANK) return ComplementaryVerdict.REVIEW
     if (incoming == PlatformPriority.BANK && existing == PlatformPriority.PAYMENT) return ComplementaryVerdict.REVIEW
+
+    // 同一条银行通道被重复抓取（必修⑤）：目录里 `BANK` 只有唯一 ID `bank` ⇒
+    // 银行短信 + 银行 App 动账通知是**同一条通道**被两个采集来源抓到，疑似同一笔；
+    // 但银行短信常常抽不出商户名（Tier-2 的前提），无法排除「同金额的两笔真实银行扣款」⇒
+    // 证据不足，**交用户**（既不静默合并、也不静默双记）。
+    // ⚠️ 与 Tier-1 的同组合判定（自动合并）**不同且是故意的**，理由见本函数 KDoc 的
+    // 「同一个 BANK ↔ BANK 在两条通道上判定不同」一节。
+    if (incoming == PlatformPriority.BANK && existing == PlatformPriority.BANK) return ComplementaryVerdict.REVIEW
 
     return ComplementaryVerdict.REJECT
 }
@@ -112,6 +136,12 @@ fun complementaryVerdict(incomingPlatformId: String, existingPlatformId: String)
  * `findDuplicates → canAutoMerge → merge`（见该文件的端到端用例），改错了会红。
  * （教训：该能力原先只被"直接调 `merge()`、绕过 `canAutoMerge`"的用例覆盖，
  *  字面版实现即使回退 v1.0 能力，**全量测试仍然全绿** —— 变异验证才发现这份盲区。）
+ *
+ * ## ⚠️ 与 Tier-2 的 `BANK ↔ BANK` 判定**不同**（同名组合、不同判定，勿"统一"）
+ * 本函数（Tier-1）对 `bank ↔ bank` 返回 `true`（自动合并）；而 [complementaryVerdict]（Tier-2）
+ * 对**同一组合**返回 [ComplementaryVerdict.REVIEW]。**这不是 bug**：分层尺度是**证据强度** ——
+ * Tier-1 要求商户名**完全相同**（证据强），Tier-2 的前提是商户名**不同或为空**（证据弱）。
+ * 详见 [complementaryVerdict] 的「同一个 BANK ↔ BANK 在两条通道上判定不同」一节。
  */
 fun tierOneAllowsAutoMerge(incomingPlatformId: String, existingPlatformId: String): Boolean {
     val incoming = priorityOf(incomingPlatformId)
@@ -207,6 +237,8 @@ fun branchSuffixesConflict(incomingCounterparty: String, existingCounterparty: S
  * （见 `TierTwoGapAuditTest` / `Tier2ComplementaryMatchTest` / `TierOneGuardrailAuditTest`）。
  * 护栏一并纳入两种写线 —— 否则「夹具与实现的字面差异」会让这一整类权威来源**静默漏过**，
  * 而这正是本护栏要堵的漏洞。纳入不存在的写线在生产中**零副作用**（生产不会有 `sourceId == "bill"` 的行）。
+ *
+ * ⚠️ **这是临时债**：`"bill"` 只是夹具写线，**待 QA 统一夹具到 [CaptureSourceIds.BILL_IMPORT] 后删除**（见下）。
  */
 val AUTHORITATIVE_PLATFORM_SOURCES: Set<String> = setOf(
     CaptureSourceIds.MANUAL,
@@ -217,8 +249,12 @@ val AUTHORITATIVE_PLATFORM_SOURCES: Set<String> = setOf(
 /**
  * 账单导入来源在本仓库**测试夹具**里的短写别名（`"bill"`）。
  *
+ * ⚠️ **临时债 —— 待 QA 统一夹具后删除**。
+ *
  * 独立命名的理由：**规范 ID 是 [CaptureSourceIds.BILL_IMPORT]**，本常量只是为兼容既有夹具写线，
- * 二者不可混为一谈；将来夹具统一到常量后，删掉本常量 + `AUTHORITATIVE_PLATFORM_SOURCES` 里的引用即可。
+ * 二者不可混为一谈。生产代码**只应认** [CaptureSourceIds.MANUAL] / [CaptureSourceIds.BILL_IMPORT]；
+ * 一旦 QA 把夹具统一到常量，**立即删除本常量 + `AUTHORITATIVE_PLATFORM_SOURCES` 里的引用**，
+ * 让 `CaptureSourceIds` 重新成为"只有一处定义"的真源。
  */
 private const val BILL_IMPORT_FIXTURE_ALIAS = "bill"
 

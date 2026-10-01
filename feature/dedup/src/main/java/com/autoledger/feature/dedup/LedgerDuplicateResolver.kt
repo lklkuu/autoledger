@@ -33,7 +33,8 @@ import java.security.MessageDigest
  *   因此只对「跨渠道」候选自动合并，同渠道候选降级为待确认，交由用户判断，
  *   宁可多一步确认，也不静默吞掉真实消费。
  * - Tier-2 的护栏比 Tier-1 更严（层级必须互补），理由同上：同一家店 3 分钟内两笔真实消费
- *   在 Tier-2 里是 `ORDER ↔ ORDER` 或同 tier ⇒ [ComplementaryVerdict.REJECT]，连候选都不是。
+ *   在 Tier-2 里是 `ORDER ↔ ORDER` 或同 tier ⇒ [ComplementaryVerdict.REJECT]，连候选都不是
+ *   （**唯一例外**：同一条 `bank` 通道被跨来源重复抓取 ⇒ [ComplementaryVerdict.REVIEW]，浮出候选交用户；见必修⑤）。
  */
 class LedgerDuplicateResolver(
     private val repository: LedgerRepository,
