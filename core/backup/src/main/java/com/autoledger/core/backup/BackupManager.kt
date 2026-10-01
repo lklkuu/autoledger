@@ -11,12 +11,16 @@ import com.autoledger.core.crypto.CryptoBox
 import com.autoledger.core.model.AccountKind
 import com.autoledger.core.model.CategoryKind
 import com.autoledger.core.model.Direction
+import com.autoledger.core.model.LedgerSchema
 import com.autoledger.core.model.LedgerTransaction
 import com.autoledger.core.model.RuleKind
 import com.autoledger.core.model.TxnStatus
 import com.autoledger.core.model.TxnType
+import com.autoledger.core.model.UserPlatform
 import com.autoledger.core.model.platform.PlatformCatalog
+import com.autoledger.core.model.platform.PlatformKind
 import com.autoledger.core.model.platform.PlatformSource
+import com.autoledger.core.model.toPlatformEntry
 import org.json.JSONArray
 import org.json.JSONObject
 
@@ -41,6 +45,8 @@ class BackupManager(
         val transactionsUpserted: Int,
         val categoriesUpserted: Int,
         val rulesUpserted: Int,
+        /** v6：导入的自定义消费平台数量（旧档案没有这一节时为 0）。 */
+        val userPlatformsUpserted: Int = 0,
     )
 
     private val txnDao = db.transactionDao()
@@ -107,11 +113,29 @@ class BackupManager(
                 })
             }
         }
+        // 自定义消费平台。**含归档条目**：归档只是「不再参与识别候选」，
+        // 引用它的历史流水仍需在换机后显示原名，否则会塌成「未知平台」。
+        val platforms = JSONArray().apply {
+            repo.listUserPlatforms(includeArchived = true).forEach { p ->
+                put(JSONObject().apply {
+                    put("id", p.id); put("displayName", p.displayName)
+                    put("kind", p.kind.name)
+                    put("strongKeywords", JSONArray(p.strongKeywords))
+                    put("mediumKeywords", JSONArray(p.mediumKeywords))
+                    put("weakKeywords", JSONArray(p.weakKeywords))
+                    put("packageNames", JSONArray(p.packageNames.toList()))
+                    put("sortOrder", p.sortOrder); put("archived", p.archived)
+                    put("createdAtMillis", p.createdAtMillis)
+                    put("schemaVersion", p.schemaVersion)
+                })
+            }
+        }
         return JSONObject().apply {
             put("transactions", transactions)
             put("categories", categories)
             put("accounts", accounts)
             put("rules", rules)
+            put("platforms", platforms)
             db.settingsDao().global()?.let { put("settings", it.toAppSettings().toSettingsJson()) }
         }
     }
@@ -198,12 +222,43 @@ class BackupManager(
 
         payload.optJSONObject("settings")?.let { db.settingsDao().upsert(it.parseAppSettings().toEntity()) }
 
+        // 自定义消费平台。旧档案没有 `platforms` 一节 ⇒ optJSONArray 返回 null ⇒ 跳过，导入不报错。
+        val platforms = payload.optJSONArray("platforms")?.let { arr ->
+            (0 until arr.length()).map { i ->
+                val o = arr.getJSONObject(i)
+                UserPlatform(
+                    id = o.getString("id"),
+                    displayName = o.optString("displayName", ""),
+                    kind = runCatching { PlatformKind.valueOf(o.optString("kind", "ORDER")) }
+                        .getOrDefault(PlatformKind.ORDER),
+                    strongKeywords = o.optJSONArray("strongKeywords").stringList(),
+                    mediumKeywords = o.optJSONArray("mediumKeywords").stringList(),
+                    weakKeywords = o.optJSONArray("weakKeywords").stringList(),
+                    packageNames = o.optJSONArray("packageNames").stringList().toSet(),
+                    sortOrder = o.optInt("sortOrder", UserPlatform.DEFAULT_SORT_ORDER),
+                    archived = o.optBoolean("archived", false),
+                    createdAtMillis = o.optLong("createdAtMillis", 0L),
+                    schemaVersion = o.optInt("schemaVersion", LedgerSchema.CURRENT),
+                )
+            }
+        }.orEmpty()
+        platforms.forEach { repo.upsertUserPlatform(it) }
+
+        // 落库后**重建进程内目录**：否则导入的自定义平台要等下次冷启动才生效，
+        // 本次会话里编辑流水的平台选择器还是旧的。
+        // 用 replaceExtras 整体替换（原子），而不是「先清空再逐个注册」——
+        // 后者存在一个「自定义平台全部消失」的窗口，采集循环可能正在并发识别。
+        PlatformCatalog.replaceExtras(
+            repo.listUserPlatforms(includeArchived = true).map { it.toPlatformEntry() },
+        )
+
         return ImportOutcome(
             fileVersion = fileVersion,
             migratedToVersion = finalVersion,
             transactionsUpserted = txns.size,
             categoriesUpserted = cats.size,
             rulesUpserted = rules.size,
+            userPlatformsUpserted = platforms.size,
         )
     }
 
@@ -214,4 +269,15 @@ class BackupManager(
     // 设置的编解码同理抽到 SettingsJson.kt（toSettingsJson / parseAppSettings），
     // 这样「旧档案里多出来的字段（如已下线的 cushionMinor）能不能导进来」可以直接单测，
     // 不必为了两行 JSON 先造一个 LedgerDatabase。
+}
+
+/**
+ * `JSONArray` → `List<String>`，**字段缺失时返回空列表**。
+ *
+ * 冗余存一份「平台列表」而不是复用别处的解析：它与 [UserPlatform] 的字段一一对应，
+ * 单测要能直接喂老档案（缺 `platforms` 一节）验证不抛异常。
+ */
+private fun JSONArray?.stringList(): List<String> {
+    if (this == null) return emptyList()
+    return (0 until length()).mapNotNull { i -> optString(i).takeIf { it.isNotBlank() } }
 }

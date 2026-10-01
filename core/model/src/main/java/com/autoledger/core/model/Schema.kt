@@ -13,10 +13,10 @@ package com.autoledger.core.model
  */
 object LedgerSchema {
     /** Room database version */
-    const val DATABASE_VERSION = 5
+    const val DATABASE_VERSION = 6
 
     /** 导出／备份信封版本 */
-    const val BACKUP_VERSION = 5
+    const val BACKUP_VERSION = 6
 
     /** 行级结构版本 */
     const val CURRENT = BACKUP_VERSION

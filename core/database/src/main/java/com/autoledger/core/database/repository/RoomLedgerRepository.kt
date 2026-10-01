@@ -14,6 +14,7 @@ import com.autoledger.core.model.LedgerRepository
 import com.autoledger.core.model.LedgerTransaction
 import com.autoledger.core.model.TxnStatus
 import com.autoledger.core.model.TxnType
+import com.autoledger.core.model.UserPlatform
 import com.autoledger.core.model.platform.PlatformSource
 import java.util.UUID
 import kotlinx.coroutines.flow.Flow
@@ -28,6 +29,7 @@ class RoomLedgerRepository(private val db: LedgerDatabase) : LedgerRepository {
     private val txnDao = db.transactionDao()
     private val catDao = db.categoryDao()
     private val accountDao = db.accountDao()
+    private val userPlatformDao = db.userPlatformDao()
     private val outbox = db.syncOutboxDao()
 
     // ---------------- 写 ----------------
@@ -122,6 +124,49 @@ class RoomLedgerRepository(private val db: LedgerDatabase) : LedgerRepository {
         txnDao.findByFingerprintNear(fingerprint, anchor, windowMillis, excludeId).map { it.toDomain() }
 
     suspend fun countAll(): Int = txnDao.listAll().size
+
+    // ---------------- 用户自定义消费平台 ----------------
+
+    /** @param includeArchived 默认含归档：**展示**需要它（否则历史流水塌成「未知平台」）。 */
+    override suspend fun listUserPlatforms(includeArchived: Boolean): List<UserPlatform> =
+        (if (includeArchived) userPlatformDao.listAll() else userPlatformDao.listActive())
+            .map { it.toDomain() }
+
+    override suspend fun upsertUserPlatform(platform: UserPlatform) = db.withTransaction {
+        userPlatformDao.upsert(platform.toEntity())
+        enqueue("user_platform", platform.id, "UPSERT")
+    }
+
+    /**
+     * 软删除：只置 `archived = 1`，行保留。
+     *
+     * 刻意**不**物理删除：历史流水的 `platform_id` 指向这一行，
+     * 删掉会让那些流水变成孤儿 ID、展示塌成「未知平台」，用户会以为数据坏了。
+     */
+    override suspend fun archiveUserPlatform(id: String) = db.withTransaction {
+        userPlatformDao.archive(id)
+        enqueue("user_platform", id, "ARCHIVE")
+    }
+
+    // ---------------- 去重：层级互补匹配与合并溯源 ----------------
+
+    /** 纯金额 + 时间窗口查询；护栏判定在 `LedgerDuplicateResolver`（可纯 JVM 单测）。 */
+    override suspend fun findByAmountWithin(
+        amountMinor: Long,
+        fromMillis: Long,
+        toMillis: Long,
+        excludeId: String,
+    ): List<LedgerTransaction> =
+        txnDao.findByAmountWithin(amountMinor, fromMillis, toMillis, excludeId).map { it.toDomain() }
+
+    /** 状态 + 溯源一次写入，避免「置了 MERGED 却没记主记录」的中间态。`primaryId == null` = 撤销合并。 */
+    override suspend fun setMergeState(id: String, status: TxnStatus, primaryId: String?) = db.withTransaction {
+        txnDao.updateMergeState(id, status.name, primaryId)
+        enqueue("transaction", id, "MERGE:${primaryId ?: "none"}")
+    }
+
+    override suspend fun mergeGroupOf(primaryId: String): List<LedgerTransaction> =
+        txnDao.mergeGroupOf(primaryId).map { it.toDomain() }
 
     override suspend fun listCategories(): List<Category> = catDao.listAll().map { it.toDomain() }
 

@@ -61,8 +61,10 @@ class LedgerModelTest {
     fun `schema versions are wired to the same constant`() {
         assertEquals(LedgerSchema.BACKUP_VERSION, LedgerSchema.CURRENT)
         // v5 = 消费平台字段（platform_id / platform_confidence / platform_source）落地。
-        // 改这个值必须同时提供显式 Migration，否则会退回到 destructive fallback 清库。
-        assertEquals(5, LedgerSchema.DATABASE_VERSION)
+        // v6 = 自定义消费平台表（user_platforms）+ 合并溯源列（transactions.merged_into_id）。
+        // 改这个值必须同时提供显式 Migration（见 core:database 的 MIGRATION_5_6），
+        // 否则 Room 找不到迁移路径 ⇒ 退回 destructive fallback ⇒ **全库清空**。
+        assertEquals(6, LedgerSchema.DATABASE_VERSION)
         assertEquals("ledgerbak", LedgerSchema.BACKUP_EXTENSION)
     }
 

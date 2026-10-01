@@ -88,11 +88,33 @@ data class TransferContext(
 
 // ---------------------------------------------------------------- 去重
 
+/**
+ * 去重命中的**匹配通道**。
+ *
+ * - [FINGERPRINT]：指纹精确匹配（`sha256(金额 | 归一化商户)`）。商户名一致时走这条，是既有的老路。
+ * - [COMPLEMENTARY]：**层级互补匹配**（同金额 + 3 分钟窗口 + 跨 source + 平台层级互补）。
+ *   存在的理由：美团通知的商户是「美团外卖」、银行短信的商户是「财付通」，
+ *   **指纹天然不同 ⇒ 精确匹配永远查不到对方 ⇒ 平台优先级永远没机会执行**。
+ *
+ * 把通道带进 [DuplicateCandidate] 而不是让调用方猜：UI / 日志要能区分
+ * 「这是同一条被重复抓取」还是「这是两个渠道描述了同一笔」—— 二者的可信度不同。
+ */
+enum class MatchTier { FINGERPRINT, COMPLEMENTARY }
+
 data class DuplicateCandidate(
     val txnId: String,
     val score: Int,
     /** true = 候选与待入账流水来自不同渠道（真正可能的一笔账两渠道）；false = 同渠道（更可能是独立消费） */
     val crossSource: Boolean = true,
+    /** 候选记录的平台 ID。用于按层级裁决主记录（见 [com.autoledger.core.model.dedup.DedupPriority]）。 */
+    val platformId: String = com.autoledger.core.model.platform.PlatformCatalog.UNKNOWN_ID,
+    /** 候选记录的层级 rank，等价于 `priorityOf(platformId).rank`。冗余存一份，避免调用方再查目录。 */
+    val priorityRank: Int = 0,
+    /** 候选记录的平台来源。`USER` ⇒ 用户权威，裁决时豁免被覆盖。 */
+    val platformSource: com.autoledger.core.model.platform.PlatformSource =
+        com.autoledger.core.model.platform.PlatformSource.AUTO,
+    /** 命中走的是哪条通道，见 [MatchTier]。默认 [MatchTier.FINGERPRINT] 以兼容既有构造点。 */
+    val tier: MatchTier = MatchTier.FINGERPRINT,
 )
 
 interface DuplicateResolver {
@@ -158,12 +180,60 @@ interface LedgerRepository {
     suspend fun assignPlatform(id: String, platformId: String)
     suspend fun listAccounts(): List<Account>
     suspend fun listCategories(): List<Category>
-
     /** 新建或更新一个分类（含名称、图标、颜色、收支归属、月度预算、归档标记）。 */
     suspend fun upsertCategory(category: Category)
 
     /** 删除一个分类。 */
     suspend fun deleteCategory(id: String)
+
+    // ---------------------------------------------------------------- 用户自定义消费平台
+
+    /**
+     * 全部用户自定义平台，按 `sortOrder` 升序。
+     *
+     * @param includeArchived 默认 `true`：**展示**需要归档条目（历史流水的 `platformId` 指向它，
+     *   隐藏会让这些流水塌成「未知平台」）；**注入识别目录**时才传 `false`（归档不进候选）。
+     */
+    suspend fun listUserPlatforms(includeArchived: Boolean = true): List<UserPlatform>
+
+    /** 新建或更新一个自定义平台（按 id 覆盖）。 */
+    suspend fun upsertUserPlatform(platform: UserPlatform)
+
+    /** 停用一个自定义平台（**软删除**：置 `archived = true`，行保留）。 */
+    suspend fun archiveUserPlatform(id: String)
+
+    // ---------------------------------------------------------------- 去重：层级互补匹配与合并溯源
+
+    /**
+     * Tier-2 层级互补匹配的候选查询：金额**带符号**相等、时间落在 `[fromMillis, toMillis]` 内。
+     *
+     * 只负责「同金额 + 时间窗口」，**不做层级判定** —— 护栏（是否互补、能否自动合并）
+     * 属于领域规则，放在 `LedgerDuplicateResolver` 里，便于纯 JVM 单测。
+     *
+     * 实现约定：必须排除 `MERGED` / `IGNORED`，且排除 [excludeId] 自身。
+     */
+    suspend fun findByAmountWithin(
+        amountMinor: Long,
+        fromMillis: Long,
+        toMillis: Long,
+        excludeId: String,
+    ): List<LedgerTransaction>
+
+    /**
+     * 写入合并状态（合并 / 撤销合并的唯一写入口）。
+     *
+     * @param primaryId 被吸收进的那条；`null` 表示**撤销合并**（清空溯源）
+     *
+     * 与 [markStatus] 分开的理由：合并是**成对**语义（状态 + 溯源必须一致），
+     * 分成两次调用会出现「置了 MERGED 但没记 primary」的中间态。
+     */
+    suspend fun setMergeState(id: String, status: TxnStatus, primaryId: String?)
+
+    /**
+     * 某个主记录吸收掉的全部记录（`mergedIntoId == primaryId`）。
+     * 用于 UI 展示「已合并 N 条：微信、银行卡」与逐条撤销。
+     */
+    suspend fun mergeGroupOf(primaryId: String): List<LedgerTransaction>
 
     /**
      * 实时订阅：从 [fromMillis]（含）起的流水集合变化，用于「新增流水后 UI 自动刷新」。

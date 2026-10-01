@@ -7,6 +7,7 @@ import com.autoledger.core.model.platform.PlatformSource
 import com.autoledger.core.model.LedgerTransaction
 import com.autoledger.core.model.TxnStatus
 import com.autoledger.core.model.TxnType
+import com.autoledger.core.model.UserPlatform
 import kotlinx.coroutines.flow.Flow
 import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.flow.map
@@ -27,6 +28,7 @@ class FakeLedgerRepository(
 
     private val store = LinkedHashMap<String, LedgerTransaction>()
     private val categoryStore = LinkedHashMap<String, Category>()
+    private val userPlatformStore = LinkedHashMap<String, UserPlatform>()
 
     /**
      * 变更计数：Room 的 `Flow` 查询由 InvalidationTracker 驱动，任何写操作都会重新发射。
@@ -161,4 +163,46 @@ class FakeLedgerRepository(
 
     private fun List<LedgerTransaction>.filterTypes(includeTransfers: Boolean): List<LedgerTransaction> =
         if (includeTransfers) this else filter { it.type != TxnType.TRANSFER && it.type != TxnType.REFUND }
+
+    // ------------------------------------------------------------------ 用户自定义消费平台
+
+    override suspend fun listUserPlatforms(includeArchived: Boolean): List<UserPlatform> =
+        userPlatformStore.values
+            .filter { includeArchived || !it.archived }
+            .sortedBy { it.sortOrder }
+
+    override suspend fun upsertUserPlatform(platform: UserPlatform) {
+        userPlatformStore[platform.id] = platform
+        touch()
+    }
+
+    /** 软删除（与 Room 侧 archive 语义一致）：只置 archived，行保留。 */
+    override suspend fun archiveUserPlatform(id: String) {
+        userPlatformStore[id]?.let { userPlatformStore[id] = it.copy(archived = true) }
+        touch()
+    }
+
+    // ------------------------------------------------------------------ 去重：层级互补匹配与合并溯源
+
+    /** 语义对齐 Room.findByAmountWithin：金额带符号相等 + 闭区间窗口 + 排除自身/已合并/已忽略。 */
+    override suspend fun findByAmountWithin(
+        amountMinor: Long,
+        fromMillis: Long,
+        toMillis: Long,
+        excludeId: String,
+    ): List<LedgerTransaction> = store.values.filter { txn ->
+        txn.amountMinor == amountMinor &&
+            txn.id != excludeId &&
+            txn.status != TxnStatus.MERGED &&
+            txn.status != TxnStatus.IGNORED &&
+            txn.occurredAtMillis in fromMillis..toMillis
+    }.sortedByDescending { it.occurredAtMillis }
+
+    override suspend fun setMergeState(id: String, status: TxnStatus, primaryId: String?) {
+        store[id]?.let { store[id] = it.copy(status = status, mergedIntoId = primaryId) }
+        touch()
+    }
+
+    override suspend fun mergeGroupOf(primaryId: String): List<LedgerTransaction> =
+        store.values.filter { it.mergedIntoId == primaryId }.sortedByDescending { it.occurredAtMillis }
 }

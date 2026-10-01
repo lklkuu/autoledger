@@ -37,6 +37,9 @@ internal fun LedgerTransaction.toJson(): JSONObject = JSONObject().apply {
     put("status", status.name); put("confidence", confidence)
     put("rawTextSealed", rawTextSealed); put("extras", extras); put("schemaVersion", schemaVersion)
     put("orderId", orderId); put("refundId", refundId)
+    // v6：合并溯源。被吸收的记录会连同它自己的 platformId 一起备份，
+    // 所以「这笔记了两次，分别来自微信和银行卡」在导入后仍然可查。
+    put("mergedIntoId", mergedIntoId)
 }
 
 /** 备份 JSON → 流水列表。字段缺失 / 枚举脏值一律兜底，不抛异常。 */
@@ -70,6 +73,8 @@ internal fun JSONArray.toTransactions(): List<LedgerTransaction> = (0 until leng
         extras = o.optString("extras").takeIf { it.isNotBlank() },
         orderId = o.optString("orderId").takeIf { it.isNotBlank() },
         refundId = o.optString("refundId").takeIf { it.isNotBlank() },
+        // v5 及更早的旧档案没有这个字段 ⇒ optString 兜底为 null，**导入不报错**。
+        mergedIntoId = o.optString("mergedIntoId").takeIf { it.isNotBlank() },
         schemaVersion = o.optInt("schemaVersion", LedgerSchema.CURRENT),
     )
 }

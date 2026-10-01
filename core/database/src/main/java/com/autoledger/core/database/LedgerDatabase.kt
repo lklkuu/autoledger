@@ -18,6 +18,8 @@ import com.autoledger.core.model.LedgerSchema
         RefundEntity::class,
         RefundAllocationEntity::class,
         ResourceBalanceEntity::class,
+        // v6：用户自定义消费平台（软删除，进备份管线）
+        UserPlatformEntity::class,
     ],
     version = LedgerSchema.DATABASE_VERSION,
     exportSchema = true,
@@ -34,6 +36,7 @@ abstract class LedgerDatabase : RoomDatabase() {
     abstract fun orderDao(): OrderDao
     abstract fun refundDao(): RefundDao
     abstract fun resourceBalanceDao(): ResourceBalanceDao
+    abstract fun userPlatformDao(): UserPlatformDao
 
     companion object {
         const val DATABASE_NAME = "autoledger.db"

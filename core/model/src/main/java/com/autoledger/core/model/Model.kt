@@ -74,6 +74,17 @@ data class LedgerTransaction(
     val orderId: String? = null,
     /** 由退款产生时，指向退款单 ID */
     val refundId: String? = null,
+    /**
+     * 合并溯源：本行被吸收进哪条主记录（`null` = 未被合并）。
+     *
+     * 与 `status == MERGED` **成对**出现，由 `setMergeState` 一次写入 —— 分成两次调用
+     * 会出现「置了 MERGED 但没记主记录」的中间态（那一行既不在账单里，也查不出被谁吸收）。
+     *
+     * 有了它，「这笔记了两次，分别来自微信和银行卡」变成**可查数据**：
+     * `mergeGroupOf(primaryId)` 反查 + 每行自己的 `platformId` 仍在，
+     * 不需要把「微信/银行卡」拼成字符串塞进主记录（那样会污染主记录口径）。
+     */
+    val mergedIntoId: String? = null,
     val schemaVersion: Int = LedgerSchema.CURRENT,
 )
 

@@ -96,6 +96,55 @@ interface TransactionDao {
     @Query("UPDATE transactions SET status = :status WHERE id = :id")
     suspend fun updateStatus(id: String, status: String)
 
+    /**
+     * **Tier-2 层级互补匹配**的候选查询：同金额 + 时间窗口。
+     *
+     * 只做「同金额 + 时间窗口」，**不做层级判定** —— 护栏（两侧平台层级是否互补、能否自动合并）
+     * 属于领域规则，放在 `LedgerDuplicateResolver` 里以便纯 JVM 单测。
+     *
+     * 金额**带符号**比较（`amountMinor` 原值）：负=支出、正=收入/退款。
+     * 这天然挡住了「退款(+88) 与原单(−88)」被合并（设计文档 §4.1）。
+     *
+     * 性能：3 分钟窗口下，SQLite 先用 `occurredAtMillis` 索引把范围缩到个位数量级，
+     * 再过滤金额 ⇒ 无需为它新增索引；且只在 Tier-1 未命中时才执行。
+     */
+    @Query(
+        """
+        SELECT * FROM transactions
+        WHERE amountMinor = :amountMinor
+          AND occurredAtMillis BETWEEN :fromMillis AND :toMillis
+          AND status <> 'MERGED'
+          AND status <> 'IGNORED'
+          AND id <> :excludeId
+        ORDER BY occurredAtMillis DESC
+        """
+    )
+    suspend fun findByAmountWithin(
+        amountMinor: Long,
+        fromMillis: Long,
+        toMillis: Long,
+        excludeId: String,
+    ): List<TransactionEntity>
+
+    /**
+     * 合并 / 撤销合并的**唯一写入口**：状态与溯源一次写入。
+     *
+     * 与 [updateStatus] 分开的理由：合并是成对语义（`MERGED` + `mergedIntoId` 必须一致），
+     * 拆成两次调用会出现「置了 MERGED 却没记主记录」的中间态 ——
+     * 那一行既不在账单里，也查不出被谁吸收。
+     *
+     * @param primaryId 被吸收进的主记录；`null` = 撤销合并（清空溯源）
+     *
+     * 注意 SQL 里写的是**列名** `merged_into_id`（实体上带 `@ColumnInfo`），
+     * 不是 Kotlin 属性名 `mergedIntoId` —— Room 会拿 SQL 里的标识符去比对真实列名。
+     */
+    @Query("UPDATE transactions SET status = :status, merged_into_id = :primaryId WHERE id = :id")
+    suspend fun updateMergeState(id: String, status: String, primaryId: String?)
+
+    /** 某个主记录吸收掉的全部记录（UI：「已合并 N 条：微信、银行卡」）。 */
+    @Query("SELECT * FROM transactions WHERE merged_into_id = :primaryId ORDER BY occurredAtMillis DESC")
+    suspend fun mergeGroupOf(primaryId: String): List<TransactionEntity>
+
     @Query("UPDATE transactions SET categoryId = :categoryId, confidence = :confidence WHERE id = :id")
     suspend fun updateCategory(id: String, categoryId: String, confidence: Float)
 
@@ -127,9 +176,30 @@ interface TransactionDao {
     fun observeRawCount(): Flow<Int>
 }
 
+/**
+ * 用户自定义消费平台（v6 新增表）。
+ *
+ * [listAll] 与 [listActive] 的分工是**展示 vs 识别**：
+ * - 展示要 [listAll]（含归档）—— 历史流水的 `platformId` 指向它，隐藏会让这些流水塌成「未知平台」；
+ * - 注入识别目录要 [listActive] —— 归档条目不该再参与识别候选。
+ */
 @Dao
-interface CategoryDao {
-    @Upsert suspend fun upsert(item: CategoryEntity)
+interface UserPlatformDao {
+    @Upsert suspend fun upsert(item: UserPlatformEntity)
+
+    @Query("SELECT * FROM user_platforms ORDER BY sortOrder, displayName")
+    suspend fun listAll(): List<UserPlatformEntity>
+
+    @Query("SELECT * FROM user_platforms WHERE archived = 0 ORDER BY sortOrder, displayName")
+    suspend fun listActive(): List<UserPlatformEntity>
+
+    /** 软删除：置 `archived = 1`，行保留（历史流水仍能解析出名称）。 */
+    @Query("UPDATE user_platforms SET archived = 1 WHERE id = :id")
+    suspend fun archive(id: String)
+}
+
+@Dao
+interface CategoryDao {    @Upsert suspend fun upsert(item: CategoryEntity)
     @Upsert suspend fun upsertAll(items: List<CategoryEntity>)
     @Query("SELECT * FROM categories ORDER BY sortOrder, name") fun observeAll(): Flow<List<CategoryEntity>>
     @Query("SELECT * FROM categories ORDER BY sortOrder, name") suspend fun listAll(): List<CategoryEntity>

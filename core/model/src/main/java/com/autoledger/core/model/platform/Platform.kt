@@ -43,9 +43,65 @@ enum class PlatformKind {
     /** 支付通道：钱从哪条通道出去（支付宝 / 微信支付…）。是手段，不是消费场所。 */
     PAYMENT,
 
+    /**
+     * 银行：钱从**哪张卡**出去（结算侧）。
+     *
+     * 为什么要独立成一个 kind，而不是塞进 [PAYMENT] 或 [OTHER]：
+     * - 塞进 [PAYMENT] ⇒ 它会与微信/支付宝同级，而需求要求「银行卡优先级最低」
+     *   （美团 > 微信/支付宝 > 银行卡），同级就**排不出序**；
+     * - 塞进 [OTHER] ⇒ [toPriority] 会得到 [PlatformPriority.NONE]，**无法参与层级比较**，
+     *   跨渠道互补匹配直接失效。
+     *
+     * 新增本值是**源码兼容**的：全仓对 [PlatformKind] 只有 `== ORDER` / `== PAYMENT` 形式的判断，
+     * 没有穷尽 `when`（否则会因缺分支而编译失败）。
+     */
+    BANK,
+
     /** 既非下单也非通道（如 unknown）。 */
     OTHER,
 }
+
+/**
+ * 去重层级 —— 「合并后谁留下」的排序。
+ *
+ * **刻意与 [PlatformKind]（角色）分开**：kind 描述业务角色，priority 描述合并语义。
+ * 二者今天一一对应，但将来可能分叉（例如把 [PlatformKind.OTHER] 也纳入层级），
+ * 那时只需改这一处派生函数，不必动 kind 枚举。
+ *
+ * `rank` 只在**[DedupPriority] 的裁决**里比大小，绝不用于识别打分。
+ */
+enum class PlatformPriority(val rank: Int) {
+    /** unknown / OTHER —— 不参与层级比较。 */
+    NONE(0),
+
+    /** 银行卡：层级最低（钱从哪张卡出去，信息量最少）。 */
+    BANK(1),
+
+    /** 微信 / 支付宝 / 云闪付 / 数字人民币。 */
+    PAYMENT(2),
+
+    /** 美团 / 淘宝 / 拼多多 / 抖音：层级最高（用户真正关心的消费场所）。 */
+    ORDER(3),
+}
+
+/** 角色 → 去重层级。 */
+fun PlatformKind.toPriority(): PlatformPriority = when (this) {
+    PlatformKind.ORDER -> PlatformPriority.ORDER
+    PlatformKind.PAYMENT -> PlatformPriority.PAYMENT
+    PlatformKind.BANK -> PlatformPriority.BANK
+    PlatformKind.OTHER -> PlatformPriority.NONE
+}
+
+/**
+ * 平台 ID → 去重层级。
+ *
+ * 用**纯函数派生**而不是在 [PlatformEntry] 上加一个 `priority` 字段：
+ * 少一个字段就少一处「自定义平台忘了填 priority」的出错可能，且天然与 [PlatformKind] 一致。
+ *
+ * 未收录 ID 一律 [PlatformPriority.NONE]，**绝不抛异常**（旧备份 / 远端下发都可能是新 ID）。
+ */
+fun priorityOf(platformId: String): PlatformPriority =
+    PlatformCatalog.find(platformId)?.kind?.toPriority() ?: PlatformPriority.NONE
 
 /**
  * 平台目录条目（纯数据，不进 Room —— 它是常量，不是用户数据）。
@@ -79,6 +135,17 @@ object PlatformCatalog {
 
     /** 未知平台 ID：识别不出、或历史数据回填时用它。**不是错误状态**。 */
     const val UNKNOWN_ID = "unknown"
+
+    /**
+     * 银行卡 ID。
+     *
+     * 语义边界：`bank` = **知道钱从银行卡出去，但不知道花在哪**；`unknown` = 连支付通道都不知道。
+     * 二者**不可合并** —— 前者是「信息不足但有方向」，后者是「完全没有线索」。
+     *
+     * ⚠️ 刻意**不**用 `sourceId == "sms"` 判银行：[PlatformContext] 已明确「sourceId 不参与平台判定」，
+     * 银行判定只依据文本关键词，以保住这条架构不变量。
+     */
+    const val BANK_ID = "bank"
 
     /** 未收录 ID 的兜底展示名。刻意与 [UNKNOWN] 的「未知」区分开，便于排查脏数据。 */
     const val UNKNOWN_DISPLAY_NAME = "未知平台"
@@ -161,14 +228,58 @@ object PlatformCatalog {
             packageNames = setOf("com.taobao.taobao"),
             sortOrder = 60,
         ),
+        PlatformEntry(
+            id = BANK_ID,
+            displayName = "银行卡",
+            kind = PlatformKind.BANK,
+            // ⚠️ 刻意**只给 weak（0.35）**：「银行 / 尾号 / 储蓄卡」是极高频词，
+            // 几乎每条银行短信都有；放到 strong(0.90) 会把大量本该 unknown 的记录吸成 bank。
+            // 0.35 ⇒ 低于 CONFIRM_THRESHOLD，UI 自动打「待确认」角标，用户可一键改成真实平台。
+            weakKeywords = listOf("储蓄卡", "信用卡", "借记卡", "尾号", "银行"),
+            // 不按包名匹配：各银行 App 包名零散且多为「待核实」，且银行短信没有包名。
+            // 写错包名 = 整类通知被恒定错判，比暂时不识别危害大得多。
+            packageNames = emptySet(),
+            sortOrder = 70,
+        ),
+        PlatformEntry(
+            id = "digital_rmb",
+            displayName = "数字人民币",
+            kind = PlatformKind.PAYMENT,
+            strongKeywords = listOf("数字人民币", "数币支付"),
+            mediumKeywords = listOf("数字人民币钱包", "e-CNY"),
+            weakKeywords = listOf("试点版"),
+            packageNames = emptySet(), // 待核实（设计文档 §3.2）：包名不确定则留空，靠关键词兜底
+            sortOrder = 80,
+        ),
+        PlatformEntry(
+            id = "unionpay",
+            displayName = "云闪付",
+            kind = PlatformKind.PAYMENT,
+            strongKeywords = listOf("云闪付"),
+            mediumKeywords = listOf("银联", "UnionPay"),
+            weakKeywords = listOf("银联商务", "云闪付支付"),
+            packageNames = emptySet(), // 待核实（设计文档 §3.2）
+            sortOrder = 90,
+        ),
         UNKNOWN,
     )
 
     /** 运行时注册的额外条目（用户自定义 / 远端下发）。用写时复制列表，读多写少。 */
     private val extra: MutableList<PlatformEntry> = java.util.concurrent.CopyOnWriteArrayList()
 
-    /** 全部条目，按 [PlatformEntry.sortOrder] 稳定排序。 */
-    fun all(): List<PlatformEntry> = (BUILT_IN + extra).sortedBy { it.sortOrder }
+    /**
+     * [all] 的结果缓存。写操作（register / unregister / resetExtras）时置空失效。
+     *
+     * 为什么必须缓存：`find()` → `all()`、`displayNameOf()` → `find()` → `all()`，
+     * 而 `all()` 每次都做 `(BUILT_IN + extra).sortedBy{}`。账单列表里**每一行渲染**
+     * 都会调 `displayNameOf`，等于每帧重排一遍整个目录；接入用户自定义平台后规模还会增长。
+     */
+    @Volatile
+    private var cached: List<PlatformEntry>? = null
+
+    /** 全部条目，按 [PlatformEntry.sortOrder] 稳定排序。结果被缓存，见 [cached]。 */
+    fun all(): List<PlatformEntry> =
+        cached ?: (BUILT_IN + extra).sortedBy { it.sortOrder }.also { cached = it }
 
     /** 按 ID 查条目；未收录返回 null。 */
     fun find(id: String): PlatformEntry? = all().firstOrNull { it.id == id }
@@ -182,17 +293,48 @@ object PlatformCatalog {
     /**
      * 注册额外条目。同 ID 覆盖旧值。
      *
-     * 本期无调用方（预留给「用户自定义平台」），但目录的可扩展性是本设计的既定目标，
-     * 故按契约实现；未开放 UI 前不会被触发。
+     * 由「用户自定义平台」在启动注入与写成功后调用（见 AppContainer / UserPlatformStore）。
      */
     fun register(entry: PlatformEntry) {
         extra.removeAll { it.id == entry.id }
         extra.add(entry)
+        cached = null
+    }
+
+    /**
+     * 移除运行时条目（用户自定义平台被停用 / 删除时调用）。
+     *
+     * [BUILT_IN] 不可移除：`extra` 只装 [register] 进来的条目，
+     * 所以对内置 ID 调用它是 **no-op**（而不是抛异常）—— 调用方不必先判断「这是不是内置的」。
+     *
+     * ⚠️ 移除只是「不再参与**识别**」；展示仍走 [displayNameOf]，
+     * 而历史流水引用的 `platformId` 若来自别处的目录快照仍能查到。
+     * 用户自定义平台的真正保留靠 DB 的软删除（`archived`），不是靠这里。
+     */
+    fun unregister(id: String) {
+        extra.removeAll { it.id == id }
+        cached = null
     }
 
     /** 仅供测试：清空 [register] 进来的条目，恢复内置目录。 */
     internal fun resetExtras() {
         extra.clear()
+        cached = null
+    }
+
+    /**
+     * 用给定条目**整体替换**运行时条目（备份导入后重建目录用）。
+     *
+     * 为什么不暴露「先 [resetExtras] 再逐个 [register]」给 `core:backup`：
+     * ① `resetExtras` 是 `internal`，跨模块本来就调不到；
+     * ② 更本质的原因 —— 那样在两步之间存在一个「自定义平台全部消失」的窗口，
+     * 而采集循环可能正在并发识别，会把刚落地的流水判定成 `unknown`。
+     * 整体替换是**原子**的，要么旧目录、要么新目录，不存在中间态。
+     */
+    fun replaceExtras(entries: List<PlatformEntry>) {
+        extra.clear()
+        extra.addAll(entries)
+        cached = null
     }
 }
 

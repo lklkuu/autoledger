@@ -37,11 +37,20 @@ class KeywordPlatformResolverTest {
     }
 
     @Test
-    fun `case 2 - text with no keyword hit still resolves to unknown`() {
+    fun `case 2 - plain bank sms falls back to the bank platform, not unknown`() {
+        // ⚠️ 口径变更（多渠道路径设计 §2.2 / §7.1 R6，由 T1 把 `bank` 落地到目录引起）：
+        // 这条文本从前落 `unknown`，现在落 `bank`。
+        // 理由：「知道钱是从银行卡出去的」比「什么都不知道」信息量更大 ——
+        // 用户要的「这个月银行卡花了多少」只有进 platform_id 才统计得到。
+        // 0.35 = weak 档，低于 CONFIRM_THRESHOLD(0.75) ⇒ UI 会自动打「待确认」角标，用户可一键改。
         val r = resolve("您尾号1234的储蓄卡于10月3日消费 1,280.00 元，余额 8,000.00 元", null, "sms:inbox", "sms:inbox")
-        assertEquals(PlatformCatalog.UNKNOWN_ID, r.platformId)
-        assertEquals(0f, r.confidence)
-        assertTrue(r.candidates.isEmpty())
+        assertEquals(PlatformCatalog.BANK_ID, r.platformId)
+        assertEquals(0.35f, r.confidence, "银行线索只有 weak 强度，不得被抬成确定值")
+        assertTrue(
+            r.confidence < PlatformResolver.CONFIRM_THRESHOLD,
+            "必须低于确认阈值，否则用户不会被提示去确认这笔花在哪",
+        )
+        assertTrue(r.candidates.isEmpty(), "0.35 < 候选门槛(0.50)，不构成一个候选")
     }
 
     // ---------------------------------------------------------------- §7 #8（短信无包名）
@@ -55,9 +64,16 @@ class KeywordPlatformResolverTest {
     }
 
     @Test
-    fun `case 8b - plain bank sms with no platform clue stays unknown`() {
-        val r = resolve("您尾号1234的卡于10月3日 POS 消费 88.00 元", "沃尔玛", "sms:inbox", "sms:inbox")
-        assertEquals(PlatformCatalog.UNKNOWN_ID, r.platformId)
+    fun `case 8b - plain bank sms lands on bank, while a truly clue-less text stays unknown`() {
+        // 同 case 2 的口径变更：有银行线索 ⇒ bank（weak），而不是 unknown。
+        val bank = resolve("您尾号1234的卡于10月3日 POS 消费 88.00 元", "沃尔玛", "sms:inbox", "sms:inbox")
+        assertEquals(PlatformCatalog.BANK_ID, bank.platformId)
+
+        // 对照：**完全没有**任何平台线索时才落 unknown（这是「宁可 unknown，不可瞎猜」的原意，
+        // 不能被上面的变更顺手放松掉）。
+        val nothing = resolve("今天天气不错", null, "sms:inbox", "sms:inbox")
+        assertEquals(PlatformCatalog.UNKNOWN_ID, nothing.platformId, "无任何线索时不得猜成 bank")
+        assertEquals(0f, nothing.confidence)
     }
 
     // ---------------------------------------------------------------- §7 #4（未收录平台）

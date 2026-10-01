@@ -25,6 +25,9 @@ import com.autoledger.core.model.refund.RefundStatus
         // 消费平台：支撑「按平台筛选 / 分组」（PlatformShareMetric 目前走内存聚合，
         // 但索引先建好，将来 DAO 侧加 WHERE platform_id IN (...) 无需再迁移）
         Index(value = ["platform_id"]),
+        // 合并溯源反查（mergeGroupOf）：索引名 index_transactions_merged_into_id
+        // 必须与 MIGRATION_5_6 里的 SQL 完全一致，否则 exportSchema 校验失败 ⇒ 退回清库。
+        Index(value = ["merged_into_id"]),
     ],
 )
 data class TransactionEntity(
@@ -55,11 +58,56 @@ data class TransactionEntity(
     val orderId: String?,
     val refundId: String?,
     val schemaVersion: Int,
+    /**
+     * 合并溯源：被吸收进哪条主记录（`null` = 未被合并）。v6 新增，可空列。
+     *
+     * 放在**最后**而不是紧跟 `refundId`：`ALTER TABLE ... ADD COLUMN` 只能加在末尾，
+     * 声明顺序与迁移后的物理顺序保持一致，能让 `schemas/6.json` 与实库更易对照
+     * （Room 的 TableInfo 校验其实不比对列顺序，但对照 schema 排查问题时少一层心智负担）。
+     *
+     * ⚠️ 列名必须是 snake_case 的 `merged_into_id`（与 `platform_id` 一致）：
+     * `Index(value = ["merged_into_id"])` 引用的是**列名**而不是 Kotlin 属性名，
+     * 少了 `@ColumnInfo` 会被 KSP 直接判为「index 引用了不存在的列」而编译失败。
+     */
+    @ColumnInfo(name = "merged_into_id") val mergedIntoId: String? = null,
+)
+
+/**
+ * 用户自定义消费平台（v6 新增）。
+ *
+ * ## 为什么用 Room 表而不是 DataStore / 本地 JSON
+ * - **进备份管线**：换机 / 导入备份后自定义平台必须还在，否则引用它的历史流水会显示「未知平台」；
+ * - **软删除**：归档后历史流水的平台名仍可解析（见 [archived]），而不是变成孤儿 ID；
+ * - 复用既有的 `database` 单例与迁移体系，不引入新依赖。
+ *
+ * 关键词组存**换行分隔的 String**（实体用 String、领域用 List）：
+ * 沿用 [AccountEntity.identifierHints] 的既有权宜做法，避免为 4 个 List 字段引入 TypeConverter。
+ */
+@Entity(
+    tableName = "user_platforms",
+    // Room 生成名：index_user_platforms_archived（MIGRATION_5_6 里的 SQL 必须逐字符一致）
+    indices = [Index(value = ["archived"])],
+)
+data class UserPlatformEntity(
+    @PrimaryKey val id: String,
+    val displayName: String,
+    /** 存 PlatformKind 枚举的 name()（ORDER / PAYMENT / BANK / OTHER）。 */
+    val kind: String,
+    /** 换行分隔。 */
+    val strongKeywords: String,
+    val mediumKeywords: String,
+    val weakKeywords: String,
+    /** 换行分隔。 */
+    val packageNames: String,
+    val sortOrder: Int,
+    /** 软删除标记：true = 停用（不进识别候选，但历史流水仍显示原名）。 */
+    val archived: Boolean,
+    val createdAtMillis: Long,
+    val schemaVersion: Int,
 )
 
 @Entity(tableName = "categories")
-data class CategoryEntity(
-    @PrimaryKey val id: String,
+data class CategoryEntity(    @PrimaryKey val id: String,
     val name: String,
     val iconKey: String,
     val colorHex: String,

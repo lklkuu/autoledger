@@ -6,6 +6,7 @@ import com.autoledger.core.model.LedgerRepository
 import com.autoledger.core.model.LedgerTransaction
 import com.autoledger.core.model.TxnStatus
 import com.autoledger.core.model.TxnType
+import com.autoledger.core.model.UserPlatform
 import com.autoledger.feature.capture.notify.NotificationParser
 import com.autoledger.feature.dedup.LedgerDuplicateResolver
 import kotlin.test.Test
@@ -156,6 +157,37 @@ class BankIncomeCrossChannelIngestTest {
         override suspend fun markStatus(id: String, status: TxnStatus) {
             store[id]?.let { store[id] = it.copy(status = status) }
         }
+
+        /**
+         * Tier-2 候选查询：金额带符号相等 + 时间窗口，排除自身与已合并/已忽略。
+         * 与 Room 侧 `findByAmountWithin` 的 WHERE 子句逐条对应。
+         */
+        override suspend fun findByAmountWithin(
+            amountMinor: Long,
+            fromMillis: Long,
+            toMillis: Long,
+            excludeId: String,
+        ): List<LedgerTransaction> = store.values.filter { txn ->
+            txn.amountMinor == amountMinor &&
+                txn.id != excludeId &&
+                txn.status != TxnStatus.MERGED &&
+                txn.status != TxnStatus.IGNORED &&
+                txn.occurredAtMillis in fromMillis..toMillis
+        }.sortedByDescending { it.occurredAtMillis }
+
+        /** 状态 + 溯源一次写入（与 Room 侧 updateMergeState 语义一致）。 */
+        override suspend fun setMergeState(id: String, status: TxnStatus, primaryId: String?) {
+            store[id]?.let { store[id] = it.copy(status = status, mergedIntoId = primaryId) }
+        }
+
+        override suspend fun mergeGroupOf(primaryId: String): List<LedgerTransaction> =
+            store.values.filter { it.mergedIntoId == primaryId }.sortedByDescending { it.occurredAtMillis }
+
+        override suspend fun listUserPlatforms(includeArchived: Boolean): List<UserPlatform> = unused()
+
+        override suspend fun upsertUserPlatform(platform: UserPlatform) = unused()
+
+        override suspend fun archiveUserPlatform(id: String) = unused()
 
         override suspend fun listSince(fromMillis: Long, includeTransfers: Boolean): List<LedgerTransaction> = unused()
 
