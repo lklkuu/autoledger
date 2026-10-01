@@ -2,6 +2,8 @@ package com.autoledger.feature.platform
 
 import com.autoledger.core.model.platform.PlatformCatalog
 import com.autoledger.core.model.platform.PlatformContext
+import com.autoledger.core.model.platform.PlatformEntry
+import com.autoledger.core.model.platform.PlatformKind
 import com.autoledger.core.model.platform.PlatformResolver
 import kotlin.test.assertEquals
 import kotlin.test.assertFalse
@@ -294,6 +296,97 @@ class KeywordPlatformResolverTest {
         assertEquals("douyin", refund.platformId)
         val transfer = resolve("转账给朋友 500.00 元")
         assertEquals(PlatformCatalog.UNKNOWN_ID, transfer.platformId)
+    }
+
+    // ---------------------------------------------------------------- §7.1 R1–R9 识别用例补齐
+    //
+    // 覆盖映射（对照 `docs/design/multi-channel-platform-and-dedup-priority.md` §7.1）：
+    //   R1 —— 已由本文件
+    //          `payment-channel package does NOT mask the order platform given in the text`
+    //          （下单平台覆盖**支付型包名**，恰好 0.85）
+    //          + `meituan app notification mentioning alipay is NOT ambiguous`
+    //          （包名本身就是下单平台，维持 0.95）两条共同覆盖，不再重复造。
+    //   R3 —— 已由 `payment channel alone still wins - offline alipay scan` 覆盖。
+    //   R8 —— 已由 `case 8b` 的对照分支（「今天天气不错」⇒ unknown / 0 / 候选空）覆盖。
+    //   R2 / R4 / R5 / R6 / R7 / R9 —— 本次补齐，见下。
+
+    @Test
+    fun `case R2 - wechat package must not mask the order platform named in the text`() {
+        // 规则 ①（分支 ②）：正文给出 ORDER 平台（「美团外卖」强词 0.90）时，
+        // 支付通道型包名（微信 0.95）让位，取值改判为下单平台、置信度落到 SCORE_ORDER_OVERRIDE(0.85)。
+        val r = resolve("向美团外卖付款 25.00 元", null, "com.tencent.mm")
+        assertEquals("meituan", r.platformId, "钱花在美团，微信只是付款方式")
+        assertEquals(0.85f, r.confidence, "下单平台覆盖支付型包名时取 SCORE_ORDER_OVERRIDE")
+        assertFalse(r.ambiguous)
+    }
+
+    @Test
+    fun `case R4 - unionpay keyword resolves without any package`() {
+        // T1 新增目录条目，此前无断言覆盖。
+        val r = resolve("云闪付支付 30 元")
+        assertEquals("unionpay", r.platformId)
+        assertEquals(0.90f, r.confidence)
+        assertFalse(r.ambiguous)
+    }
+
+    @Test
+    fun `case R5 - digital RMB keyword resolves without any package`() {
+        // T1 新增目录条目，此前无断言覆盖。
+        val r = resolve("数字人民币支付 12 元")
+        assertEquals("digital_rmb", r.platformId)
+        assertEquals(0.90f, r.confidence)
+        assertFalse(r.ambiguous)
+    }
+
+    @Test
+    fun `case R6 - bare bank sms with no package falls back to bank below the confirm threshold`() {
+        // 无包名形态（与 case 2 的 sms:inbox 形态互为补充）：只凭「尾号」这一 weak 线索落 bank(0.35)。
+        // 0.35 == UNKNOWN_THRESHOLD ⇒ 不落 unknown；< CONFIRM_THRESHOLD ⇒ UI 必须打「待确认」角标。
+        val r = resolve("尾号1234 消费 88.00 元")
+        assertEquals(PlatformCatalog.BANK_ID, r.platformId)
+        assertEquals(0.35f, r.confidence)
+        assertTrue(r.confidence < PlatformResolver.CONFIRM_THRESHOLD, "必须能被 UI 识别为「待确认」")
+        assertTrue(r.candidates.isEmpty(), "0.35 < 候选门槛(0.50) ⇒ 没有真候选")
+    }
+
+    @Test
+    fun `case R7 - bank fallback must NOT fire when another platform already matched`() {
+        // 同一段文本同时含银行线索（尾号 0.35）与支付通道强词（支付宝 0.90）。
+        // 0.90 > 0.35 ⇒ 支付宝胜出；且「bank 兜底」只在**没有任何其它命中**时才适用，这里不得触发。
+        val r = resolve("尾号1234 消费 88 元，通过支付宝支付")
+        assertEquals("alipay", r.platformId, "有更强的支付通道命中时，银行兜底不得生效")
+        assertTrue(r.platformId != PlatformCatalog.BANK_ID, "不得落 bank")
+        assertEquals(0.90f, r.confidence)
+    }
+
+    @Test
+    fun `case R9 - custom platform registered into the catalog is recognised`() {
+        // 目录是进程级单例，注册后必须能在 finally 里清理干净，否则会污染其它用例。
+        val uid = "user:" + java.util.UUID.randomUUID()
+        try {
+            // 注册前：未收录 ⇒ unknown（与 case 4 呼应）
+            assertEquals(PlatformCatalog.UNKNOWN_ID, resolve("京东支付 50 元").platformId)
+
+            PlatformCatalog.register(
+                PlatformEntry(
+                    id = uid,
+                    displayName = "京东",
+                    kind = PlatformKind.ORDER,
+                    strongKeywords = listOf("京东支付"),
+                    sortOrder = 1000,
+                ),
+            )
+
+            val r = resolve("京东支付 50 元")
+            assertEquals(uid, r.platformId, "自定义平台注册进目录后必须参与识别")
+            assertEquals(0.90f, r.confidence)
+            assertEquals(PlatformKind.ORDER, PlatformCatalog.find(uid)?.kind)
+        } finally {
+            // `resetExtras()` 是 internal，跨模块不可见 ⇒ 用 public 的 replaceExtras 清空。
+            PlatformCatalog.replaceExtras(emptyList())
+        }
+        // 清理后恢复原状：未收录 ⇒ unknown，证明 finally 真的清干净了。
+        assertEquals(PlatformCatalog.UNKNOWN_ID, resolve("京东支付 50 元").platformId)
     }
 
     // ---------------------------------------------------------------- 契约
