@@ -12,9 +12,12 @@ import com.autoledger.core.model.TransferKind
 import com.autoledger.core.model.TransactionClassifier
 import com.autoledger.core.model.TxnStatus
 import com.autoledger.core.model.TxnType
+import com.autoledger.core.model.dedup.DedupPriority
+import com.autoledger.core.model.platform.PlatformCatalog
 import com.autoledger.core.model.platform.PlatformContext
 import com.autoledger.core.model.platform.PlatformResolver
 import com.autoledger.core.model.platform.PlatformSource
+import com.autoledger.core.model.platform.priorityOf
 import java.util.UUID
 
 /**
@@ -148,9 +151,23 @@ class IngestPipeline(
         return when {
             unresolvedAmount -> Outcome.NeedsReview(final.id, "未解析出金额，请在待确认里补全")
             duplicates.isNotEmpty() && autoMergeDuplicates &&
-                duplicateResolver.isAutoMergeSafe(typed) && duplicates.first().crossSource -> {
-                duplicateResolver.merge(duplicates.first().txnId, listOf(final.id))
-                Outcome.MergedInto(final.id, duplicates.first().txnId)
+                duplicateResolver.canAutoMerge(typed, duplicates.first()) -> {
+                val absorbed = duplicates.first()
+                // 「谁留下」不再简单地让"先入库的那条"当主记录 —— 那会让同一笔账归到哪个平台
+                // 取决于哪条通知先到，用户真正关心的下单平台（美团）会被银行短信盖掉。
+                val choice = DedupPriority.choosePrimary(
+                    incomingId = final.id,
+                    incomingRank = priorityOf(final.platformId).rank,
+                    // ingest 阶段恒为 AUTO（平台要么是识别结果，要么还没被用户改过）。
+                    incomingIsUser = final.platformSource == PlatformSource.USER,
+                    existingId = absorbed.txnId,
+                    existingRank = absorbed.priorityRank,
+                    existingIsUser = absorbed.platformSource == PlatformSource.USER,
+                )
+                duplicateResolver.merge(choice.primaryId, listOf(choice.mergedId))
+                // 合并后把被吸收那条的**有效信息补进主记录的空白**（只补空白，绝不覆盖）。
+                inheritBlankFields(choice.primaryId, listOf(choice.mergedId))
+                Outcome.MergedInto(final.id, choice.primaryId)
             }
             duplicates.isNotEmpty() -> Outcome.NeedsReview(
                 final.id,
@@ -161,6 +178,73 @@ class IngestPipeline(
             else -> Outcome.NeedsReview(final.id, "分类置信度 ${"%.2f".format(confidence)} 偏低，待确认")
         }
     }
+
+    /**
+     * 合并后的**字段继承**：只把 [mergedIds] 的有效信息补进 [primaryId] 的**空白字段**。
+     *
+     * 三条硬约束（设计 §4.5）：
+     * 1. **只补空白、绝不覆盖** —— 覆盖会悄悄改掉用户已经看到并可能已经认过的值；
+     * 2. `rawTextSealed` / `sourceRef` / `platformConfidence` **不动**：
+     *    它们是「这条记录怎么来的」的原始证据，换了就等于伪造来源；被吸收的行仍在库里，证据不丢；
+     * 3. 平台只在「主记录是 unknown，或层级更低且**不是用户指定**」时才继承，
+     *    且继承后 `platformSource` 保持 AUTO —— 这不是用户选的，不能冒充权威值
+     *    （冒充了以后就再也不会被自动流程修正，等于永久污染）。
+     *
+     * 主要价值：银行短信常常抽不出商户名，而美团通知有「美团外卖」⇒
+     * 合并后主记录才能补上真实商户，否则用户在账单里只看到一条没有商户名的记录。
+     */
+    private suspend fun inheritBlankFields(primaryId: String, mergedIds: List<String>) {
+        val primary = repository.findById(primaryId) ?: return
+        val absorbedRows = mergedIds.mapNotNull { repository.findById(it) }
+        if (absorbedRows.isEmpty()) return
+
+        var patched = primary
+        for (absorbed in absorbedRows) {
+            patched = patched.copy(
+                counterparty = patched.counterparty.ifBlank { absorbed.counterparty },
+                note = patched.note?.takeIf { it.isNotBlank() }
+                    ?: absorbed.note?.takeIf { it.isNotBlank() },
+                categoryId = patched.categoryId ?: absorbed.categoryId,
+                platformId = inheritedPlatformId(
+                    primaryPlatformId = patched.platformId,
+                    primarySource = patched.platformSource,
+                    absorbedPlatformId = absorbed.platformId,
+                ),
+            )
+        }
+
+        if (patched != primary) repository.upsert(patched)
+    }
+}
+
+/**
+ * 合并后主记录该不该改用被吸收记录的平台（设计 §4.5 的第三条）。
+ *
+ * 抽成顶层 `internal` 纯函数，理由与 [resolveInitialType] 相同：
+ * 这条规则**在自动合并路径上几乎到不了**（自动合并时主记录必然是层级更高的一方，
+ * 也就是那个 ORDER 平台，它的平台不会是需要被"补"的空值），
+ * 但它对**用户手动合并**与将来的路径都必须成立 —— 挂在私有方法里就只能靠
+ * 造完整 ingest 链路去碰运气覆盖，抽出来即可直接逐格单测。
+ *
+ * 三条约束：
+ * - 用户手选过的平台（`USER`）**永远**不被自动继承覆盖（`PlatformSource.USER` 存在的全部意义）；
+ * - 两边平台相同时不动（避免无意义的写入）；
+ * - 只在「主记录是 `unknown`」或「被吸收方层级更高」时才继承。
+ *
+ * 注意：继承后调用方**不修改** `platformSource`（保持 `AUTO`）——
+ * 这不是用户选的，不能冒充权威值，否则该行以后就再也不会被自动流程修正了。
+ */
+internal fun inheritedPlatformId(
+    primaryPlatformId: String,
+    primarySource: PlatformSource,
+    absorbedPlatformId: String,
+): String {
+    if (primarySource == PlatformSource.USER) return primaryPlatformId
+    if (absorbedPlatformId == primaryPlatformId) return primaryPlatformId
+    val primaryRank = priorityOf(primaryPlatformId).rank
+    val shouldTake = primaryPlatformId == PlatformCatalog.UNKNOWN_ID ||
+        primaryRank < priorityOf(absorbedPlatformId).rank
+    return if (shouldTake) absorbedPlatformId else primaryPlatformId
 }
 
 /**

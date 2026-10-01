@@ -127,6 +127,20 @@ interface DuplicateResolver {
     suspend fun findDuplicates(txn: LedgerTransaction): List<DuplicateCandidate>
     /** 手动合并：把 duplicates 吸收进 primary */
     suspend fun merge(primaryId: String, duplicateIds: List<String>)
+
+    /**
+     * 该候选是否允许**静默自动合并**（护栏的最终出口）。
+     *
+     * 为什么要在 [findDuplicates] 之外单独开一个口子：候选「能不能**被发现**」与
+     * 「能不能**不问用户就合并**」是两件事。`PAYMENT ↔ BANK` 这类证据不足的组合
+     * 必须作为候选浮出来提示用户（否则用户永远看不到这笔可能重复），
+     * 但绝不能由系统静默合并 —— 用一个布尔无法同时表达这两个语义。
+     *
+     * 默认实现 = 既有的保守语义（跨渠道 + [isAutoMergeSafe]），
+     * 因此新增本方法**不破坏**既有实现与调用点。
+     */
+    fun canAutoMerge(txn: LedgerTransaction, candidate: DuplicateCandidate): Boolean =
+        candidate.crossSource && isAutoMergeSafe(txn)
 }
 
 // ---------------------------------------------------------------- 存储
