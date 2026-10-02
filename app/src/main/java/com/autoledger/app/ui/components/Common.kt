@@ -417,6 +417,10 @@ fun TransactionRow(
                     add(category?.name ?: "未分类")
                     // timeOnRight 时工时已占据右侧，副标题不再重复。
                     if (!timeOnRight) workText?.let { add("≈ $it") }
+                    // 无障碍（WCAG 1.4.1：不能仅用颜色传达信息）：收支类型同时用文字标出，
+                    // 否则色觉障碍用户无法区分「支出绿 / 收入红」，切换类型后也感知不到变化。
+                    if (txn.type == com.autoledger.core.model.TxnType.INCOME) add("收入")
+                    if (txn.type == com.autoledger.core.model.TxnType.REFUND) add("退款")
                     if (txn.type == com.autoledger.core.model.TxnType.TRANSFER) add("已识别为内部划转")
                     if (txn.status == com.autoledger.core.model.TxnStatus.RAW) add("待确认")
                 }.joinToString(" · "),
