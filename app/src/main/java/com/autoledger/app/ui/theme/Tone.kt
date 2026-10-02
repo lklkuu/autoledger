@@ -4,6 +4,7 @@ import androidx.compose.foundation.isSystemInDarkTheme
 import androidx.compose.runtime.Composable
 import androidx.compose.ui.graphics.Color
 import com.autoledger.core.model.LedgerTransaction
+import com.autoledger.core.model.MetricTone
 import com.autoledger.core.model.TxnType
 
 /**
@@ -56,3 +57,15 @@ fun txnTone(txn: LedgerTransaction): LedgerTone = when (txn.type) {
 /** 语义色阶 → 实际颜色（跟随系统深浅色）。 */
 @Composable
 fun toneColor(tone: LedgerTone): Color = colorOf(toneHex(tone, isSystemInDarkTheme()))
+
+/**
+ * 领域层语义（`MetricTone`，`core:model`）→ UI 语义（[LedgerTone]）。
+ *
+ * 为什么需要这层映射：`core:model` 不能依赖 app 模块，所以色阶名字只能各定义一份；
+ * 映射集中在这里（而不是散落在各个卡片分支里），将来两套枚举增删值时只有一处要改。
+ */
+fun MetricTone.toLedgerTone(): LedgerTone = when (this) {
+    MetricTone.EXPENSE -> LedgerTone.EXPENSE
+    MetricTone.INCOME -> LedgerTone.INCOME
+    MetricTone.NEUTRAL -> LedgerTone.NEUTRAL
+}

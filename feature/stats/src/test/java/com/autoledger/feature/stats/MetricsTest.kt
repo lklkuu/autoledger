@@ -4,6 +4,7 @@ import com.autoledger.core.model.Category
 import com.autoledger.core.model.LedgerTransaction
 import com.autoledger.core.model.MetricResult
 import com.autoledger.core.model.MetricSnapshot
+import com.autoledger.core.model.MetricTone
 import com.autoledger.core.model.TimeRange
 import com.autoledger.core.model.ExpenseMath
 import com.autoledger.core.model.TxnType
@@ -371,8 +372,7 @@ class MetricsTest {
     }
 
     @Test
-    fun `transfers pulled into the wide window never leak into monthly buckets`() = runBlocking {
-        // P3-2 护栏：MonthlyTrend 宽窗查询带 includeTransfers=true（为让退款参与冲抵），
+    fun `transfers pulled into the wide window never leak into monthly buckets`() = runBlocking {        // P3-2 护栏：MonthlyTrend 宽窗查询带 includeTransfers=true（为让退款参与冲抵），
         // 内部划转因此也会被拉进内存 —— 钉死它不进任何月份桶、不污染柱值（口径泄漏到全链路）。
         val now = millis(2026, 5, 15, 12)
         val r = TimeRange(millis(2026, 5, 1), now)
@@ -389,6 +389,64 @@ class MetricsTest {
             result.points.single().valueMinor,
             "TRANSFER 被宽窗拉进内存后不得计入月份柱（若泄漏会得到 54_000）",
         )
+    }
+
+    // ------------------------------------------------------------ 收入 · 结余（v1.1.6）
+
+    @Test
+    fun `balance is negative when there is no income at all`() = runBlocking {
+        val r = range(t0, t0 + day)
+        val repo = repo(Fixtures.txn("e1", -50_000, occurredAtMillis = t0))
+        val card = IncomeBalanceMetric().compute(r, repo) as MetricResult.Scalar
+        assertEquals(-50_000L, card.valueMinor, "只有支出 ⇒ 结余为负、收入 0")
+        assertEquals(MetricTone.NEUTRAL, card.tone, "入不敷出不得涂成收入色")
+    }
+
+    @Test
+    fun `balance is income minus net expense`() = runBlocking {
+        val r = range(t0, t0 + day)
+        val repo = repo(
+            Fixtures.txn("i1", 100_000, type = TxnType.INCOME, occurredAtMillis = t0),
+            Fixtures.txn("e1", -135_000, occurredAtMillis = t0),
+        )
+        val card = IncomeBalanceMetric().compute(r, repo) as MetricResult.Scalar
+        assertEquals(-35_000L, card.valueMinor, "收入 1000 − 支出 1350 = −350")
+    }
+
+    @Test
+    fun `refund offsets the expense once and never twice`() = runBlocking {
+        // 口径钉子：若写成「收入 − 毛支出 − 退款」会把退款扣两次 ⇒ −350；
+        // 正确口径是「收入 − 净支出(已扣退款)」⇒ −150。
+        val r = range(t0, t0 + day)
+        val repo = repo(
+            Fixtures.txn("i1", 100_000, type = TxnType.INCOME, occurredAtMillis = t0),
+            Fixtures.txn("e1", -135_000, occurredAtMillis = t0),
+            Fixtures.txn("r1", 20_000, type = TxnType.REFUND, occurredAtMillis = t0),
+        )
+        val card = IncomeBalanceMetric().compute(r, repo) as MetricResult.Scalar
+        assertEquals(115_000L, ExpenseMath.netExpenseMinor(listOf(
+            Fixtures.txn("e1", -135_000, occurredAtMillis = t0),
+            Fixtures.txn("r1", 20_000, type = TxnType.REFUND, occurredAtMillis = t0),
+        )), "净支出 1150（退款已冲抵一次）")
+        assertEquals(-15_000L, card.valueMinor, "结余 = 1000 − 1150 = −150（不是 −350）")
+        assertEquals(MetricTone.NEUTRAL, card.tone)
+    }
+
+    @Test
+    fun `income balance card reuses the snapshot instead of querying again`() = runBlocking {
+        val r = range(t0, t0 + day)
+        val snap = MetricSnapshot(
+            range = r,
+            txns = listOf(
+                Fixtures.txn("i1", 50_000, type = TxnType.INCOME, occurredAtMillis = t0),
+                Fixtures.txn("e1", -20_000, occurredAtMillis = t0),
+            ),
+        )
+        val repo = CountingRepo(emptyList(), emptyList())
+        val card = IncomeBalanceMetric().compute(r, repo, snap) as MetricResult.Scalar
+        assertEquals(0, repo.listRangeCalls, "带快照时不得再查库")
+        assertEquals(30_000L, card.valueMinor, "结余 = 500 − 200")
+        assertEquals(MetricTone.INCOME, card.tone, "有结余 ⇒ 收入语义色")
     }
 
     // ------------------------------------------------------------ 时间成本

@@ -7,6 +7,7 @@ import com.autoledger.core.model.LedgerTransaction
 import com.autoledger.core.model.MetricProvider
 import com.autoledger.core.model.MetricResult
 import com.autoledger.core.model.MetricSnapshot
+import com.autoledger.core.model.MetricTone
 import com.autoledger.core.model.Money
 import com.autoledger.core.model.TimeRange
 import com.autoledger.core.model.WageProfile
@@ -128,6 +129,52 @@ class PlatformShareMetric(private val topN: Int = 8) : MetricProvider {
         private val PLATFORM_PALETTE =
             listOf("#16856F", "#5C88B8", "#F6C95F", "#D95F5F", "#9B6AD0", "#116B5B", "#708786", "#163B3D")
     }
+}
+
+/**
+ * 收入与结余 —— 「这个月到底存下多少」的唯一去处。
+ *
+ * 口径（**唯一真源**都在 [ExpenseMath]，此处不做任何加减口径的二次实现）：
+ * - 收入 = `incomeMinor`（只计 INCOME，排除 MERGED / IGNORED）
+ * - 净支出 = `netExpenseMinor`（= 毛支出 − 退款，**退款已被冲抵过一次**）
+ * - 结余 = 收入 − 净支出
+ *
+ * ⚠️ 为什么不能写「收入 − 毛支出 − 退款」：那样等于把退款扣两次（净支出里已扣过一次）。
+ * 这条口径的单测在 MetricsTest 里钉死（支出 1350 + 退款 200 + 收入 1000 ⇒ 结余 −150）。
+ *
+ * 负结余用 [MetricTone.NEUTRAL] 而不是 [MetricTone.INCOME]：入不敷出不是"赚到钱了"，
+ * 涂成收入色会给出错误暗示。
+ */
+class IncomeBalanceMetric : MetricProvider {
+    override val id: String = INCOME_BALANCE_ID
+    override val title: String = "收入 · 结余"
+    override val dimension: Dimension = Dimension.BALANCE
+    override val order: Int = 35
+
+    override suspend fun compute(range: TimeRange, repo: LedgerRepository, snapshot: MetricSnapshot?): MetricResult {
+        // 快照路径：契约已含 REFUND，直接用。
+        // 自查路径：**必须显式 includeTransfers = true** —— `listRange` 的默认参数会把 REFUND
+        // 一并剔除，那样退款不参与冲抵、结余会虚低（收入 1000 / 支出 1350 / 退款 200 会算成 −350
+        // 而不是 −150）。`netExpenseMinor` 只认 EXPENSE 与 REFUND，混进来的 TRANSFER 会被自动忽略。
+        val txns = snapshot?.takeIf { it.range == range }?.txns
+            ?: repo.listRange(range.startMillis, range.endInclusiveMillis, includeTransfers = true)
+        val income = ExpenseMath.incomeMinor(txns)
+        val net = ExpenseMath.netExpenseMinor(txns)
+        val balance = income - net
+        return MetricResult.Scalar(
+            providerId = INCOME_BALANCE_ID,
+            title = title,
+            subtitle = "收入 ${Money(income).formatYuan()} · 净支出 ${Money(net).formatYuan()}",
+            valueMinor = balance,
+            // 负结余自带负号（formatYuan 默认 withSign = true）
+            primaryText = Money(balance).formatYuan(),
+            secondaryText = "结余 = 收入 − 净支出（退款已冲抵，不重复扣）",
+            iconKey = "wallet",
+            tone = if (balance >= 0L) MetricTone.INCOME else MetricTone.NEUTRAL,
+        )
+    }
+
+    companion object { const val INCOME_BALANCE_ID = "income_balance" }
 }
 
 /** 近 6 个月趋势 */

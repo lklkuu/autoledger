@@ -42,6 +42,21 @@ object ExpenseMath {
         grossExpenseMinor(txns) - refundMinor(txns)
 
     /**
+     * **收入合计（正数）**。
+     *
+     * 为什么要单列：收入此前**没有单一真源** —— 账单页月汇总 / 年度汇总 / 逐月趋势表三处各写一遍
+     * `filter { type == INCOME }.sumOf { abs(amountMinor) }`，改口径要改三处、漏一处就漂移。
+     *
+     * 口径与支出侧对齐：只计 `INCOME` 且排除 MERGED / IGNORED；**INCOME 不参与支出冲抵**
+     * （见文件头 KDoc：退款才是冲抵项，内部划转与收入都不是），故不复用 netExpenseMinor 的减法。
+     * 金额取绝对值：收入的正负号是采集侧的历史约定（银行卡入账短信识别为正），
+     * 这里只要金额大小，不让符号影响合计。
+     */
+    fun incomeMinor(txns: List<LedgerTransaction>): Long =
+        txns.filter { it.type == TxnType.INCOME && it.status != TxnStatus.MERGED && it.status != TxnStatus.IGNORED }
+            .sumOf { abs(it.amountMinor) }
+
+    /**
      * 按任意维度分组后的净额：支出记 `+`、退款记 `−`。
      * 用于分类结构 / 商户排行 / 渠道分布 / 月度趋势这类"按维度看支出"的聚合。
      *

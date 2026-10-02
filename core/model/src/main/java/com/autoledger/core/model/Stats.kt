@@ -10,7 +10,15 @@ import java.time.ZoneId
  * 仪表盘不写死任何一张图：它会遍历注册进来的 [MetricProvider]，按顺序渲染卡片。
  * 想加「按星期分布」「按城市分布」这类新维度，新增一个实现类注册进来即可。
  */
-enum class Dimension { CATEGORY, MERCHANT, PLATFORM, ACCOUNT, TIME }
+enum class Dimension { CATEGORY, MERCHANT, PLATFORM, ACCOUNT, TIME, BALANCE }
+
+/**
+ * 统计卡片的**语义色阶**（v1.1.6）：与 UI 层的 `LedgerTone` 同名同义，但在 `core:model` 里
+ * 单独定义，是为了让「卡片要表达什么语义」由领域层决定，UI 只做映射（`MetricTone → LedgerTone`）。
+ *
+ * 为什么不直接复用 UI 的 `LedgerTone`：`core:model` 不能依赖 app 模块。
+ */
+enum class MetricTone { EXPENSE, INCOME, NEUTRAL }
 
 sealed interface MetricResult {
     val providerId: String
@@ -60,6 +68,13 @@ sealed interface MetricResult {
         val primaryText: String? = null,
         val secondaryText: String? = null,
         val iconKey: String? = null,
+        /**
+         * 语义色阶（v1.1.6）。默认 [MetricTone.EXPENSE] ⇒ 既有支出类卡片（花掉的时间）外观不变。
+         *
+         * 结余类卡片用 [MetricTone.INCOME] / [MetricTone.NEUTRAL] 区分「有结余」与「入不敷出」，
+         * 避免负数被涂成"赚到了"的颜色。
+         */
+        val tone: MetricTone = MetricTone.EXPENSE,
     ) : MetricResult
 }
 

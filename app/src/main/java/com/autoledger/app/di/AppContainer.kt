@@ -47,6 +47,7 @@ import com.autoledger.feature.dedup.DefaultTransferDetector
 import com.autoledger.feature.dedup.LedgerDuplicateResolver
 import com.autoledger.feature.dedup.TransferPairMatcher
 import com.autoledger.feature.stats.CategoryShareMetric
+import com.autoledger.feature.stats.IncomeBalanceMetric
 import com.autoledger.feature.stats.PlatformShareMetric
 import com.autoledger.core.model.platform.PlatformCatalog
 import com.autoledger.core.model.platform.PlatformResolver
@@ -305,6 +306,8 @@ class AppContainer(context: Context) {
             TimeCostMetric { settings.wage.value },
             CategoryShareMetric(),
             MerchantTopMetric(),
+            // 收入 · 结余（order=35，插在平台分布 30 与月度趋势 40 之间）
+            IncomeBalanceMetric(),
             MonthlyTrendMetric(),
             PlatformShareMetric(),
         )

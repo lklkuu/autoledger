@@ -33,6 +33,7 @@ import androidx.compose.ui.text.style.TextAlign
 import androidx.compose.ui.unit.dp
 import com.autoledger.app.ui.theme.colorOf
 import com.autoledger.app.ui.theme.toneColor
+import com.autoledger.app.ui.theme.toLedgerTone
 import com.autoledger.app.ui.theme.txnTone
 import com.autoledger.app.ui.theme.LedgerIcons
 import com.autoledger.app.ui.theme.LedgerPalette
@@ -264,7 +265,9 @@ fun MetricCard(result: MetricResult, modifier: Modifier = Modifier.fillMaxWidth(
                     // 主指标不一定是钱：「花掉的时间」要显示「≈ 0.8 小时」而非折算金额。
                     result.primaryText ?: "¥${result.valueMinor.yuan()}",
                     style = MaterialTheme.typography.headlineSmall,
-                    color = LedgerPalette.PositiveStrong,
+                    // v1.1.6：主数值颜色由卡片自报的语义色阶决定（MetricTone → LedgerTone），
+                    // 不再一律 PositiveStrong（那样"入不敷出"也会被涂成"赚到了"的颜色）。
+                    color = toneColor(result.tone.toLedgerTone()),
                 )
                 listOfNotNull(result.subtitle, result.secondaryText).forEach {
                     Text(it, style = MaterialTheme.typography.bodySmall, color = MaterialTheme.colorScheme.onSurfaceVariant)
