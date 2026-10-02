@@ -2,6 +2,7 @@ package com.autoledger.app.ui.stores
 
 import com.autoledger.core.model.LedgerTransaction
 import com.autoledger.core.model.TxnStatus
+import com.autoledger.core.model.TxnType
 import com.autoledger.core.model.platform.PlatformSource
 
 /**
@@ -28,6 +29,67 @@ object TxnEditRules {
         !canEditAmountAndDate(txn) -> "已与订单 / 退款 / 内部划转关联，金额与日期不可修改"
         else -> null
     }
+}
+
+/**
+ * 切换目标类型：只支持「支出 ⇄ 收入」二值互转。
+ *
+ * 其余类型（退款 / 内部划转）没有可切换的目标 —— 它们不是收支，
+ * 改成支出/收入等于伪造事实（详见 [typeSwitchBlockReason]）。
+ */
+fun nextType(txn: LedgerTransaction): TxnType =
+    if (txn.type == TxnType.EXPENSE) TxnType.INCOME else TxnType.EXPENSE
+
+/**
+ * 能否切换收支类型（比 [TxnEditRules.canEdit] 更严）；不能时给用户原因，可切换返回 null。
+ *
+ * 判据比"能否编辑"更严的原因：改类型会**翻转金额符号**，而金额是退款抵扣对账、
+ * 合并链继承、指纹匹配三处的共同基准，动它等于动三处账。
+ *
+ * ⚠️ 实现纪律（两条，改动时务必一起看）：
+ * 1. **必须用 `when { }` 逐条早返回**，禁止 `&&` / `||` 混写 ——
+ *    混写会因运算符优先级把"退款/划转"这类类型判据吞进错误的分支，出现"以为拦住了其实没拦"。
+ * 2. **判据与顺序必须与 [canSwitchType] 完全一致** —— 实际上 [canSwitchType] 就是本函数的 `== null`，
+ *    两个函数天然一致；改这里不必改那里，反之亦然。
+ */
+fun typeSwitchBlockReason(txn: LedgerTransaction, absorbedCount: Int = 0): String? = when {
+    txn.status == TxnStatus.MERGED -> "该笔已并入其他流水，不可修改"
+    txn.type != TxnType.EXPENSE && txn.type != TxnType.INCOME ->
+        "退款 / 内部划转不参与收支，不能改成收入或支出"
+    txn.orderId != null -> "已关联订单，改收支类型会破坏退款抵扣对账"
+    txn.refundId != null -> "已关联退款，不可改收支类型"
+    txn.transferGroupId != null -> "已配对为内部划转，不可改收支类型"
+    absorbedCount > 0 -> "这条已合并了 $absorbedCount 条记录，改类型会让合并链两侧口径不一致"
+    else -> null
+}
+
+/** 能否切换收支类型（判据与顺序完全来自 [typeSwitchBlockReason]，不另立一套）。 */
+fun canSwitchType(txn: LedgerTransaction, absorbedCount: Int = 0): Boolean =
+    typeSwitchBlockReason(txn, absorbedCount) == null
+
+/**
+ * 切换收支类型（纯函数，便于 JVM 单测）。
+ *
+ * **符号随类型翻转**：`EXPENSE` 记负、`INCOME` 记正。金额取 `safeAbs`，所以用户输入
+ * `100` 或 `-100` 结果一致（弹窗传进来的是绝对值）。
+ *
+ * **必须重算指纹**：[LedgerDuplicateResolver.fingerprintOf] 的指纹材料含**带符号**金额
+ * （`金额|商户|…`），不重算的话这笔会带着旧金额的旧符号留在库里，跨渠道去重再也匹配不上。
+ *
+ * **分类保持不动**（`categoryId` 原样保留）：收入行的分类**不参与任何 `ExpenseMath` 口径**
+ * （见 ExpenseMath：只认 EXPENSE / REFUND / INCOME 的金额聚合，分类只用于支出的预算与冲抵归桶），
+ * 留着只是用户自己写的备注。⚠️ 若将来有人加"按分类统计收入"，必须先决定收入要不要用分类，
+ * 不能默认沿用支出那套 —— 否则收入也会挤占分类预算。
+ */
+internal fun applyTypeSwitch(
+    txn: LedgerTransaction,
+    newType: TxnType,
+    fingerprintOf: (LedgerTransaction) -> String,
+): LedgerTransaction {
+    val abs = safeAbs(txn.amountMinor)
+    val signed = if (newType == TxnType.EXPENSE) -abs else abs
+    val edited = txn.copy(type = newType, amountMinor = signed)
+    return edited.copy(fingerprint = fingerprintOf(edited))
 }
 
 /**
@@ -109,6 +171,10 @@ internal fun applyAmountAndDateEdit(
  *
  * @param amountMinor 用户输入的绝对值（分）；null 表示不改金额
  * @param occurredAtMillis 新的发生时间；null 表示不改日期
+ * @param type 目标收支类型（默认不变）。v1.1.6 起符号基准由「原符号」改为「目标类型」：
+ *   只改类型不改金额时也会把符号翻到与类型一致，避免留下 `EXPENSE + 正数` 这种错色脏行。
+ *   **但不能无条件覆盖** —— 类型未变时必须沿用原符号（REFUND 恒正、TRANSFER 可正可负），
+ *   所以用三分支 `when` 而非 `if (type == EXPENSE) -abs else abs`。
  */
 internal fun applyFullEdit(
     txn: LedgerTransaction,
@@ -117,6 +183,7 @@ internal fun applyFullEdit(
     platformId: String,
     amountMinor: Long?,
     occurredAtMillis: Long?,
+    type: TxnType = txn.type,
     fingerprintOf: (LedgerTransaction) -> String,
 ): LedgerTransaction {
     val userChangedPlatform = platformId != txn.platformId
@@ -127,10 +194,17 @@ internal fun applyFullEdit(
         platformConfidence = if (userChangedPlatform) 1f else txn.platformConfidence,
         platformSource = if (userChangedPlatform) PlatformSource.USER else txn.platformSource,
     )
-    if (amountMinor != null || occurredAtMillis != null) {
-        val signed = if (txn.amountMinor < 0) -safeAbs(amountMinor ?: txn.amountMinor)
-        else safeAbs(amountMinor ?: txn.amountMinor)
+    if (amountMinor != null || occurredAtMillis != null || type != txn.type) {
+        val abs = safeAbs(amountMinor ?: txn.amountMinor)
+        val signed = when {
+            // 类型未变：沿用原符号（退款恒正、内部划转可正可负，绝不能"顺手翻正"）
+            type == txn.type -> if (txn.amountMinor < 0) -abs else abs
+            // 目标为支出：翻负；目标为收入（其余分支只可能是 INCOME）：翻正
+            type == TxnType.EXPENSE -> -abs
+            else -> abs
+        }
         edited = edited.copy(
+            type = type,
             amountMinor = signed,
             occurredAtMillis = occurredAtMillis ?: txn.occurredAtMillis,
             bookedAtMillis = txn.bookedAtMillis,

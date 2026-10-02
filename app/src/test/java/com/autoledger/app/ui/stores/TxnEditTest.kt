@@ -222,4 +222,130 @@ class TxnEditTest {
         assertEquals(true, TxnEditRules.canEditAmountAndDate(plain))
         assertEquals(null, TxnEditRules.blockReason(plain))
     }
+
+    // ------------------------------------------------------------ 收支类型切换（v1.1.6）
+
+    /** 指纹算法注入：把"是否重算"变成可观测 —— 真实算法含带符号金额，这里用可区分的假算法。 */
+    private fun fp(t: LedgerTransaction): String = "fp:${t.type.name}:${t.amountMinor}"
+
+    @Test
+    fun `switching type flips the sign and always recomputes the fingerprint`() {
+        val expense = txn().copy(type = TxnType.EXPENSE, amountMinor = -1_350L, fingerprint = "old")
+        val toIncome = applyTypeSwitch(expense, TxnType.INCOME, ::fp)
+        assertEquals(TxnType.INCOME, toIncome.type)
+        assertEquals(1_350L, toIncome.amountMinor, "支出 → 收入：金额翻正")
+        assertEquals("fp:INCOME:1350", toIncome.fingerprint, "指纹必须按新符号重算（否则跨渠道去重匹配不上）")
+
+        val income = txn().copy(type = TxnType.INCOME, amountMinor = 1_350L, fingerprint = "old")
+        val toExpense = applyTypeSwitch(income, TxnType.EXPENSE, ::fp)
+        assertEquals(-1_350L, toExpense.amountMinor, "收入 → 支出：金额翻负")
+        assertEquals("fp:EXPENSE:-1350", toExpense.fingerprint)
+
+        // 两次切换必须都产生变化的指纹（不是只改类型不改指纹）
+        assertTrue(expense.fingerprint != toIncome.fingerprint)
+        assertTrue(income.fingerprint != toExpense.fingerprint)
+    }
+
+    @Test
+    fun `full edit flips the sign when only the type changes`() {
+        val expense = txn().copy(type = TxnType.EXPENSE, amountMinor = -1_350L)
+        val edited = applyFullEdit(
+            txn = expense,
+            counterparty = "某商户",
+            note = null,
+            platformId = "",
+            amountMinor = null, // 用户没动金额
+            occurredAtMillis = null,
+            type = TxnType.INCOME,
+            fingerprintOf = ::fp,
+        )
+        assertEquals(TxnType.INCOME, edited.type)
+        assertEquals(1_350L, edited.amountMinor, "只改类型不改金额时也必须翻正，否则留下 EXPENSE+正数 之外的错色脏行")
+    }
+
+    @Test
+    fun `full edit without a type argument behaves exactly as before`() {
+        // 回归护栏：老调用点（不传 type）必须与改造前逐位相同 —— 符号沿用原值、类型不变
+        val expense = txn().copy(type = TxnType.EXPENSE, amountMinor = -1_350L)
+        val edited = applyFullEdit(
+            txn = expense,
+            counterparty = " 某商户 ",
+            note = " 备注 ",
+            platformId = "wechat",
+            amountMinor = 2_000L,
+            occurredAtMillis = 1_700_000_100_000L,
+            fingerprintOf = ::fp,
+        )
+        assertEquals(TxnType.EXPENSE, edited.type)
+        assertEquals(-2_000L, edited.amountMinor, "不传 type ⇒ 沿用原符号（负）")
+        assertEquals("某商户", edited.counterparty)
+        assertEquals("备注", edited.note)
+        assertEquals(1_700_000_100_000L, edited.occurredAtMillis)
+    }
+
+    @Test
+    fun `refund keeps positive and transfer keeps its sign when the amount is edited`() {
+        // 类型未变 ⇒ 沿用原符号。退款恒正、内部划转可正可负，绝不能被"顺手翻正/翻负"
+        val refund = txn().copy(type = TxnType.REFUND, amountMinor = 5_000L)
+        val editedRefund = applyFullEdit(
+            txn = refund, counterparty = "", note = null, platformId = "",
+            amountMinor = 6_000L, occurredAtMillis = null, fingerprintOf = ::fp,
+        )
+        assertEquals(6_000L, editedRefund.amountMinor, "退款改金额后仍为正")
+
+        val transferOut = txn().copy(type = TxnType.TRANSFER, amountMinor = -5_000L)
+        val editedTransfer = applyFullEdit(
+            txn = transferOut, counterparty = "", note = null, platformId = "",
+            amountMinor = 7_000L, occurredAtMillis = null, fingerprintOf = ::fp,
+        )
+        assertEquals(-7_000L, editedTransfer.amountMinor, "划出（负）改金额后仍为负")
+    }
+
+    @Test
+    fun `type switch is blocked for merged refund transfer order refund link and merge chain`() {
+        val plain = txn().copy(status = TxnStatus.CONFIRMED)
+        assertTrue(canSwitchType(plain), "普通支出可切换")
+
+        val blocked = listOf(
+            plain.copy(status = TxnStatus.MERGED) to "已并入",
+            plain.copy(type = TxnType.REFUND) to "退款",
+            plain.copy(type = TxnType.TRANSFER) to "划转",
+            plain.copy(orderId = "o1") to "已关联订单",
+            plain.copy(refundId = "r1") to "已关联退款",
+            plain.copy(transferGroupId = "g1") to "已配对划转",
+        )
+        blocked.forEach { (t, label) ->
+            assertTrue(!canSwitchType(t), "$label 必须禁止切换类型")
+            assertTrue(
+                typeSwitchBlockReason(t) != null,
+                "$label 必须给出原因（沿用「写明原因而不是默默忽略」的惯例）",
+            )
+        }
+        // 合并链主记录：吸收条数 > 0 时禁止
+        assertTrue(!canSwitchType(plain, absorbedCount = 1), "已合并 N 条的主记录不得改类型")
+        assertTrue(canSwitchType(plain, absorbedCount = 0), "没有吸收记录时可切换")
+    }
+
+    @Test
+    fun `nextType only flips between expense and income`() {
+        assertEquals(TxnType.INCOME, nextType(txn().copy(type = TxnType.EXPENSE)))
+        assertEquals(TxnType.EXPENSE, nextType(txn().copy(type = TxnType.INCOME)))
+    }
+
+    @Test
+    fun `zero and Long MIN amounts do not blow up`() {
+        val zero = txn().copy(amountMinor = 0L)
+        assertEquals(0L, applyTypeSwitch(zero, TxnType.INCOME, ::fp).amountMinor)
+
+        // Long.MIN_VALUE 取绝对值会溢出 ⇒ safeAbs 夹到 MAX_VALUE，落差 1 分，不崩
+        val min = txn().copy(amountMinor = Long.MIN_VALUE)
+        val flipped = applyTypeSwitch(min, TxnType.INCOME, ::fp)
+        assertEquals(Long.MAX_VALUE, flipped.amountMinor, "MIN 饱和夹取，不得回绕成负数")
+
+        val edited = applyFullEdit(
+            txn = min, counterparty = "", note = null, platformId = "",
+            amountMinor = Long.MIN_VALUE, occurredAtMillis = null, fingerprintOf = ::fp,
+        )
+        assertEquals(-Long.MAX_VALUE, edited.amountMinor, "支出方向：夹取后取负")
+    }
 }

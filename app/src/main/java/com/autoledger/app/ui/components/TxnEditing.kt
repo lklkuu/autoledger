@@ -28,6 +28,8 @@ import androidx.compose.ui.text.input.KeyboardType
 import androidx.compose.ui.unit.dp
 import com.autoledger.app.ui.stores.LedgerStore
 import com.autoledger.app.ui.stores.TxnEditRules
+import com.autoledger.app.ui.stores.canSwitchType
+import com.autoledger.app.ui.stores.typeSwitchBlockReason
 import com.autoledger.app.ui.theme.LedgerIcons
 import com.autoledger.app.ui.theme.LedgerPalette
 import com.autoledger.core.model.LedgerTransaction
@@ -107,6 +109,16 @@ fun TxnEditExtras(
                 label = { Text("标为内部划转") },
             )
         }
+        // v1.1.6 辅入口：一键翻转收支类型（与弹窗里的 chips 同一套判据 canSwitchType）。
+        // 不可切换时**不显示**（弹窗里已给出原因，这里是快捷入口，不必重复占位）。
+        // 不放进 TxnRowTrailing：行尾已被「纠正分类」「删除」占满且删除紧邻，单击即翻转数据误触成本太高。
+        if (canSwitchType(txn)) {
+            FilterChip(
+                selected = false,
+                onClick = { store.switchType(txn); onDone() },
+                label = { Text(if (txn.type == TxnType.EXPENSE) "改为收入" else "改为支出") },
+            )
+        }
     }
     TagEditor(
         tags = txn.txnExtras.tags,
@@ -135,6 +147,10 @@ fun TxnEditDialog(
 ) {
     val amountDateEditable = TxnEditRules.canEditAmountAndDate(txn)
     val blockReason = TxnEditRules.blockReason(txn)
+    // 类型切换与「合并链吸收条数」有关（主记录带着吸收来的记录，改类型会让两侧口径不一致），
+    // 所以判定要传 mergedInto.size —— 该列表已由调用方通过 store.loadMergeGroup(txn.id) 加载。
+    val typeSwitchable = canSwitchType(txn, mergedInto.size)
+    var typeSelection by remember(txn.id) { mutableStateOf(txn.type) }
 
     var name by remember(txn.id) { mutableStateOf(txn.counterparty) }
     var noteText by remember(txn.id) { mutableStateOf(txn.note.orEmpty()) }
@@ -191,6 +207,37 @@ fun TxnEditDialog(
                     singleLine = true,
                     modifier = Modifier.fillMaxWidth().padding(top = 8.dp),
                 )
+
+                // 收支类型（v1.1.6）：放在金额/日期**之前** —— 方向是用户要显式表达的意思，
+                // 夹在两个输入框后面会让人以为「方向由金额决定」。金额输入框本身不含符号。
+                Text(
+                    "收支类型",
+                    Modifier.padding(top = 12.dp),
+                    style = MaterialTheme.typography.labelMedium,
+                )
+                FlowRow(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
+                    FilterChip(
+                        selected = typeSelection == TxnType.EXPENSE,
+                        enabled = typeSwitchable,
+                        onClick = { typeSelection = TxnType.EXPENSE },
+                        label = { Text("支出") },
+                    )
+                    FilterChip(
+                        selected = typeSelection == TxnType.INCOME,
+                        enabled = typeSwitchable,
+                        onClick = { typeSelection = TxnType.INCOME },
+                        label = { Text("收入") },
+                    )
+                }
+                // 不可切换时写明原因，而不是把 chips 悄悄禁掉（沿用本弹窗既有惯例）
+                typeSwitchBlockReason(txn, mergedInto.size)?.let { reason ->
+                    Text(
+                        reason,
+                        Modifier.padding(top = 6.dp),
+                        style = MaterialTheme.typography.bodySmall,
+                        color = LedgerPalette.Warning,
+                    )
+                }
 
                 Row(Modifier.fillMaxWidth().padding(top = 8.dp)) {
                     OutlinedTextField(
@@ -300,6 +347,7 @@ fun TxnEditDialog(
                         platformId = platformId,
                         amountMinor = parsedAmount,
                         occurredAtMillis = parsedDate,
+                        type = if (typeSwitchable) typeSelection else txn.type,
                     )
                     onDismiss()
                 },

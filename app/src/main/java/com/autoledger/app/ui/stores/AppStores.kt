@@ -417,9 +417,12 @@ class LedgerStore(private val container: AppContainer) {
         platformId: String,
         amountMinor: Long? = null,
         occurredAtMillis: Long? = null,
+        type: TxnType = txn.type,
     ) {
         if (!TxnEditRules.canEdit(txn)) return
         val amountDateAllowed = TxnEditRules.canEditAmountAndDate(txn)
+        // 类型切换比改金额更严：已关联订单/退款/划转、已并入、合并链主记录都不许改类型
+        val typeAllowed = canSwitchType(txn)
         storeScope.launch {
             catching {
                 container.repository.upsert(
@@ -430,6 +433,7 @@ class LedgerStore(private val container: AppContainer) {
                         platformId = platformId,
                         amountMinor = if (amountDateAllowed) amountMinor else null,
                         occurredAtMillis = if (amountDateAllowed) occurredAtMillis else null,
+                        type = if (typeAllowed) type else txn.type,
                         fingerprintOf = container.duplicateResolver::fingerprintOf,
                     ),
                 )
@@ -455,6 +459,31 @@ class LedgerStore(private val container: AppContainer) {
         storeScope.launch {
             catching {
                 container.repository.upsert(txn.copy(type = TxnType.TRANSFER, status = TxnStatus.CONFIRMED))
+            }
+        }
+    }
+
+    /**
+     * 切换收支类型（支出 ⇄ 收入）：符号随类型翻转，并**重算指纹**（纯函数见 [applyTypeSwitch]）。
+     *
+     * 形状照 [markTransfer]：一次 `upsert` 写回整行，不新增 DAO 方法、不改 `LedgerRepository`
+     * 接口、不加 Migration —— 与「标为内部划转」是同一类操作。
+     *
+     * ⚠️ **不调 `store.load()`**：那会把 `loading` 拉回 true 闪一下 LoadingBox 并重订阅，
+     * 打断用户当前的筛选/展开/选中月状态。本 Store 是 Flow 驱动的，`upsert` 后
+     * InvalidationTracker 会自动重发、`visibleItems()` 在组合期重算 ⇒ 状态全保留。
+     */
+    fun switchType(txn: LedgerTransaction, absorbedCount: Int = 0) {
+        if (!canSwitchType(txn, absorbedCount)) return
+        storeScope.launch {
+            catching {
+                container.repository.upsert(
+                    applyTypeSwitch(
+                        txn = txn,
+                        newType = nextType(txn),
+                        fingerprintOf = container.duplicateResolver::fingerprintOf,
+                    ),
+                )
             }
         }
     }
