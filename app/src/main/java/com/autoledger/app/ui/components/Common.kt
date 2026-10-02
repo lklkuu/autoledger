@@ -10,6 +10,7 @@ import androidx.compose.foundation.layout.Spacer
 import androidx.compose.foundation.layout.fillMaxHeight
 import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.height
+import androidx.compose.foundation.layout.heightIn
 import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.layout.size
 import androidx.compose.foundation.layout.width
@@ -52,14 +53,25 @@ private const val FEN_PER_YUAN = 100L
 /**
  * 趋势图节点内部的间距（金额 ↔ 柱体、柱体 ↔ 月份标签）。
  *
- * 高度预算（容器固定 110.dp，`verticalArrangement = Arrangement.Bottom` 从底部往上排）：
- * 金额 labelSmall ≈ 16.dp + 4 + 柱体 ≤64.dp + 4 + 月份 labelMedium ≈16.dp = **≤104.dp**，
- * 留 6.dp 余量；`coerceAtLeast(2f)` 保证 0 元月份的柱体仍有 2.dp 可见高度（不"消失"）。
+ * 高度预算（容器 `heightIn(min = 110.dp)`，`verticalArrangement = Arrangement.Bottom` 自底向上排）：
+ * 金额 `labelSmall` 11sp（行高 **16sp**） + 4 + 柱体 ≤64.dp + 4
+ * + 月份 `labelMedium` 12sp（行高 **18sp**） = **≤106.dp ≤ 110.dp**（fontScale = 1.0 时余量 4.dp）。
+ *
+ * ⚠️ 行高取自 `Theme.kt` 的 `labelMedium = 12.sp / lineHeight 18.sp`（不是 16）——
+ * 按 16 估算会在轻度大字体下低估 2.dp。
+ * 容器因此**只用 `heightIn(min = …)` 而非固定 `height(…)`**：文字用 `sp`、会随系统字体缩放放大，
+ * fontScale ≥ 1.118 即超出 110.dp（中国区大量用户开 1.15~1.3），固定高度会把金额标签裁掉、
+ * 等于该功能对其失效。改为 min 约束后，字体放大时容器跟着长高；
+ * 柱体有 [TREND_MAX_BAR_DP] 上限、Column 底部对齐，容器变高不会破坏对齐关系。
+ * `coerceAtLeast(2f)` 则保证 0 元月份的柱体仍有 2.dp 可见高度（不"消失"）。
  */
 private val TREND_NODE_GAP = 4.dp
 
 /** 柱体最大高度（ratio=1.0 时）。取值理由见 [TREND_NODE_GAP] 的高度预算。 */
 private const val TREND_MAX_BAR_DP = 64f
+
+/** 趋势图容器最小高度（fontScale=1.0 时的实际内容高度 ≈106.dp，留 4.dp 余量）。 */
+private val TREND_CHART_MIN_HEIGHT = 110.dp
 
 /**
  * 「月度趋势」每个柱子上方的金额标签（纯函数 ⇒ 可 JVM 单测，不依赖 Compose）。
@@ -285,7 +297,8 @@ fun MetricCard(result: MetricResult, modifier: Modifier = Modifier.fillMaxWidth(
                 Text(result.title, style = MaterialTheme.typography.titleMedium)
                 val max = result.points.maxOfOrNull { it.valueMinor } ?: 0L
                 Row(
-                    Modifier.fillMaxWidth().padding(top = 12.dp).height(110.dp),
+                    // 只给最小高度、不设固定高度：系统大字体下文字会变高，容器跟着长，避免裁掉金额标签
+                    Modifier.fillMaxWidth().padding(top = 12.dp).heightIn(min = TREND_CHART_MIN_HEIGHT),
                     horizontalArrangement = Arrangement.spacedBy(8.dp),
                     verticalAlignment = Alignment.Bottom,
                 ) {
@@ -311,8 +324,8 @@ fun MetricCard(result: MetricResult, modifier: Modifier = Modifier.fillMaxWidth(
                             Box(
                                 Modifier
                                     .width(22.dp)
-                                    // 柱高上限 64.dp：与「金额 + 月份」两行文字一起放进 110.dp 容器
-                                    // （labelSmall≈16 + 4 + 64 + 4 + labelMedium≈16 = 104.dp ≤ 110.dp）。
+                                    // 柱高上限 64.dp：与「金额 + 月份」两行文字一起放进容器
+                                    // （labelSmall 16 + 4 + 64 + 4 + labelMedium 18 = 106.dp ≤ 最小高度 110.dp）。
                                     .height((ratio * TREND_MAX_BAR_DP).coerceAtLeast(2f).dp)
                                     .clip(RoundedCornerShape(topStart = 6.dp, topEnd = 6.dp))
                                     .background(if (point.valueMinor >= max) LedgerPalette.PositiveStrong else LedgerPalette.PositivePale),
