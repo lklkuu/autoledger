@@ -6,6 +6,7 @@ import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.Column
 import androidx.compose.foundation.layout.Row
+import androidx.compose.foundation.layout.Spacer
 import androidx.compose.foundation.layout.fillMaxHeight
 import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.height
@@ -35,6 +36,7 @@ import com.autoledger.app.ui.theme.LedgerPalette
 import com.autoledger.core.model.MetricResult
 import com.autoledger.core.model.LedgerTransaction
 import com.autoledger.core.model.Category
+import java.util.Locale
 
 /** 分 -> 元 的可读串 */
 fun Long.yuan(withSign: Boolean = false): String {
@@ -42,6 +44,60 @@ fun Long.yuan(withSign: Boolean = false): String {
     val v = kotlin.math.abs(this)
     val body = "${v / 100}" + if (v % 100 == 0L) "" else ".${(v % 100).toString().padStart(2, '0')}"
     return (if (negative && withSign) "-" else "") + body
+}
+
+/** 一元 = 100 分；一万元 = 1_000_000 分。 */
+private const val FEN_PER_YUAN = 100L
+
+/**
+ * 趋势图节点内部的间距（金额 ↔ 柱体、柱体 ↔ 月份标签）。
+ *
+ * 高度预算（容器固定 110.dp，`verticalArrangement = Arrangement.Bottom` 从底部往上排）：
+ * 金额 labelSmall ≈ 16.dp + 4 + 柱体 ≤64.dp + 4 + 月份 labelMedium ≈16.dp = **≤104.dp**，
+ * 留 6.dp 余量；`coerceAtLeast(2f)` 保证 0 元月份的柱体仍有 2.dp 可见高度（不"消失"）。
+ */
+private val TREND_NODE_GAP = 4.dp
+
+/** 柱体最大高度（ratio=1.0 时）。取值理由见 [TREND_NODE_GAP] 的高度预算。 */
+private const val TREND_MAX_BAR_DP = 64f
+
+/**
+ * 「月度趋势」每个柱子上方的金额标签（纯函数 ⇒ 可 JVM 单测，不依赖 Compose）。
+ *
+ * 为什么不用 [yuan]：节点列宽只有屏宽/6（≈60dp），`¥1,234.00` 必然溢出，必须按量级压缩：
+ * - `0` → `¥0`（**0 元月份也显式标注** —— 让用户看出哪些月没花钱，而不是留空白让人猜）；
+ * - < 100 元 → 两位小数（分位要看得见）：`¥28.45`；
+ * - 100 ~ 10_000 元 → 整数 + 千分位、不带小数：`¥1,000`、`¥9,280`；
+ * - ≥ 10_000 元 → 折成「万」、一位小数：`¥1.2万`。
+ *
+ * ⚠️ 千分位分隔符**固定用 [Locale.US]**：项目里踩过「系统 locale 为阿拉伯语时数字被本地化、
+ * 导致 `toBigDecimalOrNull()` 解析失败」的坑（见 `YuanFormatTest`），此处不能跟随系统 locale。
+ *
+ * 小数部分一律用**整数运算**拼装，不用浮点：避免 `24.45` 这类值在二进制浮点下的
+ * 舍入抖动（`%.2f` 偶尔会印出 `24.44`）。
+ *
+ * 负数保留负号（趋势柱已 `coerceAtLeast(0)`，此处仍按可独立复用的格式化函数对待）：
+ * 符号位置与全站其它金额一致（`¥` 在前，如 `InsightScreens` 的「已攒」）。
+ */
+fun trendAmountLabel(valueMinor: Long): String {
+    // Long.MIN_VALUE 取绝对值会溢出，夹到 MAX_VALUE（格式化结果仍是合法金额串）
+    val absMinor = if (valueMinor == Long.MIN_VALUE) Long.MAX_VALUE else kotlin.math.abs(valueMinor)
+    val sign = if (valueMinor < 0) "-" else ""
+    return when {
+        absMinor == 0L -> "¥0"
+        // < 100 元：保留两位小数
+        absMinor < 100L * FEN_PER_YUAN ->
+            "¥$sign${absMinor / FEN_PER_YUAN}.${(absMinor % FEN_PER_YUAN).toString().padStart(2, '0')}"
+        // 100 ~ 10_000 元：整数 + 千分位（Locale.US，不跟随系统）
+        absMinor < 10_000L * FEN_PER_YUAN ->
+            "¥$sign" + String.format(Locale.US, "%,d", absMinor / FEN_PER_YUAN)
+        // ≥ 10_000 元：折成「万」、一位小数。
+        // 0.1 万 = 1_000 元 = 100_000 分 ⇒ 以「万分位」为单位四舍五入（+50_000 分 = 半个 0.1 万）
+        else -> {
+            val wanTenths = (absMinor + 50_000L) / 100_000L
+            "¥$sign${wanTenths / 10}.${wanTenths % 10}万"
+        }
+    }
 }
 
 @Composable
@@ -232,13 +288,28 @@ fun MetricCard(result: MetricResult, modifier: Modifier = Modifier.fillMaxWidth(
                             horizontalAlignment = Alignment.CenterHorizontally,
                             verticalArrangement = Arrangement.Bottom,
                         ) {
+                            // 每个节点都显式标注金额（含 ¥0 的月份），放在柱体**上方**；
+                            // 格式按量级压缩（见 trendAmountLabel），节点列宽 ≈60dp 也不溢出。
+                            Text(
+                                text = trendAmountLabel(point.valueMinor),
+                                modifier = Modifier.fillMaxWidth(),
+                                style = MaterialTheme.typography.labelSmall,
+                                color = MaterialTheme.colorScheme.onSurfaceVariant,
+                                maxLines = 1,
+                                softWrap = false,
+                                textAlign = TextAlign.Center,
+                            )
+                            Spacer(Modifier.height(TREND_NODE_GAP))
                             Box(
                                 Modifier
                                     .width(22.dp)
-                                    .height((ratio * 80f).coerceAtLeast(2f).dp)
+                                    // 柱高上限 64.dp：与「金额 + 月份」两行文字一起放进 110.dp 容器
+                                    // （labelSmall≈16 + 4 + 64 + 4 + labelMedium≈16 = 104.dp ≤ 110.dp）。
+                                    .height((ratio * TREND_MAX_BAR_DP).coerceAtLeast(2f).dp)
                                     .clip(RoundedCornerShape(topStart = 6.dp, topEnd = 6.dp))
                                     .background(if (point.valueMinor >= max) LedgerPalette.PositiveStrong else LedgerPalette.PositivePale),
                             )
+                            Spacer(Modifier.height(TREND_NODE_GAP))
                             Text(point.label, style = MaterialTheme.typography.labelMedium)
                         }
                     }
