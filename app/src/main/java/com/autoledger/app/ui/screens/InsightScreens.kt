@@ -40,6 +40,8 @@ import com.autoledger.app.ui.components.yuan
 import com.autoledger.app.ui.stores.FreedomStore
 import com.autoledger.app.ui.stores.InsightsStore
 import com.autoledger.app.ui.theme.LedgerPalette
+import com.autoledger.app.ui.theme.LedgerTone
+import com.autoledger.app.ui.theme.toneColor
 import com.autoledger.core.model.FreedomMath
 import com.autoledger.core.model.Money
 
@@ -98,20 +100,24 @@ fun FreedomScreen(container: AppContainer) {
                 SectionTitle("自由坐标", "攒到多少钱就不用勉强自己了")
                 Row(Modifier.fillMaxWidth().padding(top = 8.dp), horizontalArrangement = Arrangement.SpaceBetween) {
                     // 负值必须显示负号：Long.yuan() 默认会吞掉它，这里显式开 withSign。
+                    // 「已攒」是攒钱进度、不是某笔收支 ⇒ BRAND（观感沿用品牌绿）
                     HeroTile(
                         "当月已攒",
                         "¥${monthlySavedUpMinor.yuan(withSign = true)}",
+                        tone = LedgerTone.BRAND,
                         hint = "= 到手月薪 − 当月支出",
                     )
                     HeroTile(
                         "累计已攒",
                         "¥${cumulativeSavedUpMinor.yuan(withSign = true)}",
+                        tone = LedgerTone.BRAND,
                         hint = cumulativeHint,
                     )
                 }
                 Row(Modifier.fillMaxWidth().padding(top = 10.dp), horizontalArrangement = Arrangement.SpaceBetween) {
-                    HeroTile("目标", "¥${targetMinor.yuan()}", accent = LedgerPalette.InkDeep)
-                    HeroTile("起始月", startLabel, accent = LedgerPalette.InkDeep)
+                    // 目标 / 起始月是中性参考值 ⇒ NEUTRAL（浅色 = 原来的 InkDeep，观感不变）
+                    HeroTile("目标", "¥${targetMinor.yuan()}", tone = LedgerTone.NEUTRAL)
+                    HeroTile("起始月", startLabel, tone = LedgerTone.NEUTRAL)
                 }
                 ProgressLine(
                     progress = progress,
@@ -242,7 +248,8 @@ fun InsightsScreen(container: AppContainer) {
 private fun FactLine(label: String, value: String) {
     Row(Modifier.fillMaxWidth().padding(vertical = 6.dp)) {
         Text(label, Modifier.weight(1f), style = MaterialTheme.typography.bodyMedium)
-        // v1.1.6：这行展示的是「最大一笔 / 最常光顾 / 日均花销」等**支出**口径数值 ⇒ 支出语义绿
-        Text(value, style = MaterialTheme.typography.labelMedium, color = LedgerPalette.ExpenseGreen)
+        // v1.1.6：这行展示的是「最大一笔 / 最常光顾 / 日均花销」等**支出**口径数值 ⇒ 支出语义绿。
+        // 用 toneColor 而非裸 LedgerPalette.ExpenseGreen —— 后者是浅色常量，深色模式下会看不清。
+        Text(value, style = MaterialTheme.typography.labelMedium, color = toneColor(LedgerTone.EXPENSE))
     }
 }

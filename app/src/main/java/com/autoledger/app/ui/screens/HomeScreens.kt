@@ -37,6 +37,7 @@ import com.autoledger.app.ui.components.SectionTitle
 import com.autoledger.app.ui.components.yuan
 import com.autoledger.app.ui.stores.HomeStore
 import com.autoledger.app.ui.theme.LedgerPalette
+import com.autoledger.app.ui.theme.LedgerTone
 import com.autoledger.core.model.MetricResult
 import com.autoledger.core.model.Money
 import com.autoledger.core.model.WageProfile
@@ -67,22 +68,22 @@ fun DashboardScreen(container: AppContainer) {
                 AppCard {
                     if (state.loading) { LoadingBox(); return@AppCard }
                     Row(Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.SpaceBetween) {
-                        // v1.1.6：支出金额用收支语义绿（HeroTile 默认色即品牌绿，这里显式传，避免将来
-                        // 改默认值时静默把「支出」染成品牌色）
+                        // v1.1.6：支出金额用收支语义绿（走 toneColor，深浅色自动切换）
                         HeroTile(
                             "今日支出", "¥${state.todayMinor.yuan()}",
+                            tone = LedgerTone.EXPENSE,
                             hint = "换算 ${hoursOf(container, state.todayMinor)} 工作小时",
-                            accent = LedgerPalette.ExpenseGreen,
                         )
                         HeroTile(
                             "本月支出", "¥${state.monthMinor.yuan()}",
+                            tone = LedgerTone.EXPENSE,
                             // 同时给出「付款总额」与「退款总额」两个独立数值，口径见 ExpenseMath。
                             hint = if (state.monthRefundMinor > 0) {
                                 "付款 ¥${state.monthGrossMinor.yuan()} · 退款 ¥${state.monthRefundMinor.yuan()}"
                             } else null,
-                            accent = LedgerPalette.ExpenseGreen,
                         )
-                        HeroTile("真实时薪", "¥${"%.1f".format(state.realHourly)}", hint = "每小时")
+                        // 时薪不是收支金额 ⇒ BRAND（保留观感上的品牌绿）
+                        HeroTile("真实时薪", "¥${"%.1f".format(state.realHourly)}", tone = LedgerTone.BRAND, hint = "每小时")
                     }
                 }
                 Text(
@@ -157,8 +158,8 @@ fun HourlyScreen(container: AppContainer) {
         item {
             AppCard {
                 Row(Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.SpaceBetween) {
-                    HeroTile("真实时薪", "¥${"%.1f".format(profile.realHourly)}", "每小时")
-                    HeroTile("名义时薪", "¥${"%.1f".format(profile.nominalHourly)}", "每小时", LedgerPalette.Muted)
+                    HeroTile("真实时薪", "¥${"%.1f".format(profile.realHourly)}", tone = LedgerTone.BRAND, hint = "每小时")
+                    HeroTile("名义时薪", "¥${"%.1f".format(profile.nominalHourly)}", tone = LedgerTone.MUTED, hint = "每小时")
                 }
                 Text(
                     "两者差 ¥${"%.1f".format(profile.nominalHourly - profile.realHourly)}/时，就是通勤、加班和上班开销悄悄吃掉的部分。",

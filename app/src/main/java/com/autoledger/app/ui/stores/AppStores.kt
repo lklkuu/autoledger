@@ -418,11 +418,18 @@ class LedgerStore(private val container: AppContainer) {
         amountMinor: Long? = null,
         occurredAtMillis: Long? = null,
         type: TxnType = txn.type,
+        /**
+         * 这条流水**吸收掉**的记录数（合并链主记录）。
+         *
+         * 必须由调用方传入：类型切换的阻断判据之一就是"合并链主记录改类型会让两侧口径不一致"，
+         * 若这里默认 0 就等于把这条判据在 Store 侧漏掉 —— UI 侧 chips 已禁用，但纵深防御必须一致。
+         */
+        absorbedCount: Int = 0,
     ) {
         if (!TxnEditRules.canEdit(txn)) return
         val amountDateAllowed = TxnEditRules.canEditAmountAndDate(txn)
         // 类型切换比改金额更严：已关联订单/退款/划转、已并入、合并链主记录都不许改类型
-        val typeAllowed = canSwitchType(txn)
+        val typeAllowed = canSwitchType(txn, absorbedCount)
         storeScope.launch {
             catching {
                 container.repository.upsert(

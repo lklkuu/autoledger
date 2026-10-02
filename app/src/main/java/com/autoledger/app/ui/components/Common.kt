@@ -37,6 +37,7 @@ import com.autoledger.app.ui.theme.toLedgerTone
 import com.autoledger.app.ui.theme.txnTone
 import com.autoledger.app.ui.theme.LedgerIcons
 import com.autoledger.app.ui.theme.LedgerPalette
+import com.autoledger.app.ui.theme.LedgerTone
 import com.autoledger.core.model.MetricResult
 import com.autoledger.core.model.LedgerTransaction
 import com.autoledger.core.model.Category
@@ -166,8 +167,18 @@ fun SectionTitle(title: String, subtitle: String? = null, trailing: (@Composable
     }
 }
 
+/**
+ * 首页大数字块。
+ *
+ * ⚠️ v1.1.6 起 `tone` 收 [LedgerTone]（**必填、无默认值**），组件内部调 [toneColor] 拿深浅色。
+ * 之前这里收裸 `Color`，调用点直接传 `LedgerPalette.ExpenseGreen` 这类**浅色常量**，
+ * 于是深色模式下永远是浅色值（深底对比度掉到 2.0~2.4:1，比改造前更差）。
+ * 必填而非给默认值，是为了逼每个调用点显式声明语义 ——  defaulted EXPENSE 会让"时薪"这类
+ * 非收支数值被悄悄涂成支出绿。
+ */
 @Composable
-fun HeroTile(label: String, value: String, hint: String? = null, accent: Color = LedgerPalette.Positive) {
+fun HeroTile(label: String, value: String, tone: LedgerTone, hint: String? = null) {
+    val accent = toneColor(tone)
     Column {
         Text(label, style = MaterialTheme.typography.labelMedium, color = MaterialTheme.colorScheme.onSurfaceVariant)
         Text(
@@ -185,9 +196,12 @@ fun HeroTile(label: String, value: String, hint: String? = null, accent: Color =
 /**
  * 汇总里的一个「细分数值」小块（付款总额 / 退款总额）。
  * 比 [HeroTile] 更紧凑，专门用于并排展示同一总额的两个组成部分。
+ *
+ * 同样收 [LedgerTone] 而非裸 `Color`，理由见 [HeroTile]。
  */
 @Composable
-fun BreakdownTile(label: String, value: String, accent: Color, modifier: Modifier = Modifier) {
+fun BreakdownTile(label: String, value: String, tone: LedgerTone, modifier: Modifier = Modifier) {
+    val accent = toneColor(tone)
     Column(
         modifier
             .clip(RoundedCornerShape(12.dp))

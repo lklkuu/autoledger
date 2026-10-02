@@ -53,6 +53,8 @@ import com.autoledger.app.ui.stores.LedgerStore
 import com.autoledger.app.ui.stores.TxnEditRules
 import com.autoledger.app.ui.theme.LedgerIcons
 import com.autoledger.app.ui.theme.LedgerPalette
+import com.autoledger.app.ui.theme.LedgerTone
+import com.autoledger.app.ui.theme.toneColor
 import com.autoledger.core.model.ExpenseMath
 import com.autoledger.core.model.LedgerTransaction
 import com.autoledger.core.model.TxnType
@@ -349,14 +351,15 @@ fun MonthlyScreen(container: AppContainer) {
                     AppCard {
                         SectionTitle("本月总览", subtitle = DateTimeFormatter.ofPattern("yyyy 年 M 月").format(selectedMonth))
                         Row(Modifier.fillMaxWidth().padding(top = 8.dp), horizontalArrangement = Arrangement.SpaceBetween) {
-                            // v1.1.6 收支颜色规范反转：收入红、支出绿（对比度达标的专用语义色）
-                            HeroTile("收入", "¥${monthIncome.yuan()}", accent = LedgerPalette.IncomeRed)
+                            // v1.1.6 收支颜色规范反转：收入红、支出绿（走 toneColor，深浅色自动切换）
+                            HeroTile("收入", "¥${monthIncome.yuan()}", tone = LedgerTone.INCOME)
                             HeroTile(
                                 "支出", "¥${monthExpense.yuan()}",
+                                tone = LedgerTone.EXPENSE,
                                 hint = if (monthRefund > 0) "已扣退款 ¥${monthRefund.yuan()}" else null,
-                                accent = LedgerPalette.ExpenseGreen,
                             )
-                            HeroTile("结余", "¥${(monthIncome - monthExpense).yuan()}", accent = LedgerPalette.InkDeep)
+                            // 结余是中性数值（既非收入也非支出）⇒ NEUTRAL
+                            HeroTile("结余", "¥${(monthIncome - monthExpense).yuan()}", tone = LedgerTone.NEUTRAL)
                         }
                         // 三格主行保持不变，另起一行展示「付款总额 / 退款总额」两个独立数值
                         PaymentRefundTiles(monthGross, monthRefund)
@@ -429,13 +432,13 @@ fun MonthlyScreen(container: AppContainer) {
                     AppCard {
                         SectionTitle("年度总览", subtitle = "${selectedYear} 年")
                         Row(Modifier.fillMaxWidth().padding(top = 8.dp), horizontalArrangement = Arrangement.SpaceBetween) {
-                            HeroTile("收入", "¥${yIncome.yuan()}", accent = LedgerPalette.IncomeRed)
+                            HeroTile("收入", "¥${yIncome.yuan()}", tone = LedgerTone.INCOME)
                             HeroTile(
                                 "支出", "¥${yExpense.yuan()}",
+                                tone = LedgerTone.EXPENSE,
                                 hint = if (yRefund > 0) "已扣退款 ¥${yRefund.yuan()}" else null,
-                                accent = LedgerPalette.ExpenseGreen,
                             )
-                            HeroTile("结余", "¥${(yIncome - yExpense).yuan()}", accent = LedgerPalette.InkDeep)
+                            HeroTile("结余", "¥${(yIncome - yExpense).yuan()}", tone = LedgerTone.NEUTRAL)
                         }
                         // 三格主行保持不变，另起一行展示「付款总额 / 退款总额」两个独立数值
                         PaymentRefundTiles(yGross, yRefund)
@@ -491,9 +494,10 @@ fun MonthlyScreen(container: AppContainer) {
                         SectionTitle("逐月趋势", subtitle = "${selectedYear} 年")
                         Row(Modifier.fillMaxWidth().padding(top = 8.dp)) {
                             Text("月份", Modifier.weight(1f), style = MaterialTheme.typography.labelMedium)
-                            // 收支语义色（v1.1.6）：收入红、支出绿；「结余」列保持中性（不是收支）
-                            Text("收入", Modifier.weight(1.2f), style = MaterialTheme.typography.labelMedium, color = LedgerPalette.IncomeRed)
-                            Text("支出", Modifier.weight(1.2f), style = MaterialTheme.typography.labelMedium, color = LedgerPalette.ExpenseGreen)
+                            // 收支语义色（v1.1.6）：收入红、支出绿；「结余」列保持中性（不是收支）。
+                            // 用 toneColor 而非裸色常量：后者是浅色值，深色模式看不清。
+                            Text("收入", Modifier.weight(1.2f), style = MaterialTheme.typography.labelMedium, color = toneColor(LedgerTone.INCOME))
+                            Text("支出", Modifier.weight(1.2f), style = MaterialTheme.typography.labelMedium, color = toneColor(LedgerTone.EXPENSE))
                             Text("结余", Modifier.weight(1.2f), style = MaterialTheme.typography.labelMedium)
                         }
                         (1..12).forEach { m ->
@@ -502,8 +506,8 @@ fun MonthlyScreen(container: AppContainer) {
                             val e = ExpenseMath.netExpenseMinor(list).coerceAtLeast(0L)
                             Row(Modifier.fillMaxWidth().padding(vertical = 4.dp)) {
                                 Text("${m}月", Modifier.weight(1f), style = MaterialTheme.typography.bodySmall)
-                                Text("¥${i.yuan()}", Modifier.weight(1.2f), style = MaterialTheme.typography.bodySmall, color = LedgerPalette.IncomeRed)
-                                Text("¥${e.yuan()}", Modifier.weight(1.2f), style = MaterialTheme.typography.bodySmall, color = LedgerPalette.ExpenseGreen)
+                                Text("¥${i.yuan()}", Modifier.weight(1.2f), style = MaterialTheme.typography.bodySmall, color = toneColor(LedgerTone.INCOME))
+                                Text("¥${e.yuan()}", Modifier.weight(1.2f), style = MaterialTheme.typography.bodySmall, color = toneColor(LedgerTone.EXPENSE))
                                 Text("¥${(i - e).yuan()}", Modifier.weight(1.2f), style = MaterialTheme.typography.bodySmall)
                             }
                         }
@@ -544,10 +548,10 @@ private fun PaymentRefundTiles(grossMinor: Long, refundMinor: Long) {
         Modifier.fillMaxWidth().padding(top = 12.dp),
         horizontalArrangement = Arrangement.spacedBy(8.dp),
     ) {
-        // 「付款总额」是支出语义 ⇒ 支出绿（原先用 Danger 红，红在浅底上对比度不足 4.5:1）；
-        // 「退款总额」是冲抵项 ⇒ 保持中性蓝，不参与收支红绿。
-        BreakdownTile("付款总额", "¥${grossMinor.yuan()}", LedgerPalette.ExpenseGreen, Modifier.weight(1f))
-        BreakdownTile("退款总额", "¥${refundMinor.yuan()}", LedgerPalette.Blue, Modifier.weight(1f))
+        // 「付款总额」是支出语义 ⇒ EXPENSE（原先 Danger 红在浅底上对比度不足 4.5:1）；
+        // 「退款总额」是冲抵项 ⇒ INFO（保持中性蓝，不参与收支红绿）。
+        BreakdownTile("付款总额", "¥${grossMinor.yuan()}", LedgerTone.EXPENSE, Modifier.weight(1f))
+        BreakdownTile("退款总额", "¥${refundMinor.yuan()}", LedgerTone.INFO, Modifier.weight(1f))
     }
 }
 

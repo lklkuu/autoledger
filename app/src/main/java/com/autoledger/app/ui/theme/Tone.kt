@@ -27,18 +27,47 @@ import com.autoledger.core.model.TxnType
  *   看到"收入变多"却找不到对应入账，认知被带偏。退款用中性色，语义交给「退款」文案（见无障碍副标题）。
  * - **内部划转（TRANSFER）**是自转，不是收支（`TransferMath` 口径），同样中性。
  */
-enum class LedgerTone { EXPENSE, INCOME, NEUTRAL }
+enum class LedgerTone {
+    /** 支出（绿）。 */
+    EXPENSE,
+
+    /** 收入（红）。 */
+    INCOME,
+
+    /** 中性数值：结余 / 目标 / 起始月 —— 不是收支，不参与红绿。 */
+    NEUTRAL,
+
+    /**
+     * 品牌强调色（**非收支金额**）：真实时薪、「已攒」这类"攒钱进度"数值。
+     *
+     * 为什么要单列而不是并入 [NEUTRAL]：它们观感上历来是品牌绿（`Positive`），
+     * 并入 NEUTRAL 会变成墨色（浅底 11.95:1，但深底只有 1.25:1）—— 等于顺手改了这些卡片的观感。
+     */
+    BRAND,
+
+    /** 次要 / 参考值：名义时薪（与真实时薪并排对照，用灰绿退到次要位）。 */
+    MUTED,
+
+    /** 信息色（**非收支**）：退款总额等"冲抵 / 说明性"数值，保持蓝色、不参与红绿。 */
+    INFO,
+}
 
 /**
  * 语义色阶 → 十六进制色值（纯函数，可 JVM 单测，不依赖 Compose）。
  *
  * 色值取自 [LedgerPalette] 里新增的四个收支语义 token，此处写十六进制是为了让判定逻辑可单测。
  * 深浅两套都满足 WCAG AA 正文对比度（≥4.5:1），底色分别为浅色卡 `#FFFDF7` 与深色卡 `#16292B`。
+ *
+ * 浅色值刻意与**改动前观感逐位一致**（BRAND=Positive、MUTED=Muted、INFO=Blue、NEUTRAL=InkDeep），
+ * 所以本次改造在浅色模式下"看起来没变"，只修好了深色模式。
  */
 fun toneHex(tone: LedgerTone, dark: Boolean): String = when (tone) {
     LedgerTone.EXPENSE -> if (dark) "#5FC7AC" else "#116B5B"
     LedgerTone.INCOME -> if (dark) "#F2B8B5" else "#B3261E"
     LedgerTone.NEUTRAL -> if (dark) "#E4EFE9" else "#163B3D"
+    LedgerTone.BRAND -> if (dark) "#6FD6B4" else "#16856F"
+    LedgerTone.MUTED -> if (dark) "#B6CCC6" else "#708786"
+    LedgerTone.INFO -> if (dark) "#9FBDE3" else "#5C88B8"
 }
 
 /**

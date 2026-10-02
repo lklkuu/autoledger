@@ -348,6 +348,8 @@ fun TxnEditDialog(
                         amountMinor = parsedAmount,
                         occurredAtMillis = parsedDate,
                         type = if (typeSwitchable) typeSelection else txn.type,
+                        // 合并链主记录不得改类型：Store 侧也要用同一判据（不能只靠 UI 禁用 chips）
+                        absorbedCount = mergedInto.size,
                     )
                     onDismiss()
                 },

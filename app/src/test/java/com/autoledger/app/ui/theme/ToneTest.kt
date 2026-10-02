@@ -5,6 +5,7 @@ import com.autoledger.core.model.TxnStatus
 import com.autoledger.core.model.TxnType
 import kotlin.test.Test
 import kotlin.test.assertEquals
+import kotlin.test.assertNotEquals
 
 /**
  * 收支语义色层的纯 JVM 护栏。
@@ -58,7 +59,33 @@ class ToneTest {
     fun `every tone has a distinct light and dark hex`() {
         val light = LedgerTone.entries.map { toneHex(it, dark = false) }
         val dark = LedgerTone.entries.map { toneHex(it, dark = true) }
-        assertEquals(light.size, light.distinct().size, "浅色三档必须可区分")
-        assertEquals(dark.size, dark.distinct().size, "深色三档必须可区分")
+        assertEquals(light.size, light.distinct().size, "浅色各档必须可区分")
+        assertEquals(dark.size, dark.distinct().size, "深色各档必须可区分")
+    }
+
+    @Test
+    fun `dark mode must use the night tokens never the light ones`() {
+        // v1.1.6 QA 复验 P1：HeroTile / BreakdownTile 曾收裸 Color，调用点直接传浅色常量
+        // （ExpenseGreen / IncomeRed），深色模式下对比度掉到 2.0~2.4:1 —— 比改造前更差。
+        // 组件改为收 LedgerTone 并在内部调 toneColor 之后，"深色必须换 token"就成了可断言的契约。
+        assertEquals("#5FC7AC", toneHex(LedgerTone.EXPENSE, dark = true), "深色支出绿必须用 Night token")
+        assertEquals("#116B5B", toneHex(LedgerTone.EXPENSE, dark = false))
+        assertEquals("#F2B8B5", toneHex(LedgerTone.INCOME, dark = true), "深色收入红必须用 Night token")
+        assertEquals("#B3261E", toneHex(LedgerTone.INCOME, dark = false))
+
+        // 非收支档同理：深色也不能回落成浅色常量
+        assertEquals("#B6CCC6", toneHex(LedgerTone.MUTED, dark = true))
+        assertEquals("#9FBDE3", toneHex(LedgerTone.INFO, dark = true))
+        assertEquals("#6FD6B4", toneHex(LedgerTone.BRAND, dark = true), "深色品牌绿须与支出绿可区分")
+        assertEquals("#E4EFE9", toneHex(LedgerTone.NEUTRAL, dark = true))
+
+        // 逐档锁死"深色 ≠ 浅色"，防止将来有人把某个分支写成同一个值
+        LedgerTone.entries.forEach { tone ->
+            assertNotEquals(
+                toneHex(tone, dark = false),
+                toneHex(tone, dark = true),
+                "${tone.name} 的深浅色相同 ⇒ 深色模式下必然看不清",
+            )
+        }
     }
 }
