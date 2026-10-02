@@ -349,11 +349,12 @@ fun MonthlyScreen(container: AppContainer) {
                     AppCard {
                         SectionTitle("本月总览", subtitle = DateTimeFormatter.ofPattern("yyyy 年 M 月").format(selectedMonth))
                         Row(Modifier.fillMaxWidth().padding(top = 8.dp), horizontalArrangement = Arrangement.SpaceBetween) {
-                            HeroTile("收入", "¥${monthIncome.yuan()}", accent = LedgerPalette.Positive)
+                            // v1.1.6 收支颜色规范反转：收入红、支出绿（对比度达标的专用语义色）
+                            HeroTile("收入", "¥${monthIncome.yuan()}", accent = LedgerPalette.IncomeRed)
                             HeroTile(
                                 "支出", "¥${monthExpense.yuan()}",
                                 hint = if (monthRefund > 0) "已扣退款 ¥${monthRefund.yuan()}" else null,
-                                accent = LedgerPalette.Danger,
+                                accent = LedgerPalette.ExpenseGreen,
                             )
                             HeroTile("结余", "¥${(monthIncome - monthExpense).yuan()}", accent = LedgerPalette.InkDeep)
                         }
@@ -428,11 +429,11 @@ fun MonthlyScreen(container: AppContainer) {
                     AppCard {
                         SectionTitle("年度总览", subtitle = "${selectedYear} 年")
                         Row(Modifier.fillMaxWidth().padding(top = 8.dp), horizontalArrangement = Arrangement.SpaceBetween) {
-                            HeroTile("收入", "¥${yIncome.yuan()}", accent = LedgerPalette.Positive)
+                            HeroTile("收入", "¥${yIncome.yuan()}", accent = LedgerPalette.IncomeRed)
                             HeroTile(
                                 "支出", "¥${yExpense.yuan()}",
                                 hint = if (yRefund > 0) "已扣退款 ¥${yRefund.yuan()}" else null,
-                                accent = LedgerPalette.Danger,
+                                accent = LedgerPalette.ExpenseGreen,
                             )
                             HeroTile("结余", "¥${(yIncome - yExpense).yuan()}", accent = LedgerPalette.InkDeep)
                         }
@@ -490,8 +491,9 @@ fun MonthlyScreen(container: AppContainer) {
                         SectionTitle("逐月趋势", subtitle = "${selectedYear} 年")
                         Row(Modifier.fillMaxWidth().padding(top = 8.dp)) {
                             Text("月份", Modifier.weight(1f), style = MaterialTheme.typography.labelMedium)
-                            Text("收入", Modifier.weight(1.2f), style = MaterialTheme.typography.labelMedium, color = LedgerPalette.Positive)
-                            Text("支出", Modifier.weight(1.2f), style = MaterialTheme.typography.labelMedium, color = LedgerPalette.Danger)
+                            // 收支语义色（v1.1.6）：收入红、支出绿；「结余」列保持中性（不是收支）
+                            Text("收入", Modifier.weight(1.2f), style = MaterialTheme.typography.labelMedium, color = LedgerPalette.IncomeRed)
+                            Text("支出", Modifier.weight(1.2f), style = MaterialTheme.typography.labelMedium, color = LedgerPalette.ExpenseGreen)
                             Text("结余", Modifier.weight(1.2f), style = MaterialTheme.typography.labelMedium)
                         }
                         (1..12).forEach { m ->
@@ -500,8 +502,8 @@ fun MonthlyScreen(container: AppContainer) {
                             val e = ExpenseMath.netExpenseMinor(list).coerceAtLeast(0L)
                             Row(Modifier.fillMaxWidth().padding(vertical = 4.dp)) {
                                 Text("${m}月", Modifier.weight(1f), style = MaterialTheme.typography.bodySmall)
-                                Text("¥${i.yuan()}", Modifier.weight(1.2f), style = MaterialTheme.typography.bodySmall, color = LedgerPalette.Positive)
-                                Text("¥${e.yuan()}", Modifier.weight(1.2f), style = MaterialTheme.typography.bodySmall, color = LedgerPalette.Danger)
+                                Text("¥${i.yuan()}", Modifier.weight(1.2f), style = MaterialTheme.typography.bodySmall, color = LedgerPalette.IncomeRed)
+                                Text("¥${e.yuan()}", Modifier.weight(1.2f), style = MaterialTheme.typography.bodySmall, color = LedgerPalette.ExpenseGreen)
                                 Text("¥${(i - e).yuan()}", Modifier.weight(1.2f), style = MaterialTheme.typography.bodySmall)
                             }
                         }
@@ -542,7 +544,9 @@ private fun PaymentRefundTiles(grossMinor: Long, refundMinor: Long) {
         Modifier.fillMaxWidth().padding(top = 12.dp),
         horizontalArrangement = Arrangement.spacedBy(8.dp),
     ) {
-        BreakdownTile("付款总额", "¥${grossMinor.yuan()}", LedgerPalette.Danger, Modifier.weight(1f))
+        // 「付款总额」是支出语义 ⇒ 支出绿（原先用 Danger 红，红在浅底上对比度不足 4.5:1）；
+        // 「退款总额」是冲抵项 ⇒ 保持中性蓝，不参与收支红绿。
+        BreakdownTile("付款总额", "¥${grossMinor.yuan()}", LedgerPalette.ExpenseGreen, Modifier.weight(1f))
         BreakdownTile("退款总额", "¥${refundMinor.yuan()}", LedgerPalette.Blue, Modifier.weight(1f))
     }
 }

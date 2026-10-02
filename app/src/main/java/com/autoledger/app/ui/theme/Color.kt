@@ -29,6 +29,23 @@ object LedgerPalette {
     val Blue = Color(0xFF5C88B8)
     val Sun = Color(0xFFF6C95F)
     val Purple = Color(0xFF9B6AD0)
+
+    // ---------------------------------------------------------------- 收支语义色（v1.1.6 新增）
+    //
+    // 为什么是「加法不是改法」：[Positive] 同时承担「品牌主色/按钮」「成功态」「支出金额」三种语义，
+    // 被 20+ 处主按钮使用；[Danger] 是 error 语义（红=负面状态），也不是「支出色」。
+    // 直接改这两个 token 会把全站按钮一起染成支出色/收入色。
+    // 故**一格不动**上面所有旧 token，只新增下面四个专用于收支语义的色值。
+    //
+    // 取值依据是对比度（底色不是纯白：浅色卡 #FFFDF7 / 深色卡 #16292B）：
+    // - 支出绿浅色 #116B5B 在 #FFFDF7 上 ≈ 5.9:1（≥4.5:1，WCAG AA 正文级）；
+    //   深色用 #5FC7AC（在 #16292B 上 ≈ 7.4:1）——旧的 PositiveStrong #116B5B 在深底上仅 2.4:1，不可用。
+    // - 收入红浅色用 #B3261E（≈ 6.4:1）——**不用** Danger #D95F5F（浅底上仅 ≈3.56:1，低于 4.5:1）；
+    //   深色用 #F2B8B5。
+    val ExpenseGreen = Color(0xFF116B5B)
+    val ExpenseGreenNight = Color(0xFF5FC7AC)
+    val IncomeRed = Color(0xFFB3261E)
+    val IncomeRedNight = Color(0xFFF2B8B5)
 }
 
 val LightLedgerColors = lightColorScheme(

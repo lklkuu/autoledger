@@ -32,6 +32,8 @@ import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.text.style.TextAlign
 import androidx.compose.ui.unit.dp
 import com.autoledger.app.ui.theme.colorOf
+import com.autoledger.app.ui.theme.toneColor
+import com.autoledger.app.ui.theme.txnTone
 import com.autoledger.app.ui.theme.LedgerIcons
 import com.autoledger.app.ui.theme.LedgerPalette
 import com.autoledger.core.model.MetricResult
@@ -431,7 +433,10 @@ fun TransactionRow(
             Text(
                 "¥${txn.amountMinor.yuan()}",
                 style = MaterialTheme.typography.titleMedium,
-                color = if (txn.amountMinor < 0) MaterialTheme.colorScheme.onSurface else LedgerPalette.Positive,
+                // v1.1.6：判据从「金额符号」改为「流水类型」（见 theme/Tone.kt）。
+                // 顺带效果：历史脏数据（`EXPENSE` 却存了正数）以前会被符号判成收入色，
+                // 现在按 type 仍显示支出绿 —— **不修数据，但显示自愈**。
+                color = toneColor(txnTone(txn)),
             )
         }
         trailing?.invoke()

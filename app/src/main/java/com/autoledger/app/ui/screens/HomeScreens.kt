@@ -67,14 +67,20 @@ fun DashboardScreen(container: AppContainer) {
                 AppCard {
                     if (state.loading) { LoadingBox(); return@AppCard }
                     Row(Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.SpaceBetween) {
-                        HeroTile("今日支出", "¥${state.todayMinor.yuan()}", hint = "换算 ${hoursOf(container, state.todayMinor)} 工作小时")
+                        // v1.1.6：支出金额用收支语义绿（HeroTile 默认色即品牌绿，这里显式传，避免将来
+                        // 改默认值时静默把「支出」染成品牌色）
+                        HeroTile(
+                            "今日支出", "¥${state.todayMinor.yuan()}",
+                            hint = "换算 ${hoursOf(container, state.todayMinor)} 工作小时",
+                            accent = LedgerPalette.ExpenseGreen,
+                        )
                         HeroTile(
                             "本月支出", "¥${state.monthMinor.yuan()}",
                             // 同时给出「付款总额」与「退款总额」两个独立数值，口径见 ExpenseMath。
                             hint = if (state.monthRefundMinor > 0) {
                                 "付款 ¥${state.monthGrossMinor.yuan()} · 退款 ¥${state.monthRefundMinor.yuan()}"
                             } else null,
-                            accent = LedgerPalette.InkDeep,
+                            accent = LedgerPalette.ExpenseGreen,
                         )
                         HeroTile("真实时薪", "¥${"%.1f".format(state.realHourly)}", hint = "每小时")
                     }

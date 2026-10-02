@@ -242,6 +242,7 @@ fun InsightsScreen(container: AppContainer) {
 private fun FactLine(label: String, value: String) {
     Row(Modifier.fillMaxWidth().padding(vertical = 6.dp)) {
         Text(label, Modifier.weight(1f), style = MaterialTheme.typography.bodyMedium)
-        Text(value, style = MaterialTheme.typography.labelMedium, color = LedgerPalette.Positive)
+        // v1.1.6：这行展示的是「最大一笔 / 最常光顾 / 日均花销」等**支出**口径数值 ⇒ 支出语义绿
+        Text(value, style = MaterialTheme.typography.labelMedium, color = LedgerPalette.ExpenseGreen)
     }
 }
