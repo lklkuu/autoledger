@@ -101,12 +101,35 @@ class TrendAmountLabelTest {
         assertEquals("¥-9223372036854.8万", label, "MIN 饱和夹取后与 MAX 同值，仅多一个负号")
     }
 
-    /** 非法串的共同特征：除至多一个前导负号外不含任何 '-'，且小数部分不为负。 */
+    /** 非法串的共同特征：除至多一个前导负号外不含任何 '-'，且小数部分不得带负号。 */
     private fun assertNoIllegalSign(label: String) {
         val minusCount = label.count { it == '-' }
         assertTrue(minusCount <= 1, "负号至多一个：$label")
         assertFalse(label.contains("--"), "不得出现双负号：$label")
-        val fraction = label.substringAfter('.', missingDelimiterValue = "").filter { it.isDigit() }
-        assertFalse(fraction.startsWith("-"), "小数部分不得为负：$label")
+        assertFalse(hasIllegalFractionSign(label), "小数部分不得带负号：$label")
+    }
+
+    // ------------------------------------------------------------ 护栏自身的鉴别力（QA T1）
+
+    @Test
+    fun `the fraction guard actually rejects a negative fraction`() {
+        // 鉴别力钉子：旧护栏写成 substringAfter('.').filter{isDigit()}.startsWith("-")，
+        // filter 先滤掉负号 ⇒ 恒 false，`¥123.-4万` 这类真非法串能畅通通过。
+        // 这里断言它**必须**被识别为非法，否则护栏又在空转。
+        assertTrue(hasIllegalFractionSign("¥123.-4万"), "小数负号必须被识别（护栏不得空转）")
+    }
+
+    @Test
+    fun `the fraction guard accepts every legal shape`() {
+        listOf("¥28.45", "¥-1.2万", "¥9223372036854.8万", "¥0", "¥1,000").forEach { label ->
+            assertFalse(hasIllegalFractionSign(label), "$label 是合法串，不应被判非法")
+        }
+    }
+
+    @Test
+    fun `the fraction guard is not fooled by unrelated garbage`() {
+        // 无小数点的串：substringAfter 返回空串 ⇒ 合法（护栏只管小数位，不越权judge整体形态）
+        assertFalse(hasIllegalFractionSign("¥abc"))
+        assertFalse(hasIllegalFractionSign("TotallyGarbage!!!"))
     }
 }

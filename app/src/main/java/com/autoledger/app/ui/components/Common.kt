@@ -51,6 +51,17 @@ fun Long.yuan(withSign: Boolean = false): String {
 private const val FEN_PER_YUAN = 100L
 
 /**
+ * 金额标签是否含**非法的小数负号**（如 `¥123.-4万`）。
+ *
+ * 存在的理由：极值舍入曾二次溢出产出这种串，而当时护栏写的是
+ * `substringAfter('.').filter { it.isDigit() }.startsWith("-")` ——
+ * `filter` **先把负号滤掉了**，断言恒为 false（空转），`¥abc`、`TotallyGarbage!!!` 都能通过。
+ * 因此这里对**未过滤**的小数子串判 `-`，宁可对非法串误报，也不放过形态回归。
+ */
+internal fun hasIllegalFractionSign(label: String): Boolean =
+    label.substringAfter('.', missingDelimiterValue = "").contains('-')
+
+/**
  * 趋势图节点内部的间距（金额 ↔ 柱体、柱体 ↔ 月份标签）。
  *
  * 高度预算（容器 `heightIn(min = 110.dp)`，`verticalArrangement = Arrangement.Bottom` 自底向上排）：
