@@ -78,9 +78,13 @@ private const val TREND_MAX_BAR_DP = 64f
  *
  * 负数保留负号（趋势柱已 `coerceAtLeast(0)`，此处仍按可独立复用的格式化函数对待）：
  * 符号位置与全站其它金额一致（`¥` 在前，如 `InsightScreens` 的「已攒」）。
+ *
+ * 极值：`Long.MIN_VALUE` 取绝对值会溢出，故对它做**饱和夹取**到 `MAX_VALUE`；
+ * 「万」档的舍入用**整数除法**（商 + 余数判进位）实现，不做可能二次溢出的加法
+ * —— 保证任意 `Long` 输入都只产出一个负号（至多一个）、且小数部分非负。
  */
 fun trendAmountLabel(valueMinor: Long): String {
-    // Long.MIN_VALUE 取绝对值会溢出，夹到 MAX_VALUE（格式化结果仍是合法金额串）
+    // Long.MIN_VALUE 取绝对值会溢出（Long 无对应正数），对它做**饱和夹取**到 MAX_VALUE。
     val absMinor = if (valueMinor == Long.MIN_VALUE) Long.MAX_VALUE else kotlin.math.abs(valueMinor)
     val sign = if (valueMinor < 0) "-" else ""
     return when {
@@ -92,9 +96,13 @@ fun trendAmountLabel(valueMinor: Long): String {
         absMinor < 10_000L * FEN_PER_YUAN ->
             "¥$sign" + String.format(Locale.US, "%,d", absMinor / FEN_PER_YUAN)
         // ≥ 10_000 元：折成「万」、一位小数。
-        // 0.1 万 = 1_000 元 = 100_000 分 ⇒ 以「万分位」为单位四舍五入（+50_000 分 = 半个 0.1 万）
+        // 0.1 万 = 1_000 元 = 100_000 分 ⇒ 以「万分位」为单位四舍五入。
+        // ⚠️ 舍入必须用「商 + 余数判进位」，**不能**写成 (absMinor + 50_000) / 100_000：
+        // 当 absMinor > MAX_VALUE − 50_000 时那次加法会二次溢出回绕成负数，
+        // 随后 wanTenths / 10 与 % 10 双负，拼出「¥-9223372036854.-7万」这类非法串。
+        // 商最大约 9.2e13，+1 永不溢出。
         else -> {
-            val wanTenths = (absMinor + 50_000L) / 100_000L
+            val wanTenths = absMinor / 100_000L + (if (absMinor % 100_000L >= 50_000L) 1L else 0L)
             "¥$sign${wanTenths / 10}.${wanTenths % 10}万"
         }
     }

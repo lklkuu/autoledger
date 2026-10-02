@@ -3,6 +3,8 @@ package com.autoledger.app.ui.components
 import java.util.Locale
 import kotlin.test.Test
 import kotlin.test.assertEquals
+import kotlin.test.assertFalse
+import kotlin.test.assertTrue
 
 /**
  * 「月度趋势」节点金额标签 [trendAmountLabel] 的格式护栏。
@@ -65,5 +67,46 @@ class TrendAmountLabelTest {
         } finally {
             Locale.setDefault(previous)
         }
+    }
+
+    // ------------------------------------------------------------ Long 极值（溢出回归护栏）
+
+    @Test
+    fun `Long MAX value formats without overflow`() {
+        // 曾经的 bug：(absMinor + 50_000) 在接近 MAX_VALUE 时二次溢出回绕成负数，
+        // 拼出「¥-9223372036854.-7万」——符号反转 + 小数为负。
+        // MAX_VALUE = 9,223,372,036,854,775,807 分 ⇒ 92,233,720,368,547.758 万级。
+        val label = trendAmountLabel(Long.MAX_VALUE)
+        assertNoIllegalSign(label)
+        assertEquals("¥9223372036854.8万", label)
+    }
+
+    @Test
+    fun `values just below MAX value also stay legal`() {
+        // MAX − 1_000 与 MAX − 50_000 都落在「舍入要进位」的边界上，最容易触发加法溢出
+        listOf(Long.MAX_VALUE - 1_000L, Long.MAX_VALUE - 50_000L).forEach { value ->
+            val label = trendAmountLabel(value)
+            assertNoIllegalSign(label)
+            assertTrue(label.startsWith("¥"), "应只以货币符号开头：$label")
+            assertTrue(label.endsWith("万"), "应落在「万」档：$label")
+        }
+    }
+
+    @Test
+    fun `Long MIN value is saturated and never double signed`() {
+        // MIN 取绝对值会溢出 ⇒ 饱和夹取到 MAX_VALUE；负号只应出现一次，且不得有「¥--」
+        val label = trendAmountLabel(Long.MIN_VALUE)
+        assertNoIllegalSign(label)
+        assertFalse(label.contains("--"), "不得出现双负号：$label")
+        assertEquals("¥-9223372036854.8万", label, "MIN 饱和夹取后与 MAX 同值，仅多一个负号")
+    }
+
+    /** 非法串的共同特征：除至多一个前导负号外不含任何 '-'，且小数部分不为负。 */
+    private fun assertNoIllegalSign(label: String) {
+        val minusCount = label.count { it == '-' }
+        assertTrue(minusCount <= 1, "负号至多一个：$label")
+        assertFalse(label.contains("--"), "不得出现双负号：$label")
+        val fraction = label.substringAfter('.', missingDelimiterValue = "").filter { it.isDigit() }
+        assertFalse(fraction.startsWith("-"), "小数部分不得为负：$label")
     }
 }
