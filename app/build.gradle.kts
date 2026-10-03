@@ -153,6 +153,38 @@ android {
     }
 }
 
+// ---------------------------------------------------------------- 多 APK versionCode 唯一化
+// 问题：defaultConfig.versionCode 是**变体级**属性，AGP 原样套到每个输出；
+// splits.abi 只决定文件归属，不会派生 per-output versionCode ⇒ 三个包 versionCode 全是 7。
+// 后果：Android 用 (packageName, versionCode, 签名) 标识已安装应用，三包同号 ⇒
+//      市场侧更新判断失效、多 APK 上传被拒、跨 ABI 升级路径不可判定。
+//
+// 方案（Google 多 APK 官方约定）：versionCode = base * 1000 + abiOffset
+//   armeabi-v7a → +1、arm64-v8a → +2、universal → +9（最高）
+// universal 取最高，是为了让「已装 ABI 分包 → 再装 universal 兜底包」被系统判为**升级**而不是降级。
+//
+// ⚠️ 已知限制（任何多 APK 方案的固有语义）：已装 universal(7009) 后再装 arm64(7002)
+//    会被系统判为降级而拒绝安装，需先卸载 —— 这不是本方案能绕过的，只能靠分发侧约定。
+//
+// versionName 三者保持不变（市场排序只看 versionCode，后缀还会漏到「关于」页）。
+androidComponents {
+    onVariants { variant ->
+        val base = android.defaultConfig.versionCode ?: 1
+        variant.outputs.forEach { output ->
+            val abi = output.filters.firstOrNull { it.filterType.name == "ABI" }?.identifier
+            val offset = when (abi) {
+                "armeabi-v7a" -> 1
+                "arm64-v8a" -> 2
+                null -> 9 // universal：filters 里没有 ABI 过滤，取最高
+                else -> 8
+            }
+            // AGP 8.7 新 variant API 里 versionCode 是 Gradle Property；
+            // 旧 API 的 versionCodeOverride 属性在 VariantOutput 上已不存在（写了编译不过）。
+            output.versionCode.set(base * 1000 + offset)
+        }
+    }
+}
+
 dependencies {
     implementation(project(":core:model"))
     implementation(project(":core:crypto"))
