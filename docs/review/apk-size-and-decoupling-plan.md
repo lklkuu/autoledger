@@ -5,8 +5,8 @@
 | 文档日期 | 2026-10-03 |
 | 基线提交 | `3ff7733` |
 | 目标体积档位 | **档位 A —— 用户实际下载包 ≤ 8 MB** |
-| 文档状态 | **执行中**（S0–S3-b 已完成，S4/S5 待执行） |
-| 当前位置 | S1 ✅ `9081883`；S2 ✅ `0e5d80e`；S3-a ✅ `b8a87d0`；S3-b ✅ `2aca198`（**均只提交未推送**） |
+| 文档状态 | **全部阶段已完成**（S0–S5 均已提交，未推送） |
+| 当前位置 | S1 ✅ `9081883`；S2 ✅ `0e5d80e`；S3-a ✅ `b8a87d0`；S3-b ✅ `2aca198`；S4 ✅ `d9470a4`；S5 ✅ `726b8cd` + `780f3d1`（**均只提交未推送**） |
 
 ---
 
@@ -60,8 +60,8 @@ F:\WorkBuddy\2026-09-26-16-05-49\AutoLedger\
 | **S1 ABI 分包** | 去掉模拟器架构 | `splits { abi { include("arm64-v8a","armeabi-v7a") } } }` | ✅ `9081883`：arm64 18,076,367 B（-46.4%）／armv7 16,360,463 B（-51.5%） |
 | **S2 开 R8** | 剔除未用代码/资源 | `isMinifyEnabled` + `isShrinkResources` + 复用已有 `proguard-rules.pro` + 新增 `res/raw/keep.xml` | ✅ `0e5d80e`：universal 33,730,618 → 23,759,191 B（-29.56%）；dex 43.24 → 3.31 MB（2 dex→1） |
 | **S3 资源精简** | 语言收敛 + 资源压缩 | S3-a `resourceConfigurations += setOf("zh")`；S3-b 23 个自有 PNG→无损 WebP | ✅ `b8a87d0` + `2aca198`：S3-a -100,500 B + S3-b -239,345 B ≈ **-339,845 B/包**（arm64 8,104,952 → **7,764,689 B**，差值含 ±420 B 构建抖动，见 §8-7） |
-| **S4 依赖裁剪** | 移除未使用/可轻量替代依赖 | 逐条 grep 核查 | ⏳ 待执行 |
-| **S5 职责拆分** | 上帝文件按职责拆开 | 纯 move，一处一 PR | ⏳ 待执行 |
+| **S4 依赖裁剪** | 移除未使用/可轻量替代依赖 | 逐条 grep 证明零引用后再删 | ✅ `d9470a4`：删 7 条零引用声明，**体积零变化**（删的都是已被传递引入的声明，属清声明债） |
+| **S5 职责拆分** | 上帝文件按职责拆开 | 纯 move，一处一 PR | ✅ `726b8cd` + `780f3d1`：AppStores.kt 1282 行 → 9 个 Store 文件，**最长文件降到 323 行** |
 
 ---
 
@@ -138,8 +138,8 @@ feature 层 7 个模块：**只依赖 `core:model`**，彼此零横向依赖。
 | **S1** ✅ 已提交 `9081883` | 只 include `arm64-v8a` + `armeabi-v7a`；**必须保留 `isUniversalApk = true`** 兜底 |
 | **S2** ✅ 已实现（构建验证通过） | 复用现有 `proguard-rules.pro`，**不新写规则**；⚠️ **必须新增 `res/raw/keep.xml` keep `@drawable/donate_wechat`**（该资源靠 `resources.getIdentifier("donate_wechat", …)` 按字符串动态解析，静态引用链看不到，R8 可能删掉 → 微信收款码静默消失） |
 | **S3 资源精简** ✅ `b8a87d0` + `2aca198` | 语言收敛零风险；WebP 全部走**无损**且逐个解码回读做**像素级比对**（23/23 一致），观感在数学上不可能变；`.9.png` 一条未动（自有资源里 0 个，库里 16 个原样保留）；⚠️ 真机只需确认**桌面图标与捐赠收款码**两处 |
-| **S4 依赖裁剪** ⏳ | 逐条 grep 核查后再删；保留 `kotlinx-serialization-json`（有意的可测性权衡） |
-| **S5 职责拆分** ⏳ | 纯 move，一处一 PR，不动逻辑；拆完跑全量单测 |
+| **S4 依赖裁剪** ✅ `d9470a4` | 逐条 grep 证明零引用后才删；删的 7 条全是被传递依赖已引入的 ⇒ 依赖图不变、体积不变。⚠️ `core:database → core:crypto` 看着零引用，实为 `androidx.sqlite` 的唯一来源，**不能删** |
+| **S5 职责拆分** ✅ `726b8cd` + `780f3d1` | 纯 move；唯一非机械改动是共享声明 `private 顶层 → internal`（跨文件必需，模块内可见范围等价）。逐类编译 + 全量单测守护 |
 
 ---
 
@@ -175,8 +175,8 @@ python3 tools/static_check.py
 | **S3-a 语言收敛** | ✅ 已提交 `b8a87d0` | 语言配置 84 → 0；`resources.arsc` 116,912 → **16,412 B（-85.96%）**；三包各 **-100,500 B**（universal 23,658,285／arm64 8,004,034／armv7 6,288,130） |
 | **S3-b PNG→WebP** | ✅ 已提交 `2aca198` | 23 个自有 PNG 677,022 → 411,442 B（全无损，像素逐字节一致）；`res/` 668,513 → 429,109 B；三包各 **-239,345 B**（universal **23,418,940**／arm64 **7,764,689**／armv7 **6,048,785**） |
 | **累计（对基线）** | — | 用户实际下载包：arm64 33,730,618 → **7,764,689 B（-77.0%）**；armv7 → **6,048,785 B（-82.1%）** ⇒ 已达 **档位 A（≤ 8 MB）** |
-| **S4 依赖裁剪** | ⏳ 待执行 | — |
-| **S5 职责拆分** | ⏳ 待执行 | — |
+| **S4 依赖裁剪** | ✅ 已提交 `d9470a4` | 删 7 条零引用声明（6 files, 7 deletions）；APK universal 23,418,940 → 23,419,161 B（**+221 B，属构建抖动，体积零变化**）；全量单测 1077 条 0 失败 |
+| **S5 上帝文件拆分** | ✅ 已提交 `726b8cd` + `780f3d1` | `AppStores.kt` 1282 行 → HomeStore/LedgerStore/CaptureStore/FreedomStore/InsightsStore/SettingsStore/RefundStore/CategoryStore/UserPlatformStore 9 个文件 + `StoreSupport.kt`；**最长文件 1282 → 323 行**；APK 与 S4 完全一致（纯 move） |
 
 ---
 
@@ -257,6 +257,47 @@ python3 tools/static_check.py
   `DonationConfig` → `resources.getIdentifier("donate_wechat", …)`。全部按**资源名**解析，
   与扩展名无关；构建后 `resources.arsc` 字符串池中 `donate_wechat`／`notify_small_icon`／
   `ic_launcher_foreground` 均存在，实测确认。
+
+### S4 · 依赖裁剪（已提交 `d9470a4`）
+
+逐条 grep 证明「全仓源码零引用」后才删，**删的 7 条全是被传递依赖已引入的声明**：
+
+| # | 模块 | 删除的声明 | grep 证据 |
+|---|---|---|---|
+| 1 | app | `androidx.compose.ui.tooling.preview` | `tooling.preview` / `@Preview` / `PreviewParameter` 全仓 **0 命中** |
+| 2 | core:backup | `androidx.core.ktx` | 本模块 src 下 `androidx.core.` 0 命中 |
+| 3 | core:crypto | `androidx.core.ktx` | 0 命中 |
+| 4 | core:database | `androidx.core.ktx` | 0 命中 |
+| 5 | feature:transfer | `androidx.core.ktx` | 0 命中 |
+| 6 | feature:transfer | `project(":core:backup")` | `com.autoledger.core.backup` 0 命中，其 api 透传的 database/room/sqlite 同样 0 命中 |
+| 7 | feature:platform | `kotlinx.coroutines.core` | `kotlinx.coroutines` 0 命中（含 test 源集） |
+
+**保留并说明**：`androidx.lifecycle.runtime.ktx`（0 引用但被传递引入，删了收益 0）；
+`kotlinx-serialization-json`（有意的可测性权衡，且 TxnExtras 实际在用 5 处）；
+`core:database → core:crypto`（**看着零引用实则不能删**：`Migrations.kt` 用的
+`androidx.sqlite.db.SupportSQLiteOpenHelper.Factory` 只能由 crypto 的 `api(androidx.sqlite.framework)` 透传）；
+`debugImplementation(androidx.compose.ui.tooling)`（debug 期产物，不进 release，未列入范围）。
+
+实测：APK universal 23,418,940 → 23,419,161 B（+221 B，构建抖动）⇒ **体积零变化**，S4 的定位是清声明债而非减体积。
+
+### S5 · 上帝文件拆分（已提交 `726b8cd` + `780f3d1`）
+
+`AppStores.kt`（1282 行 / 9 个 Store 类）按 1 类 1 文件拆开，**纯 move，逻辑一字未改**：
+
+| 文件 | 行数 | 文件 | 行数 |
+|---|---:|---|---:|
+| `LedgerStore.kt` | 323 | `CaptureStore.kt` | 111 |
+| `InsightsStore.kt` | 224 | `RefundStore.kt` | 120 |
+| `HomeStore.kt` | 152 | `FreedomStore.kt` | 114 |
+| `SettingsStore.kt` | 130 | `CategoryStore.kt` | 80 |
+| `UserPlatformStore.kt` | 98 | `StoreSupport.kt` | 45 |
+
+- **最长文件 1282 → 323 行**；9 个 Store 各自独立，git 冲突面按域隔离。
+- 新增 `StoreSupport.kt` 承载原顶层 3 个共享声明（`storeExceptionHandler` / `storeScope` / `catching`）。
+  ⚠️ 唯一非机械改动：这 3 个由 **private 顶层** 改为 **internal**（private 顶层只同文件可见，
+  拆文件后跨文件必须放开；二者在 app 模块内可见范围等价，对模块外零影响）。
+- 验证：**每搬一类跑一次 `./gradlew :app:compileDebugKotlin`**，9 次全绿；删除空的
+  `AppStores.kt` 后再编译一次通过；`assembleRelease` 通过；全量单测 1077 条 0 失败。
 
 ### 风险与后续验证（必须做，不能省）
 
