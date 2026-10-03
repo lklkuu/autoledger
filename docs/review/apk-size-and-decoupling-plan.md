@@ -5,8 +5,8 @@
 | 文档日期 | 2026-10-03 |
 | 基线提交 | `3ff7733` |
 | 目标体积档位 | **档位 A —— 用户实际下载包 ≤ 8 MB** |
-| 文档状态 | **全部阶段已完成**（S0–S5 均已提交，未推送） |
-| 当前位置 | S1 ✅ `9081883`；S2 ✅ `0e5d80e`；S3-a ✅ `b8a87d0`；S3-b ✅ `2aca198`；S4 ✅ `d9470a4`；S5 ✅ `726b8cd` + `780f3d1`（**均只提交未推送**） |
+| 文档状态 | **S0–S6 全部完成**（均已提交，未推送） |
+| 当前位置 | S1 ✅ `9081883`；S2 ✅ `0e5d80e`；S3-a ✅ `b8a87d0`；S3-b ✅ `2aca198`；S4 ✅ `d9470a4`；S5 ✅ `726b8cd` + `33f190c`；**S6 ✅ `e2c295e`**（ABI 分包 versionCode 唯一化）；工具脚本 ✅ `39bb50f`（**均只提交未推送**） |
 
 ---
 
@@ -329,3 +329,29 @@ python3 tools/static_check.py
    CI 若遇到同类报错，建议先原样重试一次再排查。
 7. **APK 字节数有 ±420 B 抖动**：同一份代码重复 `assembleRelease`，三个包都会差几百字节
    （ZIP 时间戳／对齐元数据），不要按"必须逐字节相等"来卡验收。
+8. **S6 · ABI 分包 versionCode 唯一化（已完成，`e2c295e`）**：`defaultConfig.versionCode` 是**变体级**
+   属性，AGP 原样套到每个输出，`splits.abi` 不派生 per-output versionCode ⇒ 三包 versionCode 全是 7。
+   Android 用 `(packageName, versionCode, 签名)` 标识已安装应用，三包同号会被判为同一个版本 ⇒
+   市场侧更新判断失效、多 APK 上传被拒、跨 ABI 升级路径不可判定。
+   按 Google 多 APK 官方约定改为 `versionCode = base * 1000 + abiOffset`：
+
+   | 输出 | offset | base=7 实测 |
+   |---|---:|---:|
+   | armeabi-v7a | +1 | **7001** |
+   | arm64-v8a | +2 | **7002** |
+   | **universal** | **+9（最高）** | **7009** |
+
+   - 实现：`androidComponents { onVariants { … } }` + `VariantOutput.versionCode.set(…)`。
+     ⚠️ AGP 8.7 的新 variant API 里 per-output 版本号是 `Property<Integer>`，
+     旧 API 的 `versionCodeOverride` 属性**在 `VariantOutput` 上已不存在**（写了直接编译失败）。
+   - 实测（`aapt2 dump badging` 读**包内 manifest**，非仅元数据）：7001 / 7002 / 7009，
+     `versionName` 三者保持 `1.1.5`；`native-code` 仍分别为 `armeabi-v7a` / `arm64-v8a` / 四架构。
+   - **universal 取最高**是为了让「已装 ABI 分包 → 再装 universal 兜底包」被判为**升级**而非降级。
+   - ⚠️ 固有限制（任何多 APK 方案都绕不过）：已装 universal(7009) 后再装 arm64(7002)
+     会被系统判为降级并拒绝，需先卸载。
+
+9. **待办（裁决：本轮不做，留作单独一轮）——`feature:stats` / `classify` / `dedup` 的
+   `kotlinx.coroutines.core` 应收窄为 `testImplementation`**：这三个模块的 main 源集对
+   `kotlinx.coroutines` **0 命中**，只在 `src/test` 里用（`runBlocking` / `Flow` 夹具）。
+   之所以不与 S4 合并做：改声明会**缩小依赖作用域语义**（main 编译期不再看得到），
+   属于「依赖重构」而非「删零引用声明」，与 S4 定位不符，需单独一轮 + 单独验证。
