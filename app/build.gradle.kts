@@ -16,6 +16,20 @@ android {
         targetSdk = 35
         versionCode = 7
         versionName = "1.1.5"
+
+        // 体积优化 ③：收敛语言资源。
+        // 实测（aapt2 dump configurations，收敛前）：resources.arsc 共 91 个配置，其中
+        // 84 个是语言配置，每语言 85 条字符串 = 7,140 条，全部来自 androidx 的
+        // 通知模板文案（call_notification_* 等）；本项目自身文案只在 values/ 默认目录
+        // （88 条），没有任何 values-xx 目录。
+        //
+        // 开启后：语言配置 84 → 0，arsc 116,912 → 16,412 B（-100,500 B），
+        // universal / arm64 / armv7 三个包各 -100,500 B。
+        //
+        // ⚠️ aapt2 的 -c zh 不做子语言匹配：zh-rCN / zh-rHK / zh-rTW 也一并被剔除
+        //   （实测收敛后语言配置为 0）。影响面仅限 androidx 那 85 条通知模板文案回落到
+        //    英文默认值；App 自身中文文案全在默认目录，不受影响。
+        resourceConfigurations += setOf("zh")
     }
 
     // ---------------------------------------------------------------- release 签名
