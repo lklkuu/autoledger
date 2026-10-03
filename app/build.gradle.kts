@@ -69,6 +69,25 @@ android {
         }
     }
 
+    // ---------------------------------------------------------------- ABI 分包
+    // 只为真机架构出包：SQLCipher 默认打 4 个 ABI，其中 x86 / x86_64 合计约占 APK 的
+    // 34%（基线实测 11.6 MB），真机永远加载不到，纯属白打包。
+    //
+    // reset() 先清空默认全集，再只 include arm64-v8a + armeabi-v7a；
+    // isUniversalApk = true 保留一个含全部架构的兜底包 —— 万一分发渠道没按 ABI 挑包，
+    // 用户还能装得上（否则会出现「你的设备不支持此 APK」的静默失败）。
+    //
+    // 产物：app-arm64-v8a-release.apk / app-armeabi-v7a-release.apk /
+    //      app-universal-release.apk（另有非 ABI 名的 app-release.apk 由单变体任务产出）。
+    splits {
+        abi {
+            isEnable = true
+            reset()
+            include("arm64-v8a", "armeabi-v7a")
+            isUniversalApk = true
+        }
+    }
+
     buildFeatures { compose = true }
 
     packaging {
