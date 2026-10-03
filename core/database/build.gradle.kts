@@ -38,7 +38,6 @@ dependencies {
     api(project(":core:model"))
     implementation(project(":core:crypto"))
 
-    implementation(libs.androidx.core.ktx)
     implementation(libs.kotlinx.coroutines.android)
 
     api(libs.androidx.room.runtime)

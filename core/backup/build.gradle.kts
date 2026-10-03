@@ -35,7 +35,6 @@ dependencies {
     api(project(":core:database"))
     implementation(project(":core:crypto"))
 
-    implementation(libs.androidx.core.ktx)
     implementation(libs.kotlinx.coroutines.android)
 
     // QA: Robolectric 运行态测试（备份 JSON 序列化 / 旧版本兼容）

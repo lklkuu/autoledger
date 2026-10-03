@@ -19,9 +19,7 @@ android {
 dependencies {
     implementation(project(":core:model"))
     implementation(project(":core:crypto"))
-    implementation(project(":core:backup"))
 
-    implementation(libs.androidx.core.ktx)
     implementation(libs.kotlinx.coroutines.android)
 
     // TransferCodec / SessionKeyDeriver / QrTransferCode 是纯逻辑（无 Android 依赖），可 JVM 单测

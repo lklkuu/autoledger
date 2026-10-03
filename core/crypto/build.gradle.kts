@@ -17,7 +17,6 @@ android {
 }
 
 dependencies {
-    implementation(libs.androidx.core.ktx)
     api(libs.androidx.sqlite.framework)
     api(libs.sqlcipher.android)
 
