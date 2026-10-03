@@ -1,0 +1,20 @@
+<?xml version="1.0" encoding="utf-8"?>
+<!--
+  R8 资源缩减（isShrinkResources = true）的"白名单"。
+
+  只有**无法通过静态引用链被发现**的资源才需要写在这里 —— 它们靠字符串在运行时按名解析，
+  缩减器看不到任何引用，会当成"无人使用"直接删掉。
+
+  ⚠️ 唯一的实例：donate_wechat
+    DonationConfig.kt 里 `qrResName = "donate_wechat"`，
+    UI 层 CaptureAndSettings.kt 用
+      resources.getIdentifier(qrResName, "drawable", packageName)
+    把它解析成 @DrawableRes。整条链路上没有任何一处出现 `R.drawable.donate_wechat`，
+    所以资源缩减会删掉 res/drawable/donate_wechat.png —— 表现是捐赠弹窗里的
+    微信收款码**静默消失**（不崩溃、不报错，只有用户扫码时才发现）。
+
+  本文件自身不会被打进 APK（AGP 处理完 keep 指令后即丢弃）。
+  新增动态解析的资源（例如以后加 donate_alipay.png）时，必须同步在这里补 tools:keep。
+-->
+<resources xmlns:tools="http://schemas.android.com/tools"
+    tools:keep="@drawable/donate_wechat" />

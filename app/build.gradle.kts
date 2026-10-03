@@ -66,6 +66,25 @@ android {
             if (hasReleaseKeystore) {
                 signingConfig = signingConfigs.getByName("release")
             }
+
+            // ---------------------------------------------------------- R8
+            // isMinifyEnabled：代码压缩 + 混淆 + 优化。本项目 dex 里 material-icons-extended
+            //   一家占可归属字节的 59%（2300 个图标只用 35 个），不开 R8 就是全量打进包。
+            // isShrinkResources：资源缩减，删掉没有被任何代码/资源引用的 res 条目（须与
+            //   minify 同时开，否则不生效）。
+            // proguardFiles：复用仓库既有 app/proguard-rules.pro（已含 Room / SQLCipher /
+            //   coroutines / Compose 的 keep 规则），本阶段不新写任何规则。
+            //
+            // ⚠️ 配套必读：app/src/main/res/raw/keep.xml —— donate_wechat 是通过
+            //   resources.getIdentifier("donate_wechat", "drawable", pkg) 按**字符串**动态解析的
+            //   （DonationConfig.qrResName → CaptureAndSettings.kt），静态引用链看不到它，
+            //   资源缩减会把它当成"无人引用"删掉，导致捐赠弹窗的微信收款码**静默消失**。
+            isMinifyEnabled = true
+            isShrinkResources = true
+            proguardFiles(
+                getDefaultProguardFile("proguard-android-optimize.txt"),
+                "proguard-rules.pro"
+            )
         }
     }
 
