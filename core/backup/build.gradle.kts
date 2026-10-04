@@ -35,7 +35,14 @@ dependencies {
     api(project(":core:database"))
     implementation(project(":core:crypto"))
 
-    implementation(libs.kotlinx.coroutines.android)
+    // ⚠️ 不要改成 implementation（与 feature:stats / classify / dedup 同一处置）：
+    //   · 本模块 main 源码**不使用**协程 —— 只有 4 处 `suspend`，那是 Kotlin 语言关键字
+    //     （编译产物是 stdlib 的 kotlin.coroutines.Continuation），不需要 coroutines-core；
+    //     BackupManager.kt 里的 `.map(transform)` 是 **List.map**（stdlib），不是 Flow.map。
+    //   · 编译期若需要协程类型，由上面的 api(project(":core:model")) 传递提供
+    //     （core:model 用 api 导出了 coroutines，因 LedgerRepository 公开返回 Flow）。
+    //   · 仅测试直接使用 runBlocking（MergedRowsBackupTest / MergedRowsBackupAuditTest）。
+    testImplementation(libs.kotlinx.coroutines.android)
 
     // QA: Robolectric 运行态测试（备份 JSON 序列化 / 旧版本兼容）
     testImplementation(kotlin("test"))
