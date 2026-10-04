@@ -34,6 +34,7 @@ import androidx.compose.ui.res.painterResource
 import androidx.compose.ui.text.style.TextDecoration
 import android.net.Uri
 import androidx.compose.foundation.text.KeyboardOptions
+import androidx.compose.material3.OutlinedButton
 import androidx.compose.material3.OutlinedTextField
 import androidx.compose.ui.text.input.KeyboardType
 import androidx.compose.ui.text.input.PasswordVisualTransformation
@@ -74,6 +75,10 @@ import com.autoledger.feature.capture.notify.NotificationDiag
 import com.autoledger.feature.transfer.TransferTicket
 import kotlinx.coroutines.launch
 import com.autoledger.app.feature.AiFeatureGate
+import com.autoledger.app.update.GitHubUpdateChecker
+import com.autoledger.app.update.UpdateUiState
+import com.autoledger.app.update.compareVersions
+import androidx.compose.ui.text.style.TextOverflow
 
 /**
  * 采集箱 —— 自动化程度的真相所在：
@@ -457,6 +462,100 @@ fun SettingsScreen(container: AppContainer) {
                     color = MaterialTheme.colorScheme.onSurfaceVariant,
                     modifier = Modifier.padding(top = 8.dp),
                 )
+            }
+        }
+
+        item {
+            // v1.1.8 检查更新。放在「关于」之前：版本信息与升级入口挨在一起最自然。
+            AppCard {
+                SectionTitle("检查更新", "从 GitHub 看看有没有新版本")
+                val updateScope = rememberCoroutineScope()
+                var updateState by remember { mutableStateOf<UpdateUiState>(UpdateUiState.Idle) }
+                val updateContext = LocalContext.current
+                // versionName 在新 SDK 上是 String?，这里显式兜底成非空，
+                // 免得整条比较链上出现可空类型（后面要传给 compareVersions）。
+                val currentVersion: String = remember(updateContext) {
+                    runCatching {
+                        updateContext.packageManager.getPackageInfo(updateContext.packageName, 0).versionName
+                    }.getOrNull() ?: "1.0.0"
+                }
+                // 「检查」与「重试」共用同一段逻辑：抽成局部 lambda，避免两份拷贝各自漂移。
+                val runCheck: suspend () -> Unit = {
+                    updateState = GitHubUpdateChecker().check().fold(
+                        onSuccess = { release ->
+                            val latest = release?.tagName.orEmpty()
+                            when {
+                                release == null || latest.isBlank() ->
+                                    UpdateUiState.Failed("没能读到版本信息，请稍后再试")
+                                // 仅当远端严格更新才算「有新版本」；相等或更旧一律按已是最新处理，不提示降级
+                                compareVersions(latest, currentVersion) <= 0 ->
+                                    UpdateUiState.UpToDate(currentVersion)
+                                else -> UpdateUiState.NewAvailable(
+                                    latest = latest,
+                                    notes = release.notes.take(MAX_NOTES_CHARS),
+                                    url = release.htmlUrl,
+                                )
+                            }
+                        },
+                        onFailure = { UpdateUiState.Failed(it.message ?: "检查失败，请稍后再试") },
+                    )
+                }
+
+                Button(
+                    // 检查中禁用：既防连点（GitHub 未认证 API 限流 60 次/小时/IP），也让状态更清楚
+                    enabled = updateState !is UpdateUiState.Checking,
+                    onClick = {
+                        updateState = UpdateUiState.Checking
+                        updateScope.launch { runCheck() }
+                    },
+                    modifier = Modifier.padding(top = 10.dp),
+                ) { Text(if (updateState is UpdateUiState.Checking) "检查中…" else "检查更新") }
+
+                when (val state = updateState) {
+                    is UpdateUiState.Idle -> Unit
+                    is UpdateUiState.Checking -> Unit
+                    is UpdateUiState.UpToDate -> Text(
+                        "当前已是最新版本（${state.current}）",
+                        style = MaterialTheme.typography.bodySmall,
+                        color = MaterialTheme.colorScheme.onSurfaceVariant,
+                        modifier = Modifier.padding(top = 8.dp),
+                    )
+                    is UpdateUiState.NewAvailable -> {
+                        Text(
+                            "发现新版本：${state.latest}",
+                            style = MaterialTheme.typography.bodyMedium,
+                            modifier = Modifier.padding(top = 8.dp),
+                        )
+                        // body 可能极长（含完整 changelog）：必须截断 + 限行数，否则一张卡片能撑爆整页
+                        Text(
+                            state.notes,
+                            style = MaterialTheme.typography.bodySmall,
+                            color = MaterialTheme.colorScheme.onSurfaceVariant,
+                            maxLines = 6,
+                            overflow = TextOverflow.Ellipsis,
+                            modifier = Modifier.padding(top = 4.dp),
+                        )
+                        Button(
+                            onClick = { openExternalUrl(updateContext, state.url) },
+                            modifier = Modifier.padding(top = 10.dp),
+                        ) { Text("去 GitHub 下载") }
+                    }
+                    is UpdateUiState.Failed -> {
+                        Text(
+                            "检查失败：${state.reason}",
+                            style = MaterialTheme.typography.bodySmall,
+                            color = MaterialTheme.colorScheme.error,
+                            modifier = Modifier.padding(top = 8.dp),
+                        )
+                        OutlinedButton(
+                            onClick = {
+                                updateState = UpdateUiState.Checking
+                                updateScope.launch { runCheck() }
+                            },
+                            modifier = Modifier.padding(top = 8.dp),
+                        ) { Text("重试") }
+                    }
+                }
             }
         }
 
@@ -847,6 +946,13 @@ fun SettingsScreen(container: AppContainer) {
         )
     }
 }
+
+/**
+ * 更新说明最多展示多少字符。
+ * GitHub release 的 body 常常是完整 changelog（几百上千字），不截断会把设置页这一张卡撑爆。
+ * 配合 maxLines + Ellipsis 做双重限制。
+ */
+private const val MAX_NOTES_CHARS = 300
 
 @Composable
 private fun BulletLine(icon: androidx.compose.ui.graphics.vector.ImageVector, text: String) {
