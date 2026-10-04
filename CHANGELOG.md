@@ -42,6 +42,50 @@
 - **无障碍**：流水行副标题新增「收入」「退款」文字标记 —— 颜色不再是指示信息的唯一途径
   （WCAG 1.4.1），切换类型后色觉障碍用户也能感知。
 
+### 性能（安装包 33.73 MB → 7.76 MB）
+本轮不改任何业务逻辑，收益全部来自「依赖没被裁剪 + 冗余资源没收敛」。
+
+- **按 ABI 分包**：`sqlcipher-android` 的 AAR 内置 4 个 ABI，其中 x86 / x86_64 合计约占包体
+  34% 且真机永不加载。改为只出 `arm64-v8a` / `armeabi-v7a`，另保留一个含全架构的
+  universal 兜底包（防分发渠道没按 ABI 挑包时用户装不上）。
+- **开启 R8 代码压缩 + 资源缩减**：复用仓库既有 `app/proguard-rules.pro`（已含 Room / SQLCipher /
+  coroutines / Compose 保留规则）。dex 未压缩 43.24 → 3.31 MB，2 个 dex 合并为 1 个。
+  新增 `res/raw/keep.xml` 保住 `donate_wechat` —— 它是靠 `resources.getIdentifier` 按**字符串名**
+  动态解析的，静态引用链看不到，资源缩减会当成无人引用删掉，导致**捐赠弹窗微信收款码静默消失**
+  （不崩溃、不报错，只在用户扫码时才发现）。
+- **语言资源收敛为 `zh`**：实测 `resources.arsc` 里 84 个语言配置 × 85 条字符串 = 7,140 条
+  （占全部 7,536 条的 81%），全部来自 androidx 的通话通知模板文案；本项目只有一个 `values/`
+  目录，中文文案在默认目录不受影响。`resources.arsc` 116,912 → 16,412 B（-85.96%）。
+- **自有 PNG 转无损 WebP**（23 张）：含各密度启动图标与通知图标。二维码收款码必须无损
+  （有损会破坏细密模块边缘、降低扫码识别率），转换脚本 `tools/png2webp.py` 一并入库，
+  它会解码回像素逐通道比对后才允许替换，任何人都能复算收益。九宫格 `.9.png` 按规范不转。
+- **裁剪 7 条源码零引用的依赖声明**（体积零变化，属声明债清理）：`ui-tooling-preview`、
+  4 处 `androidx.core.ktx`、`core:backup`（transfer）、`coroutines.core`（platform）。
+  保留：`kotlinx-serialization-json`（有意避开 `org.json` 在 Robolectric 被 android.jar stub）、
+  `lifecycle-runtime-ktx`（被传递引入，删声明收益为 0）、`core:database → core:crypto`
+  （看着零引用，但 `Migrations.kt` 依赖它 `api` 透传的 `androidx.sqlite` 类型，删了编译不过）。
+- **工程解耦**：`AppStores.kt`（1282 行 / 9 个 Store 类）按 1 类 1 文件拆为 9 个文件 +
+  `StoreSupport.kt`，最长文件 1282 → 323 行，纯 move 不改逻辑。
+
+| 包 | 1.1.5 | 1.1.6 | 降幅 |
+|---|---:|---:|---:|
+| arm64-v8a（绝大多数用户实际下载） | 33,730,618 B | **7,764,910 B** | **-77.0%** |
+| armeabi-v7a | 33,730,618 B | **6,049,006 B** | **-82.1%** |
+| universal（兜底） | 33,730,618 B | 23,419,161 B | -30.6% |
+
+### 修复
+- **ABI 分包后多包 versionCode 重复**：`defaultConfig.versionCode` 是**变体级**属性，AGP 会原样
+  套到该变体的每个输出，而 `splits` 只决定文件归属、不派生 per-output versionCode
+  ⇒ universal / armv7 / arm64 三个包 versionCode 全相同。Android 用
+  `(packageName, versionCode, 签名)` 标识已安装应用，同号会被判为同一个版本，导致应用市场
+  更新判断失效、多 APK 上传被拒、跨 ABI 升级路径不可判定。
+  改为 `versionCode = base * 1000 + abiOffset`（Google 多 APK 官方约定），**universal 取最高**
+  以保证「已装 ABI 分包 → 再装 universal」被系统判为升级而非降级；`versionName` 三者保持一致
+  （它是展示名，「关于」页会读，编入 ABI 信息会漏给用户）。
+  本版实测：armeabi-v7a = 8001、arm64-v8a = 8002、universal = 8009。
+  ⚠️ 固有语义：已装 universal(8009) 后再装 arm64(8002) 会被系统判为降级并拒绝，需先卸载 ——
+  这是任何多 APK 方案都无法规避的（Google 文档同样要求 universal 取最高）。
+
 ### 修复
 - **趋势图金额标签的极值断言空转**：护栏写成 `substringAfter('.').filter { isDigit() }.startsWith("-")`，
   `filter` 先把负号滤掉 ⇒ 断言恒为 false（`¥123.-4万`、`¥abc` 都能通过）。改为对未过滤的小数子串判负号，
