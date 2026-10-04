@@ -48,10 +48,11 @@ class VersionCompareTest {
     }
 
     @Test
-    fun `non numeric segments do not throw and degrade to the numeric prefix`() {
-        assertEquals(0, compareVersions("1.1.6-beta1", "1.1.6"))
-        assertEquals(0, compareVersions("1.1.6-rc.2", "1.1.6"))
-        assertEquals(1, compareVersions("1.1.7-beta1", "1.1.6"), "预发布的新版本仍应算更大")
+    fun `a malformed segment degrades to zero instead of throwing`() {
+        // 本项目版本号只会是纯数字递增，但万一某段解析失败也不能让设置页崩。
+        // "1.x.6" 的 x 段退化成 0 ⇒ 等价于 1.0.6，比 1.1.6 小。
+        assertEquals(-1, compareVersions("1.x.6", "1.1.6"))
+        assertEquals(0, compareVersions("1.1.x", "1.1.0"), "退化成 0 后与全 0 段相等")
     }
 
     @Test

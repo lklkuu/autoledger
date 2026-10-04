@@ -140,17 +140,24 @@ fun compareVersions(a: String, b: String): Int {
 }
 
 /**
- * 把版本号拆成数字段：剥前缀 → **截断预发布/构建后缀** → 拆点 → 每段取开头连续数字。
- * 段数为 0（输入是 `"v"`、`""` 之类）时返回空列表，调用方按「全 0」处理。
+ * 把版本号拆成数字段。
+ *
+ * **本项目的版本号形态（唯一需要支持的情况）**：`v1.1.6` 形式的纯数字三段，
+ * 只会按数字递增（`v1.1.6 → v1.1.7`）。所以只做两件事：
+ * 1. 剥掉 `v` / `V` 前缀 —— **这不是"兼容奇怪格式"，而是本仓库 tag 的真实形态**
+ *    （`git tag` 实测：`v1.1.2` … `v1.1.6`），GitHub `releases/latest` 的
+ *    `tag_name` 就带着这个 `v`，不剥的话两边都会剥、结果仍相等，但会让"看起来
+ *    像 bug"；更重要的是万一某侧没有 `v` 就会误判。
+ * 2. 按 `.` 拆段并逐段取数字。
+ *
+ * `toIntOrNull() ?: 0` 只是防止单个数字段解析失败时抛异常（成本一个 token），
+ * 不作为"支持畸形版本号"的特性来宣传。
  */
 private fun versionSegments(raw: String): List<Int> {
-    val trimmed = raw.trim().removePrefix("v").removePrefix("V").trim()
-    if (trimmed.isEmpty()) return emptyList()
-    // `-beta1` / `-rc.2` / `+build` 都是预发布或构建元数据，不参与大小比较。
-    val core = trimmed.takeWhile { it != '-' && it != '+' }
+    val core = raw.trim().removePrefix("v").removePrefix("V").trim()
     if (core.isEmpty()) return emptyList()
     return core.split('.').map { segment ->
-        segment.takeWhile { it.isDigit() }.toIntOrNull() ?: 0
+        segment.toIntOrNull() ?: 0
     }
 }
 
