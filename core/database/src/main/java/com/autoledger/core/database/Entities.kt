@@ -188,6 +188,15 @@ data class SettingsEntity(
     val goalCushionMinor: Long,
     val goalCurrentMinor: Long,
     val autoMerge: Boolean,
+    // ---- AI 判定配置（v7 新增）----
+    // ⚠️ 这里**只有非敏感的四项**。API 密钥绝不进 Room：
+    // 进库即进 `listAllForBackup` 的备份范围，等于把密钥塞进导出文件。
+    // 密钥走 core:crypto 的 AiKeyVault（Keystore 包裹 + SharedPreferences，不进备份）。
+    val aiEnabled: Boolean,
+    /** AiMode 的枚举名（FALLBACK / ALWAYS）；非法值读取侧回落 FALLBACK。 */
+    val aiMode: String,
+    val aiEndpoint: String,
+    val aiModel: String,
 )
 
 // ---------------------------------------------------------------- 订单 / 退款

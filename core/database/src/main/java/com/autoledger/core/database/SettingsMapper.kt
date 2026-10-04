@@ -1,5 +1,6 @@
 package com.autoledger.core.database
 
+import com.autoledger.core.model.AiMode
 import com.autoledger.core.model.AppSettings
 import com.autoledger.core.model.FreedomGoal
 import com.autoledger.core.model.WageProfile
@@ -21,6 +22,11 @@ fun SettingsEntity.toAppSettings(): AppSettings = AppSettings(
         currentMinor = goalCurrentMinor,
     ),
     autoMerge = autoMerge,
+    aiEnabled = aiEnabled,
+    // 库里存的是枚举名；遇到未来版本写入的未知值（或手改库的脏数据）回落 FALLBACK，绝不抛异常。
+    aiMode = runCatching { AiMode.valueOf(aiMode) }.getOrDefault(AiMode.FALLBACK),
+    aiEndpoint = aiEndpoint,
+    aiModel = aiModel,
 )
 
 fun AppSettings.toEntity(): SettingsEntity = SettingsEntity(
@@ -41,4 +47,8 @@ fun AppSettings.toEntity(): SettingsEntity = SettingsEntity(
     goalCushionMinor = 0L,
     goalCurrentMinor = goal.currentMinor,
     autoMerge = autoMerge,
+    aiEnabled = aiEnabled,
+    aiMode = aiMode.name,
+    aiEndpoint = aiEndpoint,
+    aiModel = aiModel,
 )

@@ -95,10 +95,36 @@ val MIGRATION_5_6 = object : Migration(5, 6) {
     }
 }
 
+/**
+ * v6 → v7：AI 判定配置四列（`app_settings` 单行表）。
+ *
+ * 四列全部 NOT NULL + 非空默认值 ⇒ **旧行原样保留**（用户口径与 MIGRATION_4_5 一致：
+ * 升级只是把「AI 关」的默认状态补上，不是把老设置改坏）。
+ *
+ * ⚠️ 列名必须是 **camelCase 的 `aiEnabled` / `aiMode` / `aiEndpoint` / `aiModel`**。
+ * 本项目的 Room **没有开启** camelCase→snake_case 转换：`app_settings` 既有列全是
+ * `wageSalaryMinor` 这种原样列名，只有显式写了 `@ColumnInfo(name = "...")` 的字段
+ * （如 `transactions.platform_id`）才是 snake_case。写成 `ai_enabled` 会让
+ * `exportSchema` 校验报 "migration didn't properly handle" ⇒ 退回
+ * `fallbackToDestructiveMigration` ⇒ **全库流水清空**。
+ * （这条不是推断：`AiSettingsMigrationTest` 第一版就踩了，12 个迁移测试一起红。）
+ *
+ * 本段只加列、不建索引、不改既有列；漏掉整段（`ALL_MIGRATIONS` 没登记）后果同样是清库，
+ * 务必与 [LedgerSchema.DATABASE_VERSION] 同步推进。
+ */
+val MIGRATION_6_7 = object : Migration(6, 7) {
+    override fun migrate(db: SupportSQLiteDatabase) {
+        db.execSQL("ALTER TABLE `app_settings` ADD COLUMN `aiEnabled` INTEGER NOT NULL DEFAULT 0")
+        db.execSQL("ALTER TABLE `app_settings` ADD COLUMN `aiMode` TEXT NOT NULL DEFAULT 'FALLBACK'")
+        db.execSQL("ALTER TABLE `app_settings` ADD COLUMN `aiEndpoint` TEXT NOT NULL DEFAULT ''")
+        db.execSQL("ALTER TABLE `app_settings` ADD COLUMN `aiModel` TEXT NOT NULL DEFAULT ''")
+    }
+}
+
 object LedgerDatabaseFactory {
 
     /** 全部显式迁移。**每次推进 [LedgerSchema.DATABASE_VERSION] 都必须在这里补齐对应的一段。** */
-    val ALL_MIGRATIONS: List<Migration> = listOf(MIGRATION_4_5, MIGRATION_5_6)
+    val ALL_MIGRATIONS: List<Migration> = listOf(MIGRATION_4_5, MIGRATION_5_6, MIGRATION_6_7)
 
     /**
      * @param openHelperFactory SQLCipher 工厂；传 null 表示降级为明文库（仅当用户在设置里明确允许）

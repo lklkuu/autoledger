@@ -1,5 +1,6 @@
 package com.autoledger.core.backup
 
+import com.autoledger.core.model.AiMode
 import com.autoledger.core.model.AppSettings
 import com.autoledger.core.model.FreedomGoal
 import com.autoledger.core.model.WageProfile
@@ -32,6 +33,14 @@ internal fun AppSettings.toSettingsJson(): JSONObject = JSONObject().apply {
         put("currentMinor", goal.currentMinor)
     })
     put("autoMerge", autoMerge)
+    // ---- AI 判定配置（可导出：换机不必重填）----
+    // ⚠️ 这里**只允许**出现开关 / 模式 / 接口地址 / 模型名四项。
+    // **绝不**导出 API 密钥 —— 密钥由 core:crypto 的 AiKeyVault 单独保管，不进 Room、不进备份。
+    // 见 SettingsJsonAiTest 的「密钥绝不出现」护栏。
+    put("aiEnabled", aiEnabled)
+    put("aiMode", aiMode.name)
+    put("aiEndpoint", aiEndpoint)
+    put("aiModel", aiModel)
 }
 
 /**
@@ -55,5 +64,11 @@ internal fun JSONObject.parseAppSettings(): AppSettings {
             currentMinor = g?.optLong("currentMinor") ?: FreedomGoal().currentMinor,
         ),
         autoMerge = optBoolean("autoMerge", true),
+        // 全字段 optXxx + 默认值：老档案（v1.1.6 及更早）没有这四个键，必须能照旧导入。
+        aiEnabled = optBoolean("aiEnabled", false),
+        // 未知枚举名（未来版本写入、或手改档案）回落 FALLBACK，绝不抛异常。
+        aiMode = runCatching { AiMode.valueOf(optString("aiMode") ?: "FALLBACK") }.getOrDefault(AiMode.FALLBACK),
+        aiEndpoint = optString("aiEndpoint").orEmpty(),
+        aiModel = optString("aiModel").orEmpty(),
     )
 }
