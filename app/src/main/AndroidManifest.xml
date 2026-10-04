@@ -3,6 +3,10 @@
 
     <uses-permission android:name="android.permission.POST_NOTIFICATIONS" />
 
+    <!-- v1.1.7 AI 判定（默认关闭）：仅当用户在设置页主动开启并自填接口地址时才会发起请求。
+         关闭状态下应用不产生任何网络流量，通知原文也不会离开设备。 -->
+    <uses-permission android:name="android.permission.INTERNET" />
+
     <!-- C4 换机迁移：拉起本地热点（LocalOnlyHotspot）+ 连接热点（WifiNetworkSpecifier） -->
     <uses-permission android:name="android.permission.CHANGE_WIFI_STATE" />
     <uses-permission android:name="android.permission.ACCESS_NETWORK_STATE" />

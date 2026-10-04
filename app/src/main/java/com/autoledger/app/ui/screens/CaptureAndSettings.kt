@@ -52,6 +52,8 @@ import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.unit.dp
 import com.autoledger.app.di.AppContainer
 import com.autoledger.app.ui.components.AppCard
+import com.autoledger.app.ui.components.AiSettingsCard
+import com.autoledger.app.ui.components.aiPrivacyLine
 import com.autoledger.app.ui.components.EmptyHint
 import com.autoledger.app.ui.components.LoadingBox
 import com.autoledger.app.ui.components.SectionTitle
@@ -236,6 +238,8 @@ private sealed interface EncryptRequest {
 fun SettingsScreen(container: AppContainer) {
     val store = remember(container) { SettingsStore(container) }
     val state by store.state.collectAsState()
+    // v1.1.7 AI 判定配置（开关 / 接口地址）：AI 卡片与隐私文案都按它条件化渲染。
+    val appSettings by container.settings.state.collectAsState()
     LaunchedEffect(container) { store.refresh() }
     // 捐赠收款码弹窗当前展示的渠道（null = 不展示）
     var donationChannel by remember { mutableStateOf<DonationChannel?>(null) }
@@ -402,6 +406,11 @@ fun SettingsScreen(container: AppContainer) {
                     Modifier.padding(top = 10.dp),
                 ) { Icon(LedgerIcons.Category, null); Text(" 管理消费平台") }
             }
+        }
+
+        item {
+            // v1.1.7 AI 判定：默认关闭。关闭时全本地处理、通知原文不出设备。
+            AiSettingsCard(container = container, enabled = appSettings.aiEnabled)
         }
 
         item {
@@ -619,7 +628,12 @@ fun SettingsScreen(container: AppContainer) {
                     },
                 )
                 BulletLine(LedgerIcons.Lock, "通知原文二次加密后才落盘，日志一律脱敏")
-                BulletLine(LedgerIcons.Lock, "不发任何数据上云；云同步仅有接口，当前是无操作的占位实现")
+                // 条件化：只有用户自己开启并配了地址，才存在"发上云"这件事。
+                // 文案逻辑抽成纯函数 aiPrivacyLine()，由 AiPrivacyCopyTest 钉死。
+                BulletLine(
+                    LedgerIcons.Lock,
+                    aiPrivacyLine(appSettings.aiEnabled, appSettings.aiEndpoint),
+                )
             }
         }
 

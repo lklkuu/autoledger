@@ -1,0 +1,7 @@
+<?xml version="1.0" encoding="utf-8"?>
+<!--
+  feature:ai 不声明任何组件：它只是「AI 判定」的可插拔能力实现（一个纯逻辑类 +
+  一个 HttpURLConnection 传输实现），由 app 层通过 feature:capture 的 TypeRefiner 端口注入。
+  网络权限在 app 的 AndroidManifest 统一声明（INTERNET），库模块不重复声明。
+-->
+<manifest xmlns:android="http://schemas.android.com/apk/res/android" />

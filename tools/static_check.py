@@ -37,6 +37,7 @@ MODULE_PKGS = {
     "feature:refund": "com.autoledger.feature.refund",
     "feature:platform": "com.autoledger.feature.platform",
     "feature:transfer": "com.autoledger.feature.transfer",
+    "feature:ai": "com.autoledger.feature.ai",
     "app": "com.autoledger.app",
 }
 

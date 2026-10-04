@@ -62,9 +62,10 @@ class LedgerModelTest {
         assertEquals(LedgerSchema.BACKUP_VERSION, LedgerSchema.CURRENT)
         // v5 = 消费平台字段（platform_id / platform_confidence / platform_source）落地。
         // v6 = 自定义消费平台表（user_platforms）+ 合并溯源列（transactions.merged_into_id）。
-        // 改这个值必须同时提供显式 Migration（见 core:database 的 MIGRATION_5_6），
+        // v7 = AI 判定配置四列（app_settings.aiEnabled / aiMode / aiEndpoint / aiModel）。
+        // 改这个值必须同时提供显式 Migration（见 core:database 的 MIGRATION_5_6 / MIGRATION_6_7），
         // 否则 Room 找不到迁移路径 ⇒ 退回 destructive fallback ⇒ **全库清空**。
-        assertEquals(6, LedgerSchema.DATABASE_VERSION)
+        assertEquals(7, LedgerSchema.DATABASE_VERSION)
         assertEquals("ledgerbak", LedgerSchema.BACKUP_EXTENSION)
     }
 

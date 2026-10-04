@@ -33,6 +33,7 @@ import com.autoledger.feature.capture.CaptureDispatcher
 import com.autoledger.feature.capture.CaptureRegistry
 import com.autoledger.feature.capture.CaptureSource
 import com.autoledger.core.crypto.AiKeyVault
+import com.autoledger.core.model.TxnType
 import com.autoledger.feature.ai.AiConfig
 import com.autoledger.feature.ai.AiTypeRefiner
 import com.autoledger.feature.capture.IngestPipeline
@@ -214,6 +215,53 @@ class AppContainer(context: Context) {
                 )
             },
         )
+    }
+
+    // ---------------------------------------------------------------- AI 设置页入口（窄接口）
+
+    /** 是否已保存过 AI 密钥（不解密，只看有没有密文）。 */
+    fun aiApiKeyPresent(): Boolean = aiKeyVault.hasKey()
+
+    /**
+     * 保存 AI 密钥。返回 false 表示「没写进去」（主密钥不可用），UI 应提示重试。
+     * 空串视为清除。
+     */
+    fun saveAiApiKey(key: String): Boolean = aiKeyVault.save(key)
+
+    /** 清除 AI 密钥。 */
+    fun clearAiApiKey() = aiKeyVault.clear()
+
+    /**
+     * 「测试连通性」：5 秒预算内发一次最小请求，**永不回显密钥**。
+     *
+     * 返回给用户看的结果分三类：配置不全 / 鉴权失败（401·403）/ 网络不可达·超时 / 其它错误。
+     * 刻意不把响应体或密钥带进结果文案。
+     */
+    suspend fun testAiConnectivity(): String {
+        val s = settings.state.value
+        val key = aiKeyVault.load().orEmpty()
+        if (s.aiEndpoint.isBlank()) return "请先填写接口地址"
+        if (s.aiModel.isBlank()) return "请先填写模型名"
+        if (key.isBlank()) return "请先填写 API 密钥"
+
+        val probe = AiTypeRefiner(
+            configProvider = {
+                AiConfig(
+                    enabled = true,
+                    mode = s.aiMode,
+                    endpoint = s.aiEndpoint,
+                    model = s.aiModel,
+                    apiKey = key,
+                )
+            },
+            timeoutMillis = CONNECTIVITY_TIMEOUT_MS,
+            log = com.autoledger.feature.ai.AndroidAiDecisionLog,
+        )
+        // 用一次「必然采纳」的假判定来探活：只要网络与鉴权通得过，AI 就会给出结论。
+        return when (probe.decide(text = "ping", amountMinor = null, localGuess = TxnType.EXPENSE)) {
+            null -> "连接失败：请检查接口地址是否正确、网络是否可达（详情见 logcat 的 AutoLedgerAi 标签）"
+            else -> "连接正常"
+        }
     }
 
     /** 极简导航状态；放在容器里是为了让旋转／重建 Activity 后仍停在同一屏 */
@@ -481,6 +529,9 @@ class AppContainer(context: Context) {
     }
 
     companion object {
+        /** 「测试连通性」的独立预算（毫秒）。比判定链路的 2s 更宽，因为这是用户主动发起的探测。 */
+        private const val CONNECTIVITY_TIMEOUT_MS = 5_000L
+
         /** 加密初始化最多尝试次数；超过则放弃加密并明确告知用户（不再静默降级）。 */
         private const val MAX_ENCRYPTION_ATTEMPTS = 3
 

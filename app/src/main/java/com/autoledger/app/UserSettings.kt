@@ -3,6 +3,7 @@ package com.autoledger.app
 import com.autoledger.core.database.SettingsDao
 import com.autoledger.core.database.toAppSettings
 import com.autoledger.core.database.toEntity
+import com.autoledger.core.model.AiMode
 import com.autoledger.core.model.AppSettings
 import com.autoledger.core.model.FreedomGoal
 import com.autoledger.core.model.WageProfile
@@ -43,6 +44,16 @@ class UserSettings(
     fun updateGoal(goal: FreedomGoal) = update { it.copy(goal = goal) }
 
     fun setAutoMerge(enabled: Boolean) = update { it.copy(autoMerge = enabled) }
+
+    /**
+     * AI 判定配置（开关 / 模式 / 接口地址 / 模型名）。
+     *
+     * ⚠️ 这里**没有也不该有** API 密钥：密钥走 `AiKeyVault`（Keystore 包裹 + SharedPreferences，
+     * 该文件被排除在备份之外），因此它既不进 Room 也不进备份档案。
+     */
+    fun setAi(enabled: Boolean, mode: AiMode, endpoint: String, model: String) = update {
+        it.copy(aiEnabled = enabled, aiMode = mode, aiEndpoint = endpoint.trim(), aiModel = model.trim())
+    }
 
     private fun update(transform: (AppSettings) -> AppSettings) {
         val next = transform(_state.value)
