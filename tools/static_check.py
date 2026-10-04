@@ -110,10 +110,12 @@ ZERO_IMPORT_ALLOWLIST: dict[tuple[str, str], str] = {
     # （本仓库 app 还同时用到 kotlinx.coroutines.* 的其它 API，故此条通常不会被触发；
     #   保留它是为了把「服务提供者可以零 import」这条规则显式记录下来。）
     ("app", "kotlinx-coroutines-android"): "服务提供者：META-INF/services 注册 Main 调度器，零 import",
-    # ⚠️ 非假阳性：app/src/main 内确实零 import androidx.lifecycle（疑似无用声明）。
-    #    但删除它会改动 app 的声明依赖图，超出本轮「收窄 coroutines 变体 / 核心库」的改动范围，
-    #    且会触碰产物等价性基线 —— 故本轮暂缓，仅在此显式登记，交 team-lead 决定是否单独删除。
-    ("app", "androidx-lifecycle-runtime-ktx"): "⚠️ 疑似死依赖（真阳性）：本轮范围外暂缓，待 team-lead 决定",
+    # ⚠️ 这不是「忘了删的死依赖」，是 **故意的版本锚点**：app/src/main 确实零 import
+    #    androidx.lifecycle，但显式声明 2.8.7 会把 activity-compose 传递进来的整个
+    #    lifecycle 家族（runtime / viewmodel / process / common-java8）统一到同一版本；
+    #    实测删掉它后家族出现 2.4.1/2.6.1/2.6.2/2.8.3 多版本并存、classes.dex 也随之改变。
+    #    故**允许零 import**，且不得据此删除。（改动前请重跑改前/改后的 dex+arsc 逐条目比对。）
+    ("app", "androidx-lifecycle-runtime-ktx"): "故意的版本锚点：锁定 lifecycle 家族版本，零 import 属预期",
 }
 
 

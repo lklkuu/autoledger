@@ -203,6 +203,14 @@ dependencies {
     // NotificationManagerCompat / ContextCompat），无任何 -ktx 扩展 ⇒ 直接依赖 base 构件。
     implementation(libs.androidx.core)
     implementation(libs.androidx.activity.compose)
+    // ⚠️ 这行**不是**给 app 提供类的（app/src/main 对 androidx.lifecycle 零引用），
+    // 它是 **lifecycle 家族的版本锚点**：显式声明 2.8.7 会把 activity-compose 传递进来的
+    // lifecycle-runtime / viewmodel / process / common-java8 一并抬到 2.8.7，使版本统一。
+    //
+    // 实测过（删掉它重新构建并比对产物）：删除后同一份依赖图里出现
+    // runtime:2.6.1/2.6.2/2.8.3、viewmodel:2.6.1/2.8.3、process:2.4.1/2.8.3 等多版本并存，
+    // 且 classes.dex 随之改变 —— 所以**不要**以「没人 import 就删掉」为由清理它。
+    // 产物比对记录见 docs。要动它请先重跑「改前/改后 dex+arsc 逐条目比对」。
     implementation(libs.androidx.lifecycle.runtime.ktx)
     implementation(libs.kotlinx.coroutines.android)
 

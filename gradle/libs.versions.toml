@@ -9,6 +9,9 @@ coroutines = "1.9.0"
 serialization = "1.7.3"
 composeBom = "2024.12.01"
 activityCompose = "1.9.3"
+# ⚠️ 这是 **lifecycle 家族的版本锚点**（app 用 androidx.lifecycle-runtime-ktx 显式声明它），
+# 不是随便挑的版本号：它把 activity-compose 传递进来的 runtime/viewmodel/process/common-java8
+# 统一抬到同一版本。下调或删除会让家族里出现 2.4.1/2.6.1/2.6.2/2.8.x 并存并改变 classes.dex。
 lifecycle = "2.8.7"
 room = "2.6.1"
 sqlite = "2.4.0"
