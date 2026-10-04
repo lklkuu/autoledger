@@ -55,6 +55,30 @@ class VersionCompareTest {
         assertEquals(0, compareVersions("1.1.x", "1.1.0"), "退化成 0 后与全 0 段相等")
     }
 
+    // ------------------------------------------------------------------ 预发布 / 构建后缀
+    //
+    // ⚠️ 这几条**不是**为了"支持预发布版"（本项目从无预发布），而是防一个具体的线上事故：
+    // tag 是人写的，可能带 `-rc.1` / `-beta` / `+build.7`。不截断的话 `split('.')`
+    // 会把后缀里的数字当成新的一段：
+    //   "1.2.0+build.7" ⇒ [1,2,0,7]，比 "1.2.0" ⇒ [1,2,0,0] **大**
+    // ⇒ 界面提示"发现新版本 1.2.0+build.7"，而用户装的就是这个版本。**100% 复现的误报。**
+
+    @Test
+    fun `prerelease and build suffixes do not outrank the same core version`() {
+        assertEquals(0, compareVersions("1.1.6-beta1", "1.1.6"))
+        assertEquals(0, compareVersions("1.1.6-rc.2", "1.1.6"))
+        // 后缀里的数字绝不能被当成新的一段
+        assertEquals(0, compareVersions("1.2.0+build.7", "1.2.0"))
+        assertEquals(0, compareVersions("1.2.0+build.9", "1.2.0"))
+    }
+
+    @Test
+    fun `a prerelease of a newer core version still counts as newer`() {
+        // 截断后 "1.1.7-beta1" ⇒ [1,1,7]，仍大于 [1,1,6] —— 不能把截断做成"一律判旧"。
+        assertEquals(1, compareVersions("1.1.7-beta1", "1.1.6"), "新版本的预发布仍应算更大")
+        assertEquals(1, compareVersions("v2.0.0-rc1", "1.9.9"))
+    }
+
     @Test
     fun `2_0 beats 1_9_9`() {
         assertEquals(1, compareVersions("2.0", "1.9.9"))
