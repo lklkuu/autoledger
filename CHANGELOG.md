@@ -14,6 +14,39 @@
 - 加密备份的 UI 入口（后端能力已具备，当前设置页只有明文导出/导入）
 - 自适应布局（当前为手机竖屏优化）
 
+## [1.1.8] - 2026-10-04
+
+### 修复
+- **收入不再被记成 0 元支出**：微信收款 / 银行到账短信在**金额没解析出来**时，
+  此前会连「这是一笔收入」这个方向一起丢失，兜底判成支出并记录 0 元。
+  现在采集端的方向会一路贯通到账本类型判定（受影响规则：`wechat_receive`、`sms_bank_in`）。
+  - 判定链固定为 **`显式类型 > 金额符号 > 方向 > 支出兜底`**，即**金额存在时方向不得推翻金额**；
+    方向只在金额缺失时补位 —— 它不参与 `explicitType` 的推导（`收入` 方向既可能是工资也可能是退款）。
+  - 连带修正 AI 的「本地判不出」信号：本地已能靠方向判出时不再出网，维持「原文不出设备」的口径。
+- **`direction` 字段由账本类型决定**：此前按金额正负推断，而金额缺失时采集端用 `0` 占位，
+  `0 < 0` 不成立 ⇒ 一笔「金额没认出来的支出」在数据层显示为流入，与它自己的类型自相矛盾。
+  现改为支出恒流出、收入恒流入（划转/退款仍看金额符号，这两类本无固定方向）。
+- **`Money.formatYuan` 的 `withSign` 是死参数**（两个分支返回同一个空串，从未生效），
+  调用方写 `withSign = false` 以为能去掉负号、实际拿到的仍带负号。现删除该参数，
+  把「账本格式化必须始终可见符号」固化为唯一选项 —— 刻意**不**实现「去掉负号」，
+  否则「折合 ¥…」这类次要文案会把负结余显示成正数。
+
+### 变更（工程内部，无用户可感知变化）
+- **依赖收窄**：四个模块的 `kotlinx-coroutines-android` → `-core`（这四个模块 main 源码
+  对 `Dispatchers.Main` 零引用，而 app 仍保留 `-android`）；`androidx.core.ktx` → `androidx.core`
+  base 构件（app / feature:capture 实际只用 base 包的类）。
+  已用「改前 / 改后产物 `classes.dex` + `resources.arsc` 逐字节比对」证明零影响。
+- **静态检查器新增两项**：「API 泄漏」检查扩展到**外部库**（盯的是 `core:model` 用 `api`
+  导出 `Flow` 这类传递链，误写成 `implementation` 会拦住），公开面从「类型头」扩到
+  「类型头 + 公开成员签名」；新增「**声明了但 main 零引用**」阻塞级检查（带显式白名单）。
+- **CI 的 debug APK 制品此前是静默丢失的**：自 1.1.6 引入 ABI 分包起，上传路径仍写死
+  `app-debug.apk`，恒匹配不到带 ABI 后缀的三个文件，而 `upload-artifact` 匹配不到时
+  **只 warning 不失败** ⇒ 「CI 绿 + 制品为 0」被长期忽略。现改为通配并加
+  `if-no-files-found: error`，让这种失效直接变红。
+- 记录 `androidx.lifecycle.runtime.ktx` 是 **lifecycle 家族的版本锚点**（源码零引用但
+  不能删）：删除后依赖图会出现 runtime 2.6.1/2.6.2/2.8.3、process 2.4.1/2.8.3 等多版本并存
+  且 `classes.dex` 改变。已在三处注释写明，避免将来被当成死依赖清理。
+
 ## [1.1.7] - 2026-10-04
 
 ### 新增
@@ -446,7 +479,8 @@
 - 未做 Android 自适应布局，当前为手机竖屏优化
 - 捐赠渠道为**配置占位**：填入收款方式后自动在设置页出现
 
-[Unreleased]: https://github.com/lklkuu/autoledger/compare/v1.1.7...HEAD
+[Unreleased]: https://github.com/lklkuu/autoledger/compare/v1.1.8...HEAD
+[1.1.8]: https://github.com/lklkuu/autoledger/releases/tag/v1.1.8
 [1.1.7]: https://github.com/lklkuu/autoledger/releases/tag/v1.1.7
 [1.1.6]: https://github.com/lklkuu/autoledger/releases/tag/v1.1.6
 [1.1.5]: https://github.com/lklkuu/autoledger/releases/tag/v1.1.5

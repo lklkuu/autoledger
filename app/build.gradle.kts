@@ -14,8 +14,8 @@ android {
         applicationId = "com.autoledger.app"
         minSdk = 26
         targetSdk = 35
-        versionCode = 9
-        versionName = "1.1.7"
+        versionCode = 10
+        versionName = "1.1.8"
 
         // 体积优化 ③：收敛语言资源。
         // 实测（aapt2 dump configurations，收敛前）：resources.arsc 共 91 个配置，其中
