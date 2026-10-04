@@ -73,6 +73,7 @@ import com.autoledger.feature.capture.PermissionState
 import com.autoledger.feature.capture.notify.NotificationDiag
 import com.autoledger.feature.transfer.TransferTicket
 import kotlinx.coroutines.launch
+import com.autoledger.app.feature.AiFeatureGate
 
 /**
  * 采集箱 —— 自动化程度的真相所在：
@@ -408,9 +409,15 @@ fun SettingsScreen(container: AppContainer) {
             }
         }
 
-        item {
-            // v1.1.7 AI 判定：默认关闭。关闭时全本地处理、通知原文不出设备。
-            AiSettingsCard(container = container, enabled = appSettings.aiEnabled)
+        // v1.1.7 AI 判定：**入口暂不开放**（`AiFeatureGate.ENTRY_VISIBLE = false`）。
+        // 用户决定"AI 功能暂时先不上线，开关先隐藏，功能保留"——
+        // 下面这整套（配置存储 / 密钥 vault / feature:ai 模块 / IngestPipeline 接线 / 隐私文案）
+        // **一行代码都没删**，只是把 UI 入口藏起来。要上线时把 ENTRY_VISIBLE 改回 true 即可。
+        if (AiFeatureGate.ENTRY_VISIBLE) {
+            item {
+                // 默认关闭。关闭时全本地处理、通知原文不出设备。
+                AiSettingsCard(container = container, enabled = appSettings.aiEnabled)
+            }
         }
 
         item {
@@ -634,13 +641,18 @@ fun SettingsScreen(container: AppContainer) {
                     LedgerIcons.Lock,
                     aiPrivacyLine(appSettings.aiEnabled, appSettings.aiEndpoint),
                 )
-                // 与 AiKeyVault 的失败语义对齐：密钥解不开时它返回 null（AI 静默回落本地），
-                // 不抛异常、不崩。所以必须在这里告诉用户「换机 / 清除密钥容器后要重填」，
-                // 否则他只会看到"AI 一直没生效"却找不到原因。
-                BulletLine(
-                    LedgerIcons.Lock,
-                    "API 密钥存于本机并经系统 Keystore 加密；换机或清除密钥容器后需重新填写",
-                )
+                // ⚠️ 这条提示与上面的条件化文案**同受 ENTRY_VISIBLE 门控**：
+                // 入口隐藏时用户不可能配过密钥，若照常显示「换机后需重新填写」，
+                // 会变成一条让他莫名其妙为什么有密钥要重填的误导文案。
+                if (AiFeatureGate.ENTRY_VISIBLE) {
+                    // 与 AiKeyVault 的失败语义对齐：密钥解不开时它返回 null（AI 静默回落本地），
+                    // 不抛异常、不崩。所以必须在这里告诉用户「换机 / 清除密钥容器后要重填」，
+                    // 否则他只会看到"AI 一直没生效"却找不到原因。
+                    BulletLine(
+                        LedgerIcons.Lock,
+                        "API 密钥存于本机并经系统 Keystore 加密；换机或清除密钥容器后需重新填写",
+                    )
+                }
             }
         }
 

@@ -73,6 +73,7 @@ import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.flow.StateFlow
 import kotlinx.coroutines.flow.asStateFlow
 import kotlinx.coroutines.launch
+import com.autoledger.app.feature.AiFeatureGate
 
 /**
  * 依赖装配中心（手动 DI）。
@@ -207,11 +208,17 @@ class AppContainer(context: Context) {
             configProvider = {
                 val s = settings.state.value
                 AiConfig(
-                    enabled = s.aiEnabled,
+                    // ⚠️ `&& AiFeatureGate.ENTRY_VISIBLE` 是**兜底**，不只是 UI 隐藏：
+                    // 入口隐藏期间若数据里残留了 aiEnabled=true（例如从旧备份导入），
+                    // 也不能让采集链路真的发请求 —— 门控必须同时卡住「数据侧」与「UI 侧」，
+                    // 否则「开关隐藏」只是把按钮藏了，后台照旧出网。
+                    // 恢复上线时把它改回 true（与 UI 门控是同一个常量，保持一致）。
+                    enabled = s.aiEnabled && AiFeatureGate.ENTRY_VISIBLE,
                     mode = s.aiMode,
                     endpoint = s.aiEndpoint,
                     model = s.aiModel,
-                    apiKey = if (s.aiEnabled) aiKeyVault.load().orEmpty() else "",
+                    // 同理：门控关闭时**连 Keystore 都不碰**，不必解密任何密钥。
+                    apiKey = if (s.aiEnabled && AiFeatureGate.ENTRY_VISIBLE) aiKeyVault.load().orEmpty() else "",
                 )
             },
         )
