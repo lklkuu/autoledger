@@ -466,7 +466,7 @@ fun SettingsScreen(container: AppContainer) {
         }
 
         item {
-            // v1.1.8 检查更新。放在「关于」之前：版本信息与升级入口挨在一起最自然。
+            // v1.1.7 检查更新。放在「关于」之前：版本信息与升级入口挨在一起最自然。
             AppCard {
                 SectionTitle("检查更新", "从 GitHub 看看有没有新版本")
                 val updateScope = rememberCoroutineScope()

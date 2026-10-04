@@ -7,11 +7,62 @@
 ## [Unreleased]
 
 ### 计划中
+- AI 收支判定上线（实现与测试已全部就位，当前仅由 `AiFeatureGate.ENTRY_VISIBLE = false` 隐藏入口）
 - 多币种（当前金额一律按 CNY 处理）
 - 云同步真实后端（当前仅有接口与空实现，不发送任何数据）
 - 其余页面接入 Room Flow 实时刷新（账单 / 采集箱 / 发现 / 自由 / 退款 / 分类管理）
 - 加密备份的 UI 入口（后端能力已具备，当前设置页只有明文导出/导入）
 - 自适应布局（当前为手机竖屏优化）
+
+## [1.1.7] - 2026-10-04
+
+### 新增
+- **设置页「检查更新」**：后台异步拉取本项目的 GitHub `releases/latest`，与本地
+  `versionName` 逐段数字比较，有新版本则给出 Release 说明摘要与下载跳转。
+  - **三种终态各有明确文案**（`UpToDate` / `NewAvailable` / `Failed`），进行中态按钮变
+    「检查中…」并禁用防连点，**不静默失败** —— 用户点了按钮却毫无反应，是这个功能最容易犯的错。
+  - **失败原因翻译成中文**：403 / 429 → 「请求过于频繁」、`SocketTimeoutException` →
+    「网络超时」、`UnknownHostException` → 「连不上 GitHub」。**刻意逐项匹配而不是直接
+    透传 `e.message`**，否则用户看到的是带 `api.github.com` 的原生报错。
+  - 网络调用走 `withContext(Dispatchers.IO) { withTimeoutOrNull(12s) { runInterruptible { … } } }`：
+    `HttpURLConnection` 是阻塞调用，主线程直连会抛 `NetworkOnMainThreadException`（API 26+ 强检）；
+    且光靠 `withTimeoutOrNull` **取消不了**它（超时只在阻塞返回后才被观察到），必须有 `runInterruptible`。
+  - 不引入 OkHttp：与本项目「连二维码都只用纯 JVM 的 zxing-core」一致，沿用 `HttpURLConnection`。
+- **消费平台预设扩充 6 条**：京东、天猫、小米商城、唯品会、得物、闲鱼。
+  京东的 `medium` 关键词**刻意不含裸词「京东」** —— 实测会命中真实工行样本
+  「数字钱包支付给中电联**京东**共管钱包」，把 E_WALLET 层的数字人民币挤掉。
+  并写入三条通用约定（一词只属一个条目 / `strong` 只放「X支付」/ `packageNames` 只填已核实的）
+  到 KDoc，防止后续继续加平台时重犯。
+- **平台包名从最近通知自动填充**：新增自定义平台时不再要求手填包名，从近期采集到的通知
+  自动解析并给出候选。
+- **AI 收支判定（入口隐藏，功能保留）**：配置存储（`app_settings` 四列 + `MIGRATION_6_7`）、
+  密钥保管（`AiKeyVault`，Keystore AES-GCM 包裹且**从类型层面不入备份**）、判定链路
+  （`feature:ai` + `TypeRefiner` 依赖倒置接线）、2s 硬超时与四重回落护栏全部已就位，
+  但**入口当前隐藏**（见下方「内部」）。
+
+### 修复
+- **「银行卡」字段末尾多余的「?」**：那个 `?` 不是数据污染，而是 UI 渲染时拼接的
+  置信度提示（`platformLabel + '?'`），数据库里 `platformId` 存的一直是纯 ID。
+  真正的缺陷在设计：`bank`（银行卡）是**兜底归类**而不是识别出的消费平台 —— 银行侧通知
+  （如「网银卡支出(某某餐饮)14.70 元」）不含平台标识，只能靠 `weakKeywords`（0.35 分）落到它，
+  必然低于 `CONFIRM_THRESHOLD(0.75)` ⇒ 每条银行卡流水都被标成「不确定」。
+  现抽出纯函数 `isPlatformUncertain(txn)` 把 bank 排除在不确定之外，列表副标题与编辑弹窗
+  复用同一判定（避免列表不显示 `?` 而弹窗还在提示）。
+  **真正的识别不确定（美团 vs 拼多多争胜）仍照常打 `?`** —— 这是本次最需要防的回归，已用单测钉死。
+- **「检查更新」主线程网络（P0）**：首版 `check()` 直接裸调 `HttpURLConnection`、无 IO 调度，
+  真机上 100% 抛 `NetworkOnMainThreadException`。**由 QA 独立复验发现**，非实现者自查所得。
+  注意该缺陷**单元测试抓不到** —— 注入 `127.0.0.1:1` 后主线程抛异常也被 `catch` 吞成
+  `Result.failure`，测试照样全绿。
+- **版本号比较恢复后缀截断**：中间版本曾按「本项目版本号只会数字递增」把 `-` / `+` 截断规则
+  连同三条测试一起删掉，结果砍掉了 `1.2.0+build.7` 比 `1.2.0` 大这一类**100% 可复现的误报**
+  （界面上会提示「发现新版本 1.2.0+build.7」，而用户装的正是这个版本）。现已恢复并加强测试。
+
+### 内部（不影响用户行为）
+- **AI 判定入口下线采用单一门控 `AiFeatureGate.ENTRY_VISIBLE = false`，UI 与数据两侧共用**：
+  只隐藏设置卡是**不够的** —— 若库里残留 `aiEnabled = true`（导入旧备份、或曾开放过又关闭），
+  采集链路照样发请求、通知正文照样出网，即「用户看不到开关，但数据在出网」的最坏状态。
+  因此 `CaptureAndSettings` 读它决定是否渲染卡片与密钥提示，`AppContainer` 读它决定判定器
+  是否真的启用（门控关闭时连 Keystore 都不碰）。**恢复上线只需把该常量改成 `true`**。
 
 ## [1.1.6] - 2026-10-02
 
@@ -395,7 +446,11 @@
 - 未做 Android 自适应布局，当前为手机竖屏优化
 - 捐赠渠道为**配置占位**：填入收款方式后自动在设置页出现
 
-[Unreleased]: https://github.com/lklkuu/autoledger/compare/v1.1.3...HEAD
+[Unreleased]: https://github.com/lklkuu/autoledger/compare/v1.1.7...HEAD
+[1.1.7]: https://github.com/lklkuu/autoledger/releases/tag/v1.1.7
+[1.1.6]: https://github.com/lklkuu/autoledger/releases/tag/v1.1.6
+[1.1.5]: https://github.com/lklkuu/autoledger/releases/tag/v1.1.5
+[1.1.4]: https://github.com/lklkuu/autoledger/releases/tag/v1.1.4
 [1.1.3]: https://github.com/lklkuu/autoledger/releases/tag/v1.1.3
 [1.1.2]: https://github.com/lklkuu/autoledger/releases/tag/v1.1.2
 [1.1.1]: https://github.com/lklkuu/autoledger/releases/tag/v1.1.1
