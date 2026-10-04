@@ -42,6 +42,16 @@ class IngestPipeline(
     private val autoConfirmThreshold: Float = 0.75f,
     /** 跨渠道重复是否自动合并（关掉则全部进入人工确认） */
     private val autoMergeDuplicates: Boolean = true,
+    /**
+     * 可选的 AI 二次判定端口。
+     *
+     * **默认 null ⇒ 行为与本参数出现之前完全一致**（全本地规则，通知原文不出设备）。
+     * 开启后也只在「本地判不出」时才会真正发起外部调用（由实现方按模式决定）。
+     *
+     * 端口定义在同包 [TypeRefiner]（依赖倒置），实现在 `feature:ai`、由 app 层适配器注入，
+     * 因此 feature 之间仍然零横向依赖。
+     */
+    private val typeRefiner: TypeRefiner? = null,
 ) {
 
     sealed interface Outcome {
@@ -71,7 +81,12 @@ class IngestPipeline(
             id = id,
             amountMinor = amount ?: 0L,
             occurredAtMillis = envelope.occurredAtMillis,
-            type = resolveInitialType(envelope.explicitType, amount),
+            type = resolveInitialTypeWithRefiner(
+                explicitType = envelope.explicitType,
+                amount = amount,
+                rawText = envelope.rawText,
+                typeRefiner = typeRefiner,
+            ),
             counterparty = counterparty,
             platformId = platform.platformId,
             platformConfidence = platform.confidence,

@@ -197,6 +197,7 @@ dependencies {
     implementation(project(":feature:refund"))
     implementation(project(":feature:platform"))
     implementation(project(":feature:transfer"))
+    implementation(project(":feature:ai"))
 
     implementation(libs.androidx.core.ktx)
     implementation(libs.androidx.activity.compose)

@@ -36,6 +36,7 @@ include(":feature:stats")    // 统计维度插件
 include(":feature:refund")   // 退款分摊与抵扣原路回退引擎（纯 JVM）
 include(":feature:platform") // 消费平台识别引擎（纯 JVM）
 include(":feature:transfer") // 换机数据迁移（设备直连 + 加密重封装）
+include(":feature:ai")       // AI 收支类型判定（可选增强，默认关；实现 capture 侧的 TypeRefiner 端口）
 
 // ---------- 宿主 ----------
 include(":app")

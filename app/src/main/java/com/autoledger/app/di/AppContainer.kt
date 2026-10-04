@@ -32,6 +32,9 @@ import com.autoledger.core.model.RawEnvelope
 import com.autoledger.feature.capture.CaptureDispatcher
 import com.autoledger.feature.capture.CaptureRegistry
 import com.autoledger.feature.capture.CaptureSource
+import com.autoledger.core.crypto.AiKeyVault
+import com.autoledger.feature.ai.AiConfig
+import com.autoledger.feature.ai.AiTypeRefiner
 import com.autoledger.feature.capture.IngestPipeline
 import com.autoledger.feature.capture.bill.BillImportCaptureSource
 import com.autoledger.feature.capture.manual.ManualCaptureSource
@@ -185,6 +188,34 @@ class AppContainer(context: Context) {
     /** 设置：Room 单行存储，金额以「分」存，随账本备份导出。惰性初始化避免启动期触碰数据库。 */
     val settings: UserSettings by lazy { UserSettings(database.settingsDao(), appScope).also { it.init() } }
 
+    /**
+     * AI 接口密钥保险箱（Keystore 包裹，**不进 Room、不进备份**）。
+     * 惰性：首次真正需要 AI 时才碰 Keystore。
+     */
+    private val aiKeyVault: AiKeyVault by lazy { AiKeyVault(applicationContext) }
+
+    /**
+     * AI 判定器。配置在**每次判定时**从 [settings] 与密钥保险箱现取，
+     * 因此用户在设置页改开关/模式/地址/密钥后**立刻生效**，无需重启。
+     *
+     * ⚠️ 密钥只在 `aiEnabled == true` 时才解密 —— 默认关时整个采集链路
+     * 一次 Keystore 操作都不做，通知原文也绝不出设备。
+     */
+    private val aiTypeRefiner: AiTypeRefiner by lazy {
+        AiTypeRefiner(
+            configProvider = {
+                val s = settings.state.value
+                AiConfig(
+                    enabled = s.aiEnabled,
+                    mode = s.aiMode,
+                    endpoint = s.aiEndpoint,
+                    model = s.aiModel,
+                    apiKey = if (s.aiEnabled) aiKeyVault.load().orEmpty() else "",
+                )
+            },
+        )
+    }
+
     /** 极简导航状态；放在容器里是为了让旋转／重建 Activity 后仍停在同一屏 */
     val nav = com.autoledger.app.ui.nav.NavState()
 
@@ -298,6 +329,9 @@ class AppContainer(context: Context) {
             classifier = classifier,
             cryptoBox = cryptoBox,
             platformResolver = platformResolver,
+            // AI 判定默认关（typeRefiner 传得进去也不会被触发，见 AiConfig.isReady）；
+            // 这里只做「接线」，真正的门控在 feature:ai 内部。
+            typeRefiner = AiRefinerAdapter(aiTypeRefiner),
         )
     }
 
