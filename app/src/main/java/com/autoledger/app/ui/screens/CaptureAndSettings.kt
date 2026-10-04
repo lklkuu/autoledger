@@ -634,6 +634,13 @@ fun SettingsScreen(container: AppContainer) {
                     LedgerIcons.Lock,
                     aiPrivacyLine(appSettings.aiEnabled, appSettings.aiEndpoint),
                 )
+                // 与 AiKeyVault 的失败语义对齐：密钥解不开时它返回 null（AI 静默回落本地），
+                // 不抛异常、不崩。所以必须在这里告诉用户「换机 / 清除密钥容器后要重填」，
+                // 否则他只会看到"AI 一直没生效"却找不到原因。
+                BulletLine(
+                    LedgerIcons.Lock,
+                    "API 密钥存于本机并经系统 Keystore 加密；换机或清除密钥容器后需重新填写",
+                )
             }
         }
 
