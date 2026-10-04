@@ -179,8 +179,8 @@ fun TxnEditDialog(
     }
 
     // 自动识别且置信度不足 ⇒ 提示用户确认（用户手选后即变 USER 源，不再提示）
-    val platformUncertain = txn.platformSource == PlatformSource.AUTO &&
-        txn.platformConfidence < PlatformResolver.CONFIRM_THRESHOLD
+    // 与列表副标题复用同一判定，避免"列表不显示「?」但弹窗还在提示"的不一致。
+    val platformUncertain = isPlatformUncertain(txn)
 
     val parsedAmount: Long? = amountText.trim().toBigDecimalOrNull()
         ?.let { (it.movePointRight(2)).toLong() }

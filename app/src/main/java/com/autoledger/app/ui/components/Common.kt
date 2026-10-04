@@ -41,6 +41,9 @@ import com.autoledger.app.ui.theme.LedgerTone
 import com.autoledger.core.model.MetricResult
 import com.autoledger.core.model.LedgerTransaction
 import com.autoledger.core.model.Category
+import com.autoledger.core.model.platform.PlatformCatalog
+import com.autoledger.core.model.platform.PlatformResolver
+import com.autoledger.core.model.platform.PlatformSource
 import java.util.Locale
 
 /** 分 -> 元 的可读串 */
@@ -422,10 +425,7 @@ fun TransactionRow(
                     // 消费平台（业务维度）：自动识别不确定时带「?」，提示用户点开修正。
                     val platformLabel =
                         com.autoledger.core.model.platform.PlatformCatalog.displayNameOf(txn.platformId)
-                    val platformUncertain =
-                        txn.platformSource == com.autoledger.core.model.platform.PlatformSource.AUTO &&
-                            txn.platformConfidence <
-                            com.autoledger.core.model.platform.PlatformResolver.CONFIRM_THRESHOLD
+                    val platformUncertain = isPlatformUncertain(txn)
                     add(if (platformUncertain) "$platformLabel?" else platformLabel)
 
                     add(category?.name ?: "未分类")
@@ -483,4 +483,25 @@ fun ProgressLine(
             trackColor = LedgerPalette.PositivePale,
         )
     }
+}
+
+/**
+ * 这条流水的「消费平台」是否属于**自动识别且置信度不足**（需要在列表里打「?」提示用户确认）。
+ *
+ * ## 为什么 `bank`（银行卡）被排除
+ *
+ * 银行卡不是"识别出来的消费平台"，而是**兜底归类**：一条银行侧通知（如「网银卡支出(某某餐饮)14.70 元」）
+ * 不含任何平台标识，只能靠 `bank.weakKeywords`（"尾号"/"银行" 等，0.35 分）落到它必然低于
+ * `CONFIRM_THRESHOLD`（0.75）。若不排除，每条银行卡流水都会显示成「银行卡?」——
+ * 而"银行卡怎么会是需要确认的消费平台"对用户毫无意义，只会造成困惑。
+ *
+ * 真正的"识别不确定"（例如同一段文本同时命中美团与拼多多、需要用户裁决）仍然照常打「?」。
+ * 用户手选过平台（`platformSource = USER`）时也不打「?」。
+ *
+ * 抽成纯函数是为了能用 **JVM 单测**直接钉住这三条规则，不必拖 Robolectric。
+ */
+internal fun isPlatformUncertain(txn: LedgerTransaction): Boolean {
+    if (txn.platformId == PlatformCatalog.BANK_ID) return false
+    if (txn.platformSource != PlatformSource.AUTO) return false
+    return txn.platformConfidence < PlatformResolver.CONFIRM_THRESHOLD
 }
