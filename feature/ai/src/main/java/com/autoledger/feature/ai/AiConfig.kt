@@ -1,6 +1,7 @@
 package com.autoledger.feature.ai
 
 import com.autoledger.core.model.AiMode
+import com.autoledger.core.model.Direction
 import com.autoledger.core.model.TxnType
 
 /**
@@ -26,14 +27,18 @@ data class AiConfig(
  * 是否值得为这一笔发请求。
  *
  * - [AiMode.FALLBACK]（默认，兜底）：**只在本地判不出时**才问 —— 本地"判不出"的可观测信号
- *   就是**金额缺失**（`resolveInitialType` 在有金额时永远能按正负给出 EXPENSE/INCOME）。
- *   因此有金额就不问，避免把每笔通知都发出去。
+ *   是「金额缺失 **且** 方向未知」：`resolveInitialType` 在金额存在时（按正负），
+ *   或金额缺失但方向已知时（按采集端已知方向），**都能**给出 EXPENSE/INCOME 结论。
+ *   因此只要二者有一个可用，本地就有结论，不再问。
  * - [AiMode.ALWAYS]（全覆盖）：每笔都问。
+ *
+ * **这是隐私口径**：本地已判出却仍出网，等于为一件已解决的事把通知原文发往外部服务。
+ * 所以 [Direction] 已知（哪怕金额缺失）也必须判定为「本地已判出」而短路。
  *
  * 纯函数，独立单测。
  */
-internal fun shouldAskAi(mode: AiMode, amountMinor: Long?): Boolean = when (mode) {
-    AiMode.FALLBACK -> amountMinor == null
+internal fun shouldAskAi(mode: AiMode, amountMinor: Long?, directionHint: Direction?): Boolean = when (mode) {
+    AiMode.FALLBACK -> amountMinor == null && directionHint == null
     AiMode.ALWAYS -> true
 }
 

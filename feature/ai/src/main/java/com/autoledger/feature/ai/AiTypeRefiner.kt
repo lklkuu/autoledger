@@ -1,5 +1,6 @@
 package com.autoledger.feature.ai
 
+import com.autoledger.core.model.Direction
 import com.autoledger.core.model.TxnType
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.ExperimentalCoroutinesApi
@@ -34,14 +35,14 @@ class AiTypeRefiner(
     /**
      * @return 采纳的类型；`null` = 不采纳（调用方用本地结论）。
      */
-    suspend fun decide(text: String, amountMinor: Long?, localGuess: TxnType): TxnType? {
+    suspend fun decide(text: String, amountMinor: Long?, localGuess: TxnType, directionHint: Direction?): TxnType? {
         val config = configProvider()
 
         if (!config.enabled) {
             log.onSkipped(AiDecisionLog.SkippedReason.DISABLED, 0, localGuess.name)
             return null
         }
-        if (!shouldAskAi(config.mode, amountMinor)) {
+        if (!shouldAskAi(config.mode, amountMinor, directionHint)) {
             log.onSkipped(AiDecisionLog.SkippedReason.LOCAL_DECIDED, 0, localGuess.name)
             return null
         }

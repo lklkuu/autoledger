@@ -1,5 +1,6 @@
 package com.autoledger.feature.capture
 
+import com.autoledger.core.model.Direction
 import com.autoledger.core.model.TxnType
 
 /**
@@ -31,6 +32,11 @@ data class TypeRefineRequest(
     val amountMinor: Long?,
     /** 本地规则的结论，作为 AI 的参考与回落目标。 */
     val localGuess: TxnType,
+    /**
+     * 采集端已知的收支方向；与 [amountMinor] 共同构成「本地是否判不出」的判据。
+     * 非 null 时本地已能得出结论，实现方不应再为此发出网络请求。
+     */
+    val directionHint: Direction?,
 )
 
 /**
@@ -45,14 +51,20 @@ data class TypeRefineRequest(
 internal suspend fun resolveInitialTypeWithRefiner(
     explicitType: TxnType?,
     amount: Long?,
+    directionHint: Direction?,
     rawText: String,
     typeRefiner: TypeRefiner?,
 ): TxnType {
-    val local = resolveInitialType(explicitType, amount)
+    val local = resolveInitialType(explicitType, amount, directionHint)
     // 采集端已确定类型（退款等）时，AI 永不参与 —— 这是硬约束，不交给实现方自觉。
     if (explicitType != null) return local
     val refined = typeRefiner?.refine(
-        TypeRefineRequest(text = rawText, amountMinor = amount, localGuess = local),
+        TypeRefineRequest(
+            text = rawText,
+            amountMinor = amount,
+            localGuess = local,
+            directionHint = directionHint,
+        ),
     )
     return refined ?: local
 }

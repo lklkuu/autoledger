@@ -273,7 +273,7 @@ class AppContainer(context: Context) {
             log = com.autoledger.feature.ai.AndroidAiDecisionLog,
         )
         // 用一次「必然采纳」的假判定来探活：只要网络与鉴权通得过，AI 就会给出结论。
-        return when (probe.decide(text = "ping", amountMinor = null, localGuess = TxnType.EXPENSE)) {
+        return when (probe.decide(text = "ping", amountMinor = null, localGuess = TxnType.EXPENSE, directionHint = null)) {
             null -> "连接失败：请检查接口地址是否正确、网络是否可达（详情见 logcat 的 AutoLedgerAi 标签）"
             else -> "连接正常"
         }

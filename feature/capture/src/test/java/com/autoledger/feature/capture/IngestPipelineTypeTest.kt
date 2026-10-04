@@ -1,5 +1,6 @@
 package com.autoledger.feature.capture
 
+import com.autoledger.core.model.Direction
 import com.autoledger.core.model.TxnType
 import kotlin.test.Test
 import kotlin.test.assertEquals
@@ -38,5 +39,45 @@ class IngestPipelineTypeTest {
     @Test
     fun `explicit expense type wins over a negative amount`() {
         assertEquals(TxnType.EXPENSE, resolveInitialType(TxnType.EXPENSE, -3_000L))
+    }
+
+    // ---------------- 方向提示贯通到判定链（本次修复的核心：金额缺失时不再记反） ----------------
+
+    /** A1：金额缺失但方向已知为流入 ⇒ 收入。**本次修复的核心断言**。 */
+    @Test
+    fun `missing amount with an incoming direction is income`() {
+        assertEquals(TxnType.INCOME, resolveInitialType(null, null, Direction.IN))
+    }
+
+    /** A2：金额缺失且方向为流出 ⇒ 支出。 */
+    @Test
+    fun `missing amount with an outgoing direction is expense`() {
+        assertEquals(TxnType.EXPENSE, resolveInitialType(null, null, Direction.OUT))
+    }
+
+    /** A4：金额存在时**金额符号优先**，方向不得推翻金额（-500 分且方向为流入 ⇒ 仍是支出）。 */
+    @Test
+    fun `a present amount overrides the direction hint`() {
+        assertEquals(
+            TxnType.EXPENSE,
+            resolveInitialType(null, -500L, Direction.IN),
+            "金额存在时一律以金额符号为准，方向不得推翻金额",
+        )
+    }
+
+    /** A5：显式类型仍**最高优先**，方向不得覆盖（REFUND 即便方向为流入仍是退款）。 */
+    @Test
+    fun `explicit type still wins over the direction hint`() {
+        assertEquals(
+            TxnType.REFUND,
+            resolveInitialType(TxnType.REFUND, null, Direction.IN),
+            "explicitType 优先级最高，方向只回答流入/流出",
+        )
+    }
+
+    /** A4 补充：金额为 0 时按金额判成收入（等价于原 `amount >= 0 → INCOME` 分支）。 */
+    @Test
+    fun `a zero amount is income and the direction does not override it`() {
+        assertEquals(TxnType.INCOME, resolveInitialType(null, 0L, Direction.OUT))
     }
 }

@@ -70,7 +70,7 @@ class AiFeatureGateTest {
             },
             transport = transport,
         )
-        val result = refiner.decide(text = "某条通知", amountMinor = null, localGuess = TxnType.EXPENSE)
+        val result = refiner.decide(text = "某条通知", amountMinor = null, localGuess = TxnType.EXPENSE, directionHint = null)
         assertEquals(1, transport.calls, "对照组：门控打开且配置齐全时应当发出请求")
         assertEquals(TxnType.INCOME, result, "对照组：应采纳 AI 的结论")
     }
@@ -99,7 +99,7 @@ class AiFeatureGateTest {
             },
             transport = transport,
         )
-        val result = refiner.decide(text = "某条通知", amountMinor = null, localGuess = TxnType.EXPENSE)
+        val result = refiner.decide(text = "某条通知", amountMinor = null, localGuess = TxnType.EXPENSE, directionHint = null)
         assertEquals(0, transport.calls, "门控关闭时绝不允许发出任何网络请求")
         assertNull(result, "门控关闭时应回落到本地结论（返回 null），不采纳任何 AI 结果")
     }

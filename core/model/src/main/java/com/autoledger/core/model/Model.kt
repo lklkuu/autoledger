@@ -152,4 +152,11 @@ data class RawEnvelope(
      * 为空则按金额正负推断。优先级最高，但仍会被"内部划转识别"覆盖为 TRANSFER/REFUND。
      */
     val explicitType: TxnType? = null,
+    /**
+     * 采集端由规则已知的收支方向（`NotificationParser.ParseResult.direction` 透传而来）。
+     *
+     * 用途**仅限**在 [amountHint] 缺失时为初始账本类型判定提供信号：金额存在时一律以金额符号为准，
+     * 方向不得推翻金额。**不得**用它推导 `explicitType`（`Direction.IN` 既可能是收入也可能是退款）。
+     */
+    val directionHint: Direction? = null,
 )

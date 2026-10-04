@@ -97,4 +97,52 @@ class CaptureEnvelopeFactoryTest {
         assertEquals(-1_234L, env.amountHint)
         assertNull(env.explicitType)
     }
+
+    // ---------------- 方向提示透传（本次修复：金额缺失时的方向不再丢失） ----------------
+
+    /** B1：方向为流入、金额缺失 ⇒ `directionHint == IN` 且 `amountHint == null`（方向成为唯一信号）。 */
+    @Test
+    fun `direction hint survives even when the amount is missing`() {
+        val parsed = NotificationParser.ParseResult(
+            ruleId = "sms_bank_in",
+            ruleLabel = "银行短信（收入）",
+            amountMinor = null,
+            counterparty = "工商银行",
+            direction = Direction.IN,
+            explicitType = null,
+        )
+        val env = toRawEnvelope(
+            sourceId = "sms",
+            sourceRef = "sms:1",
+            occurredAtMillis = 7_000L,
+            rawText = "【工商银行】您尾号1234账户工资已转入。",
+            packageName = "95588",
+            parsed = parsed,
+        )
+        assertEquals(Direction.IN, env.directionHint, "金额缺失时方向必须被透传（否则下游只能兜底成支出）")
+        assertNull(env.amountHint)
+    }
+
+    /** B2：金额与方向**并存、互不覆盖**。 */
+    @Test
+    fun `direction hint and amount coexist without overwriting each other`() {
+        val parsed = NotificationParser.ParseResult(
+            ruleId = "sms_bank_in",
+            ruleLabel = "银行短信（收入）",
+            amountMinor = 1_230L,
+            counterparty = "工商银行",
+            direction = Direction.IN,
+            explicitType = null,
+        )
+        val env = toRawEnvelope(
+            sourceId = "sms",
+            sourceRef = "sms:2",
+            occurredAtMillis = 8_000L,
+            rawText = "【工商银行】您尾号1234账户收入人民币12.30元。",
+            packageName = "95588",
+            parsed = parsed,
+        )
+        assertEquals(Direction.IN, env.directionHint)
+        assertEquals(1_230L, env.amountHint)
+    }
 }

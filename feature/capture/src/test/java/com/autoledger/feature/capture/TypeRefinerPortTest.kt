@@ -1,5 +1,6 @@
 package com.autoledger.feature.capture
 
+import com.autoledger.core.model.Direction
 import com.autoledger.core.model.TxnType
 import kotlin.test.assertEquals
 import kotlin.test.assertTrue
@@ -37,6 +38,7 @@ class TypeRefinerPortTest {
         val result = resolveInitialTypeWithRefiner(
             explicitType = TxnType.REFUND,
             amount = 5_000L,
+            directionHint = null,
             rawText = "退款到账 50.00",
             typeRefiner = refiner,
         )
@@ -56,7 +58,13 @@ class TypeRefinerPortTest {
         for ((explicit, amount, expected) in cases) {
             assertEquals(
                 expected,
-                resolveInitialTypeWithRefiner(explicit, amount, "原文", typeRefiner = null),
+                resolveInitialTypeWithRefiner(
+                    explicitType = explicit,
+                    amount = amount,
+                    directionHint = null,
+                    rawText = "原文",
+                    typeRefiner = null,
+                ),
                 "默认（不接线）时必须与 resolveInitialType 完全一致：explicit=$explicit amount=$amount",
             )
         }
@@ -69,6 +77,7 @@ class TypeRefinerPortTest {
         val result = resolveInitialTypeWithRefiner(
             explicitType = null,
             amount = null, // 本地判不出 ⇒ 才会问
+            directionHint = null,
             rawText = "花呗还款",
             typeRefiner = refiner,
         )
@@ -85,6 +94,7 @@ class TypeRefinerPortTest {
         val result = resolveInitialTypeWithRefiner(
             explicitType = null,
             amount = null,
+            directionHint = null,
             rawText = "某笔扣款",
             typeRefiner = refiner,
         )
@@ -100,6 +110,7 @@ class TypeRefinerPortTest {
         resolveInitialTypeWithRefiner(
             explicitType = null,
             amount = 1_470L,
+            directionHint = null,
             rawText = "郑思强麻辣烫 14.70",
             typeRefiner = refiner,
         )
@@ -110,5 +121,34 @@ class TypeRefinerPortTest {
         // 金额为正 ⇒ 本地按正负判成 INCOME，这份结论要作为参考传给 AI（AI 采纳后可能改写它）。
         assertEquals(TxnType.INCOME, request.localGuess, "本地结论要作为参考传给 AI")
         assertTrue(request.text.isNotBlank())
+    }
+
+    /**
+     * D4 断路器：`TypeRefineRequest` 携带的 [TypeRefineRequest.directionHint] 与
+     * [TypeRefineRequest.localGuess] **必须自洽** —— 二者都由同一条判定链产出。
+     *
+     * 金额缺失、方向为 IN 时：`resolveInitialType` 结论必为 INCOME，且方向必须原样透传。
+     * 若两者矛盾（如方向 IN 却给出 EXPENSE），说明 `resolveInitialTypeWithRefiner` 的接线错位
+     * （例如把方向漏传、或与金额参数位置调换），本用例即变红。
+     */
+    @Test
+    fun `the request carries a direction hint consistent with the local guess`() = runBlocking {
+        val refiner = RecordingRefiner(TxnType.EXPENSE)
+
+        resolveInitialTypeWithRefiner(
+            explicitType = null,
+            amount = null,
+            directionHint = Direction.IN,
+            rawText = "工资已转入",
+            typeRefiner = refiner,
+        )
+
+        val request = refiner.lastRequest!!
+        assertEquals(Direction.IN, request.directionHint, "方向提示必须原样透传给实现方")
+        assertEquals(
+            TxnType.INCOME,
+            request.localGuess,
+            "方向为 IN 且金额缺失 ⇒ 本地结论必为 INCOME；与 directionHint 矛盾即接线错位",
+        )
     }
 }

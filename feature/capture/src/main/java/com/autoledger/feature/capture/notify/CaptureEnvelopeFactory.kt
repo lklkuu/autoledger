@@ -26,4 +26,5 @@ internal fun toRawEnvelope(
     amountHint = parsed.amountMinor,
     packageName = packageName,
     explicitType = parsed.explicitType,
+    directionHint = parsed.direction,
 )

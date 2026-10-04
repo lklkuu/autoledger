@@ -2,6 +2,7 @@ package com.autoledger.feature.capture
 
 import com.autoledger.core.crypto.CryptoBox
 import com.autoledger.core.model.ClassificationContext
+import com.autoledger.core.model.Direction
 import com.autoledger.core.model.DuplicateCandidate
 import com.autoledger.core.model.LedgerRepository
 import com.autoledger.core.model.LedgerTransaction
@@ -84,6 +85,7 @@ class IngestPipeline(
             type = resolveInitialTypeWithRefiner(
                 explicitType = envelope.explicitType,
                 amount = amount,
+                directionHint = envelope.directionHint,
                 rawText = envelope.rawText,
                 typeRefiner = typeRefiner,
             ),
@@ -274,20 +276,30 @@ internal fun inheritedPlatformId(
 }
 
 /**
- * 初始账本类型判定：**显式类型优先**，其次才按金额正负推断。
+ * 初始账本类型判定：优先级链为 **explicitType > 金额符号 > 方向 > EXPENSE 兜底**。
  *
  * 之所以显式类型优先：退款解析结果的金额是**正数**（`Direction.IN` 取 `abs`），
  * 若只按正负判断会先落成 INCOME；即便后面靠关键词二次命中覆盖成 REFUND，也只是**隐式契约**——
  * 将来加一条不含"退款/退回"等词的退款文案（如"返现"）就会静默记成收入，退款丢失。
  *
+ * 其次按金额正负推断；**金额缺失时才轮到方向**——采集端由规则已知方向（[Direction.IN]/[Direction.OUT]），
+ * 它只在金额符号这一更可靠的信号缺席时生效，绝不推翻金额。方向与显式类型仍是两个抽象：
+ * 方向只回答「流入还是流出」，`Direction.IN` 既可能是收入（工资）也可能是退款（REFUND），
+ * 因此**不得**用方向推导 [explicitType]。
+ *
  * 抽成顶层 `internal` 纯函数是为了可以脱离 Android/Room 直接做 JVM 单测（见 IngestPipelineTypeTest）。
  *
  * @param explicitType 采集端已确定的类型；非空时直接采用
  * @param amount 金额（分，正负代表收支方向）；越界/缺失按 EXPENSE 兜底
+ * @param direction 采集端已知方向；仅在 amount 为 null 时参与判定，绝不推翻金额符号
  */
-internal fun resolveInitialType(explicitType: TxnType?, amount: Long?): TxnType = when {
+internal fun resolveInitialType(
+    explicitType: TxnType?,
+    amount: Long?,
+    direction: Direction? = null,
+): TxnType = when {
     explicitType != null -> explicitType
-    amount == null -> TxnType.EXPENSE
-    amount < 0 -> TxnType.EXPENSE
-    else -> TxnType.INCOME
+    amount != null -> if (amount < 0) TxnType.EXPENSE else TxnType.INCOME
+    direction != null -> if (direction == Direction.OUT) TxnType.EXPENSE else TxnType.INCOME
+    else -> TxnType.EXPENSE
 }

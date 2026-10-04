@@ -27,5 +27,6 @@ internal class AiRefinerAdapter(
             text = request.text,
             amountMinor = request.amountMinor,
             localGuess = request.localGuess,
+            directionHint = request.directionHint,
         )
 }

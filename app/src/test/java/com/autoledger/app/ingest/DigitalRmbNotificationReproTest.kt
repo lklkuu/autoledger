@@ -116,6 +116,33 @@ class DigitalRmbNotificationReproTest {
             amountHint = parsed?.amountMinor,
             packageName = n.packageName,
             explicitType = parsed?.explicitType,
+            directionHint = parsed?.direction,
+        )
+    }
+
+    /**
+     * 防漂移断言（设计文档 §1.5.4）：[toEnvelope] 是 `CaptureEnvelopeFactory.toRawEnvelope` 的**手写镜像**，
+     * 它绕过了 `internal` 可见性，编译器**不检查**字段是否一一对应。
+     *
+     * 这里用 JVM 反射（`java.lang.Class.declaredFields`，不引入 `kotlin-reflect`）钉死 `RawEnvelope`
+     * 的字段集合：一旦增删字段而镜像函数没同步，本用例即变红 —— 否则测试会「假绿」
+     * （新字段有默认值，编译通过，但测到的不再是生产行为）。
+     *
+     * 若 Kotlin 编译器引入合成字段（如 `$stable`）导致精确相等不成立，则退化为「实际集合 ⊇ 期望集合」，
+     * 但绝不允许删除这条断言。
+     */
+    @Test
+    fun `the mirror envelope function stays in step with RawEnvelope`() {
+        val expected = setOf(
+            "envelopeId", "sourceId", "sourceRef", "occurredAtMillis", "rawText",
+            "counterpartyHint", "amountHint", "packageName", "explicitType", "directionHint",
+        )
+        val fieldNames = RawEnvelope::class.java.declaredFields.map { it.name }.toSet()
+        assertEquals(
+            expected,
+            fieldNames,
+            "RawEnvelope 增删字段后，DigitalRmbNotificationReproTest.toEnvelope 这个手写镜像必须同步" +
+                "（它绕过了 internal 可见性，编译器不检查）",
         )
     }
 
