@@ -61,10 +61,18 @@ class UserPlatformIntegrationTest {
         PlatformContext(rawText = text, packageName = "sms:inbox", sourceId = "sms:inbox"),
     ).platformId
 
+    /**
+     * 一个**虚构的**自定义平台。
+     *
+     * ⚠️ 为什么不用「京东」：v1.1.7 起 `jd`（京东）已成为**内置**平台（strong 词含「京东支付」、
+     * sortOrder=100），而自定义平台 sortOrder=1000。同分时 `KeywordPlatformResolver` 按 sortOrder
+     * 升序决胜 ⇒ 内置 `jd` 会赢，本用例会变成"测的是内置平台"而不是"测自定义平台"。
+     * 自定义平台存在的意义本就是覆盖内置目录覆盖不到的品牌，故用虚构品牌才符合被测语义。
+     */
     private fun jd(archived: Boolean = false) = UserPlatform(
-        id = "user:jd-int", displayName = "京东", kind = PlatformKind.ORDER,
-        strongKeywords = listOf("京东支付"), mediumKeywords = listOf("京东"),
-        packageNames = setOf("com.jingdong.app.mall"), sortOrder = 1000, archived = archived,
+        id = "user:custom-int", displayName = "邻里优选", kind = PlatformKind.ORDER,
+        strongKeywords = listOf("邻里优选支付"), mediumKeywords = listOf("邻里优选"),
+        packageNames = setOf("com.example.neighborhood"), sortOrder = 1000, archived = archived,
     )
 
     private fun sams() = UserPlatform(
@@ -73,15 +81,15 @@ class UserPlatformIntegrationTest {
     )
 
     /**
-     * 一条**已停用**的平台，刻意用独立品牌（唯品会）而不是复用「京东」。
+     * 一条**已停用**的平台，刻意用另一个独立品牌（悦享优选）而不是复用「邻里优选」。
      *
-     * 原因：若归档条目与启用条目共用关键词，「京东商城」这段文本会同时命中**启用中的**京东，
+     * 原因：若归档条目与启用条目共用关键词，同一段文本会同时命中**启用中**的那条，
      * 断言就变成"识别到了另一个平台"，测不出"归档被跳过"这件事 ——
      * 测试数据必须让被验证的那条路径成为**唯一**解释。
      */
     private fun archivedVip() = UserPlatform(
-        id = "user:vip-archived", displayName = "唯品会", kind = PlatformKind.ORDER,
-        mediumKeywords = listOf("唯品会"), sortOrder = 1002, archived = true,
+        id = "user:archived-x", displayName = "悦享优选", kind = PlatformKind.ORDER,
+        mediumKeywords = listOf("悦享优选"), sortOrder = 1002, archived = true,
     )
 
     @After
@@ -101,14 +109,14 @@ class UserPlatformIntegrationTest {
             repo.upsertUserPlatform(jd())
             syncCatalog(repo)
         }
-        assertEquals("user:jd-int", recognise("京东支付 59.00 元"), "写成功后立刻生效，不必重启")
+        assertEquals("user:custom-int", recognise("邻里优选支付 59.00 元"), "写成功后立刻生效，不必重启")
         db1.close()
 
         // ② 模拟「进程被杀」：进程内目录清空（目录是内存缓存，这是它的真实性质）
         PlatformCatalog.replaceExtras(emptyList())
         assertEquals(
             PlatformCatalog.UNKNOWN_ID,
-            recognise("京东支付 59.00 元"),
+            recognise("邻里优选支付 59.00 元"),
             "目录清空后识别不到 —— 这正说明目录是内存态，重启后必须重新注入",
         )
 
@@ -116,10 +124,10 @@ class UserPlatformIntegrationTest {
         val db2 = openDb()
         val repo2 = RoomLedgerRepository(db2)
         val persisted = repo2.listUserPlatforms(includeArchived = true)
-        assertEquals(listOf("user:jd-int"), persisted.map { it.id }, "重启后仍应从库里读得到")
-        assertEquals(setOf("com.jingdong.app.mall"), persisted.single().packageNames, "包名不得丢")
+        assertEquals(listOf("user:custom-int"), persisted.map { it.id }, "重启后仍应从库里读得到")
+        assertEquals(setOf("com.example.neighborhood"), persisted.single().packageNames, "包名不得丢")
         syncCatalog(repo2)
-        assertEquals("user:jd-int", recognise("京东支付 59.00 元"), "重启后重新注入，识别恢复")
+        assertEquals("user:custom-int", recognise("邻里优选支付 59.00 元"), "重启后重新注入，识别恢复")
         db2.close()
     }
 
@@ -141,7 +149,7 @@ class UserPlatformIntegrationTest {
         val db2 = openDb()
         val repo2 = RoomLedgerRepository(db2)
         syncCatalog(repo2)
-        assertNull(PlatformCatalog.find("user:jd-int"), "前置条件：全新设备上本来没有这些平台")
+        assertNull(PlatformCatalog.find("user:custom-int"), "前置条件：全新设备上本来没有这些平台")
 
         val outcome = BackupManager(db2, repo2).import(backup, BackupManager.MergeStrategy.REPLACE_ALL)
         assertEquals(3, outcome.userPlatformsUpserted, "三条（含那条停用的）都要导进来")
@@ -154,24 +162,24 @@ class UserPlatformIntegrationTest {
         // 导入后重建目录（BackupManager.import 内部已做过一次；这里显式再同步，语义一致且更直观）
         syncCatalog(repo2)
 
-        assertEquals("京东", PlatformCatalog.displayNameOf("user:jd-int"))
+        assertEquals("邻里优选", PlatformCatalog.displayNameOf("user:custom-int"))
         assertEquals("山姆", PlatformCatalog.displayNameOf("user:sams-int"))
         // 归档条目也在 —— 这是 R7 在「换机」场景下的落点
-        assertEquals("唯品会", PlatformCatalog.displayNameOf("user:vip-archived"))
+        assertEquals("悦享优选", PlatformCatalog.displayNameOf("user:archived-x"))
 
         // 但归档的不进识别候选与选择器
         assertTrue(
-            PlatformCatalog.selectable().none { it.id == "user:vip-archived" },
+            PlatformCatalog.selectable().none { it.id == "user:archived-x" },
             "停用的平台不该再被指派；实得=${PlatformCatalog.selectable().map { it.id }}",
         )
         // 「唯品会」这段文本只可能命中那条归档条目 ⇒ 落 unknown 就证明它确实被跳过了
-        assertEquals(PlatformCatalog.UNKNOWN_ID, recognise("唯品会 12.00 元"), "停用的平台不再被识别")
-        assertEquals("user:jd-int", recognise("京东支付 59.00 元"), "启用的平台照旧被识别")
+        assertEquals(PlatformCatalog.UNKNOWN_ID, recognise("悦享优选 12.00 元"), "停用的平台不再被识别")
+        assertEquals("user:custom-int", recognise("邻里优选支付 59.00 元"), "启用的平台照旧被识别")
 
         // 排序：内置在前、自定义在后
         val ids = PlatformCatalog.all().map { it.id }
         assertTrue(
-            ids.indexOf("user:jd-int") > ids.indexOf("unionpay"),
+            ids.indexOf("user:custom-int") > ids.indexOf("unionpay"),
             "自定义平台必须排在内置之后，实得=$ids",
         )
         db2.close()
@@ -211,15 +219,15 @@ class UserPlatformIntegrationTest {
         val repo = RoomLedgerRepository(db)
         repo.upsertUserPlatform(jd(archived = false))
         syncCatalog(repo)
-        assertEquals("user:jd-int", recognise("京东支付 59.00 元"))
+        assertEquals("user:custom-int", recognise("邻里优选支付 59.00 元"))
 
         // 用户点「停用」：软删除 + 重建目录
         val current = repo.listUserPlatforms(includeArchived = true).single()
         repo.upsertUserPlatform(current.copy(archived = true))
         syncCatalog(repo)
 
-        assertEquals(PlatformCatalog.UNKNOWN_ID, recognise("京东支付 59.00 元"), "停用后立刻不再识别")
-        assertEquals("京东", PlatformCatalog.displayNameOf("user:jd-int"), "但历史流水的名称仍解析得出（R7）")
+        assertEquals(PlatformCatalog.UNKNOWN_ID, recognise("邻里优选支付 59.00 元"), "停用后立刻不再识别")
+        assertEquals("邻里优选", PlatformCatalog.displayNameOf("user:custom-int"), "但历史流水的名称仍解析得出（R7）")
         assertEquals(1, repo.listUserPlatforms(includeArchived = true).size, "软删除：行必须还在")
         assertEquals(0, repo.listUserPlatforms(includeArchived = false).size, "但不再出现在启用列表里")
         db.close()

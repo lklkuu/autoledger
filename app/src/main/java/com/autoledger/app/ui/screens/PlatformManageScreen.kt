@@ -23,6 +23,7 @@ import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
 import androidx.compose.runtime.setValue
 import androidx.compose.ui.Modifier
+import com.autoledger.feature.capture.notify.NotificationDiag
 import androidx.compose.ui.unit.dp
 import com.autoledger.app.di.AppContainer
 import com.autoledger.app.ui.components.AppCard
@@ -39,7 +40,7 @@ import com.autoledger.core.model.platform.PlatformKind
  * 自定义消费平台管理（设置 → 消费平台管理）。
  *
  * ## 为什么值得单独一个页面
- * 内置目录只有 9 个平台，覆盖不了用户的实际情况（京东、山姆、某个本地连锁…）。
+ * 内置目录覆盖常见平台，但覆盖不了你的实际情况（山姆、某个本地连锁…）。
  * 用户自己加的平台会：① 参与后台识别；② 出现在流水的平台选择器里；③ 进「按平台统计」。
  *
  * ## 两条容易踩的语义（页面文案里也写明了，避免用户误解）
@@ -250,10 +251,86 @@ private fun UserPlatformEditDialog(
                 item { Field("中关键词", medium, "一行一个，例如：京东") { medium = it } }
                 item { Field("弱关键词", weak, "一行一个，例如：京东物流") { weak = it } }
                 item {
-                    Field("通知包名", packages, "一行一个，例如：com.jingdong.app.mall") { packages = it }
+                    // ① 首选：从最近收到的通知里直接选（系统给的真实包名，不用手打）
+                    val recentPackages = remember(packages) {
+                        NotificationDiag.entries.value
+                            // ⚠️ `contains('.')` 这道过滤是**正确性关键**，不能删：
+                            // `RawEnvelope.packageName` 被三条渠道以三种语义共用 ——
+                            // 短信渠道存的是**发件号码**（如 95555 / 1069xxx，字段名一样但不是包名）、
+                            // 账单导入存的是 **CSV 里的中文平台名**（如「支付宝」）。
+                            // 而包名在识别里占 0.95 最高权重，塞进非包名会导致**整类通知恒定错判**。
+                            // 含点过滤天然把这两类脏数据挡在外面。
+                            .map { it.packageName }
+                            .filter { it.isNotBlank() && it.contains('.') }
+                            .distinct()
+                            .take(8)
+                    }
+                    Column(Modifier.padding(bottom = 8.dp)) {
+                        Text(
+                            "从最近收到的通知里选",
+                            style = MaterialTheme.typography.labelMedium,
+                        )
+                        if (recentPackages.isEmpty()) {
+                            Text(
+                                "最近还没有收到任何通知。请先让对应 App 发一次支付通知，" +
+                                    "或展开下方手动填写。",
+                                Modifier.padding(top = 4.dp),
+                                style = MaterialTheme.typography.bodySmall,
+                                color = LedgerPalette.Muted,
+                            )
+                        } else {
+                            recentPackages.forEach { pkg ->
+                                val label = remember(pkg) {
+                                    NotificationDiag.entries.value
+                                        .firstOrNull { it.packageName == pkg }
+                                        ?.title?.take(18)?.takeIf { it.isNotBlank() }
+                                }
+                                val already = packages.split('\n', '\r')
+                                    .any { it.trim().equals(pkg, ignoreCase = true) }
+                                OutlinedButton(
+                                    onClick = {
+                                        if (already) return@OutlinedButton
+                                        val next = (packages.trim() + "\n" + pkg).trim()
+                                        packages = next
+                                    },
+                                    enabled = !already,
+                                    modifier = Modifier
+                                        .fillMaxWidth()
+                                        .padding(top = 4.dp),
+                                ) {
+                                    Text(
+                                        (if (label != null) "$label · " else "") + pkg,
+                                        style = MaterialTheme.typography.bodyMedium,
+                                        maxLines = 1,
+                                    )
+                                }
+                            }
+                            Text(
+                                "点一下即可填入；只列出本机最近 30 条通知里出现过的真实包名。",
+                                Modifier.padding(top = 4.dp),
+                                style = MaterialTheme.typography.bodySmall,
+                                color = LedgerPalette.Muted,
+                            )
+                        }
+                    }
+                }
+                // ② 兜底：手填保留但降级为次要路径（移除它会让"还没产生过通知的平台"无法添加）
+                item {
+                    var manualOpen by remember { mutableStateOf(false) }
+                    if (manualOpen) {
+                        Field(
+                            "手动填写包名",
+                            packages,
+                            "一行一个，例如：com.jingdong.app.mall",
+                        ) { packages = it }
+                    } else {
+                        OutlinedButton(onClick = { manualOpen = true }) {
+                            Text("手动填写（不确定就留空，靠关键词识别）", style = MaterialTheme.typography.bodySmall)
+                        }
+                    }
                     Text(
-                        "包名请**确认过**再填：填错会让这个平台错误地命中一整类通知，" +
-                            "比暂时不填更糟。不确定就留空，靠关键词识别。",
+                        "不确定就留空，靠关键词识别。**填错包名会让这个平台错误命中一整类通知**，" +
+                            "比暂时不填更糟。",
                         Modifier.padding(top = 4.dp),
                         style = MaterialTheme.typography.bodySmall,
                         color = LedgerPalette.Warning,

@@ -296,6 +296,100 @@ object PlatformCatalog {
             packageNames = emptySet(), // 待核实（设计文档 §3.2）
             sortOrder = 90,
         ),
+
+        // ---------------------------------------------------------------- 常见平台补充
+        // 以下 6 条是用户实测反馈里点名要加的（京东 / 得物 / 天猫等）。
+        //
+        // ⚠️ 三条必须遵守的约定（写新条目前先读这段）：
+        //
+        // 1. **一个词只能出现在一个平台条目里**。同分时靠 [PlatformEntry.sortOrder] 决胜
+        //    （见 KeywordPlatformResolver 的 thenBy{sortOrder}），同词跨条目 ⇒ 其中一条永远
+        //    赢不了、另一条被抢白名单。本段所有关键词已与既有 9 条交叉核对过。
+        // 2. **strong 只放「平台自付渠道」措辞**（"X支付" 这类），**不要**编造
+        //    "X订单"/"X退款" —— 通知里根本不会出现这些词，收了等于噪声。
+        // 3. **packageNames 只填已核实的**。填错包名 = 整类通知被 0.95 权重恒定错判，
+        //    比暂时不识别危害大得多。把握度不足的一律留空（写法同 [digital_rmb]）。
+        //
+        // sortOrder 从 100 起（必须 < 1000，那是 [UserPlatform.DEFAULT_SORT_ORDER]，
+        // 自定义平台从 1000 起排）。
+
+        PlatformEntry(
+            id = "jd",
+            displayName = "京东",
+            kind = PlatformKind.ORDER,
+            strongKeywords = listOf("京东支付"),
+            // ⚠️ medium **刻意不含裸「京东」二字**（实测踩过的坑）：真实工行数字钱包样本
+            // 「…数字钱包支付给中电联**京东**共管钱包（0098）¥17.45」里，「京东」只是
+            // 钱包名的一部分。裸词会命中它 → jd(ORDER, 0.60) 挤掉本该命中的
+            // digital_rmb(E_WALLET, 0.60)：resolver 有「下单平台(ORDER) ≥0.50 时只保留
+            // ORDER 命中」的规则 ⇒ 数币通知被错判成京东消费。
+            // 这里只收**不会被无关文本顺带命中**的组合词。
+            mediumKeywords = listOf("京东商城", "京东到家", "京喜"),
+            weakKeywords = listOf("京东物流", "京东PLUS"),
+            packageNames = setOf("com.jingdong.app.mall"),
+            sortOrder = 100,
+        ),
+        PlatformEntry(
+            id = "tmall",
+            displayName = "天猫",
+            kind = PlatformKind.ORDER,
+            // ⚠️ medium **刻意不含「天猫」二字**：[taobao] 的 medium 已经收了它
+            //（PlatformEntry 注释里"阿里巴巴"那条同款取舍）。若这里也收，同文本两边
+            // 0.60 同分 → taobao(sortOrder=60) 稳赢、tmall 成一条永不生效的条目。
+            // 只留"天猫超市"这种天猫独有措辞。
+            strongKeywords = listOf("天猫超市"),
+            mediumKeywords = emptyList(),
+            weakKeywords = listOf("猫超"),
+            // 把握度「中」：天猫通知常由淘宝 App 发出（同包名），故这条包名可能永不命中，
+            // 但**不会错判**（包名匹配是全等 equals(ignoreCase)）。
+            packageNames = setOf("com.tmall.wireless"),
+            sortOrder = 110,
+        ),
+        PlatformEntry(
+            id = "xiaomi_mall",
+            displayName = "小米商城",
+            kind = PlatformKind.ORDER,
+            strongKeywords = listOf("小米支付"),
+            mediumKeywords = listOf("小米商城", "小米有品"),
+            weakKeywords = listOf("小米之家"),
+            packageNames = setOf("com.xiaomi.shop"),
+            sortOrder = 120,
+        ),
+        PlatformEntry(
+            id = "vip",
+            displayName = "唯品会",
+            kind = PlatformKind.ORDER,
+            strongKeywords = listOf("唯品会支付"),
+            mediumKeywords = listOf("唯品会"),
+            weakKeywords = listOf("唯品币"),
+            packageNames = setOf("com.vipshop.ers"),
+            sortOrder = 130,
+        ),
+        PlatformEntry(
+            id = "poizon",
+            displayName = "得物",
+            kind = PlatformKind.ORDER,
+            strongKeywords = listOf("得物支付"),
+            // 「毒 APP」是得物用户圈的真实叫法，通知/晒单里会出现，放 medium。
+            mediumKeywords = listOf("得物", "毒APP"),
+            weakKeywords = listOf("得物鉴定"),
+            packageNames = setOf("com.shizhuang.duapp"),
+            sortOrder = 150,
+        ),
+        PlatformEntry(
+            id = "xianyu",
+            displayName = "闲鱼",
+            kind = PlatformKind.ORDER,
+            strongKeywords = listOf("闲鱼交易"),
+            mediumKeywords = listOf("闲鱼"),
+            weakKeywords = listOf("闲鱼验货"),
+            packageNames = setOf("com.taobao.idlefish"),
+            sortOrder = 160,
+        ),
+        // 下一批候选（包名把握度不足，先不加，规则见上方第 3 条）：
+        //   盒马 com.alibaba.hema（阿里系包名规则不稳定）/ 叮咚买菜 com.dlx /
+        //   苏宁易购 com.suning.mobile.ebuy / 华为商城 com.huawei.vmhw /
+        //   网易严选 com.netease.mall / 京东物流（包名与 jd 的不同，待核实）
         UNKNOWN,
     )
 

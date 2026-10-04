@@ -82,7 +82,9 @@ class KeywordPlatformResolverTest {
 
     @Test
     fun `case 4 - unregistered platform is not guessed`() {
-        val r = resolve("京东支付 59.00 元")
+        // ⚠️ 样本用「屈臣氏」而不是「京东」：v1.1.7 起 jd 已是**内置**平台，
+        // 拿已收录的品牌当样本就测不到"未收录不得硬猜"这条护栏了。
+        val r = resolve("屈臣氏支付 59.00 元")
         assertEquals(PlatformCatalog.UNKNOWN_ID, r.platformId, "未收录的平台不得硬猜")
         assertEquals(0f, r.confidence)
         assertTrue(r.candidates.isEmpty())
@@ -392,19 +394,19 @@ class KeywordPlatformResolverTest {
         val uid = "user:" + java.util.UUID.randomUUID()
         try {
             // 注册前：未收录 ⇒ unknown（与 case 4 呼应）
-            assertEquals(PlatformCatalog.UNKNOWN_ID, resolve("京东支付 50 元").platformId)
+            assertEquals(PlatformCatalog.UNKNOWN_ID, resolve("屈臣氏支付 50 元").platformId)
 
             PlatformCatalog.register(
                 PlatformEntry(
                     id = uid,
-                    displayName = "京东",
+                    displayName = "屈臣氏",
                     kind = PlatformKind.ORDER,
-                    strongKeywords = listOf("京东支付"),
+                    strongKeywords = listOf("屈臣氏支付"),
                     sortOrder = 1000,
                 ),
             )
 
-            val r = resolve("京东支付 50 元")
+            val r = resolve("屈臣氏支付 50 元")
             assertEquals(uid, r.platformId, "自定义平台注册进目录后必须参与识别")
             assertEquals(0.90f, r.confidence)
             assertEquals(PlatformKind.ORDER, PlatformCatalog.find(uid)?.kind)
@@ -413,7 +415,7 @@ class KeywordPlatformResolverTest {
             PlatformCatalog.replaceExtras(emptyList())
         }
         // 清理后恢复原状：未收录 ⇒ unknown，证明 finally 真的清干净了。
-        assertEquals(PlatformCatalog.UNKNOWN_ID, resolve("京东支付 50 元").platformId)
+        assertEquals(PlatformCatalog.UNKNOWN_ID, resolve("屈臣氏支付 50 元").platformId)
     }
 
     // ---------------------------------------------------------------- 契约

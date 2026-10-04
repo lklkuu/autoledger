@@ -30,11 +30,11 @@ class ArchivedPlatformResolverTest {
 
     /** 用真实的用户自定义平台（`user:<uuid>` ID），走完整的"注册 → 识别"链路。 */
     private fun jd(archived: Boolean) = UserPlatform(
-        id = "user:jd-test",
-        displayName = "京东",
+        id = "user:watsons-test",
+        displayName = "屈臣氏",
         kind = PlatformKind.ORDER,
-        strongKeywords = listOf("京东支付"),
-        mediumKeywords = listOf("京东"),
+        strongKeywords = listOf("屈臣氏支付"),
+        mediumKeywords = listOf("屈臣氏"),
         sortOrder = 1000,
         archived = archived,
     )
@@ -51,8 +51,8 @@ class ArchivedPlatformResolverTest {
     @Test
     fun `an active custom platform is recognised from its keywords`() {
         withCatalog(jd(archived = false)) {
-            val r = resolve("京东支付 59.00 元")
-            assertEquals("user:jd-test", r.platformId, "启用中的自定义平台必须能识别出来")
+            val r = resolve("屈臣氏支付 59.00 元")
+            assertEquals("user:watsons-test", r.platformId, "启用中的自定义平台必须能识别出来")
             assertEquals(PlatformKind.ORDER, PlatformCatalog.find(r.platformId)?.kind)
         }
     }
@@ -60,14 +60,14 @@ class ArchivedPlatformResolverTest {
     @Test
     fun `an archived custom platform is no longer recognised but is still displayable`() {
         withCatalog(jd(archived = true)) {
-            val r = resolve("京东支付 59.00 元")
+            val r = resolve("屈臣氏支付 59.00 元")
 
             // 停用 ⇒ 不再识别（这段文本没有任何别的线索 ⇒ 落 unknown）
-            assertNotEquals("user:jd-test", r.platformId, "停用的平台不得再被识别出来")
+            assertNotEquals("user:watsons-test", r.platformId, "停用的平台不得再被识别出来")
             assertEquals(PlatformCatalog.UNKNOWN_ID, r.platformId)
 
             // 但展示必须照旧 —— 这正是 R7 的要害：历史流水的平台名不能塌成「未知平台」
-            assertEquals("京东", PlatformCatalog.displayNameOf("user:jd-test"))
+            assertEquals("屈臣氏", PlatformCatalog.displayNameOf("user:watsons-test"))
         }
     }
 
@@ -85,12 +85,12 @@ class ArchivedPlatformResolverTest {
         // 用户在设置里停用一个平台后，**不需要重启**：目录是进程内缓存，
         // 写成功后立刻重建（AppContainer.syncUserPlatformsToCatalog），识别行为随之改变。
         withCatalog(jd(archived = false)) {
-            assertEquals("user:jd-test", resolve("京东支付 59.00 元").platformId)
+            assertEquals("user:watsons-test", resolve("屈臣氏支付 59.00 元").platformId)
 
             PlatformCatalog.register(jd(archived = true).toPlatformEntry())
             assertEquals(
                 PlatformCatalog.UNKNOWN_ID,
-                resolve("京东支付 59.00 元").platformId,
+                resolve("屈臣氏支付 59.00 元").platformId,
                 "重建目录（同 ID 覆盖）后必须立刻生效，不必重启 App",
             )
         }

@@ -30,13 +30,14 @@ class PlatformCatalogTest {
     private val builtInIds = listOf(
         "wechat", "alipay", "meituan", "pdd", "douyin", "taobao",
         "bank", "digital_rmb", "unionpay",
+        "jd", "tmall", "xiaomi_mall", "vip", "poizon", "xianyu",
         PlatformCatalog.UNKNOWN_ID,
     )
 
     @Test
     fun `unregistered id falls back without throwing`() {
         assertEquals("未知平台", PlatformCatalog.displayNameOf("不存在"))
-        assertEquals("未知平台", PlatformCatalog.displayNameOf("jd"))
+        assertEquals("未知平台", PlatformCatalog.displayNameOf("no-such-platform"))
         assertEquals("未知平台", PlatformCatalog.displayNameOf(""))
         assertNull(PlatformCatalog.find("不存在"))
     }
@@ -117,14 +118,14 @@ class PlatformCatalogTest {
 
             PlatformCatalog.register(
                 PlatformEntry(
-                    id = "jd", displayName = "京东",
+                    id = "tmp-shop", displayName = "临时小店",
                     mediumKeywords = listOf("京东"),
                     sortOrder = UserPlatform.DEFAULT_SORT_ORDER,
                 ),
             )
-            assertEquals("京东", PlatformCatalog.displayNameOf("jd"))
+            assertEquals("临时小店", PlatformCatalog.displayNameOf("tmp-shop"))
             // 1000 落在 unionpay(90) 之后、unknown(MAX) 之前 ⇒ 下标 = 内置条数 - 1
-            assertEquals(builtInIds.size - 1, PlatformCatalog.all().indexOfFirst { it.id == "jd" })
+            assertEquals(builtInIds.size - 1, PlatformCatalog.all().indexOfFirst { it.id == "tmp-shop" })
             assertEquals(
                 PlatformCatalog.UNKNOWN_ID,
                 PlatformCatalog.all().last().id,
@@ -133,12 +134,12 @@ class PlatformCatalogTest {
 
             PlatformCatalog.register(
                 PlatformEntry(
-                    id = "jd", displayName = "京东商城",
+                    id = "tmp-shop", displayName = "临时小店(改名)",
                     mediumKeywords = listOf("京东"),
                     sortOrder = UserPlatform.DEFAULT_SORT_ORDER,
                 ),
             )
-            assertEquals("京东商城", PlatformCatalog.displayNameOf("jd"), "同 ID 必须覆盖而不是追加")
+            assertEquals("临时小店(改名)", PlatformCatalog.displayNameOf("tmp-shop"), "同 ID 必须覆盖而不是追加")
             assertEquals(builtInIds.size + 1, PlatformCatalog.all().size, "覆盖后总数不应增加")
         } finally {
             PlatformCatalog.resetExtras()
@@ -154,15 +155,15 @@ class PlatformCatalogTest {
             val before = PlatformCatalog.all().size // 先把缓存暖起来
 
             PlatformCatalog.register(
-                PlatformEntry(id = "jd", displayName = "京东", mediumKeywords = listOf("京东"), sortOrder = 1000),
+                PlatformEntry(id = "tmp-shop", displayName = "临时小店", mediumKeywords = listOf("临时小店"), sortOrder = 1000),
             )
             assertEquals(before + 1, PlatformCatalog.all().size, "注册后缓存必须失效并重新排序")
-            assertEquals("京东", PlatformCatalog.displayNameOf("jd"), "find() 也必须看到新条目")
+            assertEquals("临时小店", PlatformCatalog.displayNameOf("tmp-shop"), "find() 也必须看到新条目")
 
-            PlatformCatalog.unregister("jd")
+            PlatformCatalog.unregister("tmp-shop")
             assertEquals(before, PlatformCatalog.all().size, "注销后缓存同样必须失效")
-            assertNull(PlatformCatalog.find("jd"))
-            assertEquals("未知平台", PlatformCatalog.displayNameOf("jd"))
+            assertNull(PlatformCatalog.find("tmp-shop"))
+            assertEquals("未知平台", PlatformCatalog.displayNameOf("no-such-platform"))
         } finally {
             PlatformCatalog.resetExtras()
         }
@@ -198,6 +199,13 @@ class PlatformCatalogTest {
             "digital_rmb" to PlatformKind.E_WALLET,
             // 银行卡：最底层资金源；塞进 PAYMENT 会与微信同级、排不出「银行卡最低」
             "bank" to PlatformKind.BANK,
+            // 常见平台补充（v1.1.7）：都是消费发生的场所 ⇒ ORDER
+            "jd" to PlatformKind.ORDER,
+            "tmall" to PlatformKind.ORDER,
+            "xiaomi_mall" to PlatformKind.ORDER,
+            "vip" to PlatformKind.ORDER,
+            "poizon" to PlatformKind.ORDER,
+            "xianyu" to PlatformKind.ORDER,
             PlatformCatalog.UNKNOWN_ID to PlatformKind.OTHER,
         )
         for (entry in PlatformCatalog.all()) {
