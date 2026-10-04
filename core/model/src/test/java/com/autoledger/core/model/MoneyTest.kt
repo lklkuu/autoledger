@@ -115,11 +115,13 @@ class MoneyTest {
     }
 
     @Test
-    fun `formatYuan always keeps sign regardless of withSign`() {
-        // 现状：Money.kt:36 的 `if (withSign) "" else ""` 两个分支相同，withSign 形同虚设（缺陷 L1）。
-        // 这里先固化现状；若按 L1 修复，本断言需同步改为 "12.34"。
-        assertEquals("-12.34", Money(-1234).formatYuan(withSign = false))
-        assertEquals("-12.34", Money(-1234).formatYuan(withSign = true))
+    fun `formatYuan always keeps the minus for negative amounts`() {
+        // 缺陷 L1 已修：`withSign` 是两分支返回同一空串的死参数，现已整体删除，
+        // 「账本格式化必须始终可见符号」由"默认真相"固化为"唯一选项"（见 formatYuan 的 KDoc）。
+        // 「去掉负号」这一支**刻意不实现**——需要绝对值请显式 .abs()。
+        assertEquals("-12.34", Money(-1234).formatYuan())
+        assertEquals("12.34", Money(1234).formatYuan())
+        assertEquals("0", Money(0).formatYuan())
     }
 
     // ------------------------------------------------------------ RED 用例（已知缺陷）

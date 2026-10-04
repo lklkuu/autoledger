@@ -3,8 +3,13 @@
 
     <uses-permission android:name="android.permission.POST_NOTIFICATIONS" />
 
-    <!-- v1.1.7 AI 判定（默认关闭）：仅当用户在设置页主动开启并自填接口地址时才会发起请求。
-         关闭状态下应用不产生任何网络流量，通知原文也不会离开设备。 -->
+    <!-- AI 判定（收支识别）所需的网络权限。
+         ⚠️ **入口当前是隐藏的**：`AiFeatureGate.ENTRY_VISIBLE = false`
+         （app/src/main/java/com/autoledger/app/feature/AiFeatureGate.kt），设置页根本不会渲染这个开关；
+         数据侧同样是 `s.aiEnabled && AiFeatureGate.ENTRY_VISIBLE`，即使有人改库把 aiEnabled 打开也不会启用。
+         实现与测试完整保留，恢复上线只需把 ENTRY_VISIBLE 改回 true（UI 与数据两侧共用这一个常量）。
+         开启后也仅当用户自填接口地址时才会发起请求；关闭状态下应用不产生任何网络流量，
+         通知原文也不会离开设备。 -->
     <uses-permission android:name="android.permission.INTERNET" />
 
     <!-- C4 换机迁移：拉起本地热点（LocalOnlyHotspot）+ 连接热点（WifiNetworkSpecifier） -->

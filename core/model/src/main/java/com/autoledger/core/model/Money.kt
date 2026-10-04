@@ -47,13 +47,22 @@ data class Money(
     }
 }
 
-/** 以元为单位的可读格式，例如 1234 -> "12.34"。 */
-fun Money.formatYuan(withSign: Boolean = true): String {
-    val sign = if (withSign) "" else ""
+/**
+ * 以元为单位的可读格式，例如 1234 -> "12.34"；负值**始终**带负号。
+ *
+ * 这里曾经有个 `withSign: Boolean = true` 参数，但两个分支返回同一个空串
+ * （`if (withSign) "" else ""`），从未生效过 —— 调用方写 `withSign = false` 以为能去掉负号，
+ * 实际拿到的是带负号的字符串，是一处**静默失效的调用契约**。
+ *
+ * 现在把参数删掉，等于把「账本格式化必须始终可见符号」从"默认真相"固化成"唯一选项"。
+ * **刻意不实现"去掉负号"这一支**：`feature:stats` 的「折合 ¥…」这类次要文案一旦吞掉负号，
+ * 负结余会显示成正数，属于把亏损读成盈利级别的观感事故。需要绝对值请显式 `.abs()`。
+ */
+fun Money.formatYuan(): String {
     val negative = minor < 0
     val v = kotlin.math.abs(minor)
     val yuan = v / 100
     val fen = v % 100
     val body = if (fen == 0L) "$yuan" else "$yuan.${fen.toString().padStart(2, '0')}"
-    return sign + (if (negative) "-" else "") + body
+    return (if (negative) "-" else "") + body
 }

@@ -25,7 +25,21 @@ data class LedgerTransaction(
     val occurredAtMillis: Long,
     val bookedAtMillis: Long = occurredAtMillis,
     val type: TxnType,
-    val direction: Direction = if (amountMinor < 0) Direction.OUT else Direction.IN,
+    /**
+     * 资金流向，**由 [type] 决定**，不由金额符号推断。
+     *
+     * 为什么必须看类型：采集端在金额解析失败时用 `0` 占位（`IngestPipeline` 的
+     * `amountMinor = amount ?: 0L`），而 `0 < 0` 不成立 —— 按金额推断会把这类流水**恒判为 IN**，
+     * 于是一笔「金额没认出来的支出」在数据层显示为流入，与它自己的 `type = EXPENSE` 直接矛盾。
+     *
+     * [TxnType.TRANSFER] / [TxnType.REFUND] 没有固定方向（转出/转入、退款入账/冲正都可能），
+     * 这两类仍按 [amountMinor] 符号推断。
+     */
+    val direction: Direction = when (type) {
+        TxnType.EXPENSE -> Direction.OUT
+        TxnType.INCOME -> Direction.IN
+        TxnType.TRANSFER, TxnType.REFUND -> if (amountMinor < 0) Direction.OUT else Direction.IN
+    },
     val counterparty: String = "",
     /**
      * 消费平台（业务维度）：这笔消费发生在微信 / 支付宝 / 美团… 存**稳定 ID**，不存中文名。

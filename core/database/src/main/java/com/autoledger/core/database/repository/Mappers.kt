@@ -6,7 +6,6 @@ import com.autoledger.core.database.TransactionEntity
 import com.autoledger.core.database.UserPlatformEntity
 import com.autoledger.core.model.Account
 import com.autoledger.core.model.Category
-import com.autoledger.core.model.Direction
 import com.autoledger.core.model.LedgerTransaction
 import com.autoledger.core.model.TxnType
 import com.autoledger.core.model.UserPlatform
@@ -31,7 +30,9 @@ internal fun LedgerTransaction.toEntity(): TransactionEntity = TransactionEntity
     occurredAtMillis = occurredAtMillis,
     bookedAtMillis = bookedAtMillis,
     type = type,
-    direction = if (amountMinor < 0) Direction.OUT else Direction.IN,
+    // 直接搬运领域对象的方向，**不要**在这里按金额重算：重算会丢掉「类型决定方向」的语义
+    // （金额缺失时 amountMinor 是 0，重算会把一笔支出写成 IN），也让 toDomain 的往返回不到原值。
+    direction = direction,
     counterparty = counterparty,
     platformId = platformId,
     platformConfidence = platformConfidence,

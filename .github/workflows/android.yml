@@ -87,7 +87,12 @@ jobs:
         uses: actions/upload-artifact@v4
         with:
           name: app-debug-apk
-          path: app/build/outputs/apk/debug/app-debug.apk
+          # ABI 分包后 debug 目录下是带 ABI 后缀的三个 APK（app-arm64-v8a-debug.apk 等），
+          # 写死 app-debug.apk 会匹配不到任何文件；而 upload-artifact 匹配不到时**默认只 warning 不失败**，
+          # 结果是「CI 绿 + 制品为 0」的静默失效（自 1.1.6 分包起就一直是这个状态）。
+          # 用通配 + if-no-files-found: error，让这种失效直接变红，不再被忽略。
+          path: app/build/outputs/apk/debug/*.apk
+          if-no-files-found: error
 
       - name: Upload test reports
         if: always()

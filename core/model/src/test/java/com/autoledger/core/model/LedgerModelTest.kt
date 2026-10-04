@@ -27,15 +27,29 @@ class LedgerModelTest {
     )
 
     @Test
-    fun `direction defaults from signed amount`() {
+    fun `direction is driven by type not by amount sign`() {
+        // EXPENSE / INCOME 的方向由类型决定，金额符号不参与 —— 两者冲突时以类型为准。
         assertEquals(Direction.OUT, txn(-100).direction)
-        assertEquals(Direction.IN, txn(100).direction)
+        assertEquals(Direction.OUT, txn(100, TxnType.EXPENSE).direction)
+        assertEquals(Direction.IN, txn(100, TxnType.INCOME).direction)
+        assertEquals(Direction.IN, txn(-100, TxnType.INCOME).direction)
     }
 
     @Test
-    fun `zero amount is treated as inflow`() {
-        // 现状固化：Model.kt:25 用 `if (amountMinor < 0) OUT else IN`
-        assertEquals(Direction.IN, txn(0).direction)
+    fun `zero amount no longer forces inflow`() {
+        // 回归护栏：金额解析失败时采集端用 0 占位（IngestPipeline 的 `amountMinor = amount ?: 0L`），
+        // 而旧实现 `if (amountMinor < 0) OUT else IN` 在 0 时恒判 IN —— 一笔支出会被记成流入。
+        assertEquals(Direction.OUT, txn(0, TxnType.EXPENSE).direction)
+        assertEquals(Direction.IN, txn(0, TxnType.INCOME).direction)
+    }
+
+    @Test
+    fun `transfer and refund still follow the amount sign`() {
+        // 这两类没有固定方向：转出/转入、退款入账/冲正都可能，故仍看金额符号。
+        assertEquals(Direction.OUT, txn(-100, TxnType.TRANSFER).direction)
+        assertEquals(Direction.IN, txn(100, TxnType.TRANSFER).direction)
+        assertEquals(Direction.OUT, txn(-100, TxnType.REFUND).direction)
+        assertEquals(Direction.IN, txn(100, TxnType.REFUND).direction)
     }
 
     @Test

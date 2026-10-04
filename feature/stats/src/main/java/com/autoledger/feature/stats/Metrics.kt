@@ -166,7 +166,7 @@ class IncomeBalanceMetric : MetricProvider {
             title = title,
             subtitle = "收入 ${Money(income).formatYuan()} · 净支出 ${Money(net).formatYuan()}",
             valueMinor = balance,
-            // 负结余自带负号（formatYuan 默认 withSign = true）
+            // 负结余自带负号（formatYuan 恒保留符号）
             primaryText = Money(balance).formatYuan(),
             secondaryText = "结余 = 收入 − 净支出（退款已冲抵，不重复扣）",
             iconKey = "wallet",
@@ -265,7 +265,7 @@ class TimeCostMetric(private val profileProvider: () -> WageProfile) : MetricPro
             // 主指标是「时间」而不是钱：这张卡片的灵魂是「这笔钱 = 你多少小时的人生」，
             // 故大字显示工时，折算金额退到次要位置。
             primaryText = "≈ $hoursText 小时",
-            secondaryText = "折合 ¥${Money(totalMinor).formatYuan(withSign = false)}",
+            secondaryText = "折合 ¥${Money(totalMinor).formatYuan()}",
             iconKey = "clock",
         )
     }
