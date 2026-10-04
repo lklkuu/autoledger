@@ -199,7 +199,9 @@ dependencies {
     implementation(project(":feature:transfer"))
     implementation(project(":feature:ai"))
 
-    implementation(libs.androidx.core.ktx)
+    // app 对 androidx.core 的全部用法都是 base 包的类（NotificationCompat /
+    // NotificationManagerCompat / ContextCompat），无任何 -ktx 扩展 ⇒ 直接依赖 base 构件。
+    implementation(libs.androidx.core)
     implementation(libs.androidx.activity.compose)
     implementation(libs.androidx.lifecycle.runtime.ktx)
     implementation(libs.kotlinx.coroutines.android)

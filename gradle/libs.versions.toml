@@ -2,7 +2,9 @@
 agp = "8.7.3"
 kotlin = "2.0.21"
 ksp = "2.0.21-1.0.25"
-coreKtx = "1.15.0"
+# androidx.core 的版本线：**base(core) 与 ktx(core-ktx) 共用同一个版本号**
+# （旧名 coreKtx 易被误读为「只属于 ktx」，已改成语义准确的 androidxCore）。
+androidxCore = "1.15.0"
 coroutines = "1.9.0"
 serialization = "1.7.3"
 composeBom = "2024.12.01"
@@ -16,7 +18,11 @@ robolectric = "4.13"
 zxing = "3.5.3"
 
 [libraries]
-androidx-core-ktx = { group = "androidx.core", name = "core-ktx", version.ref = "coreKtx" }
+# androidx.core：base(core) 与 ktx(core-ktx) 同版本线（androidxCore）。
+# app / feature:capture 实际只用到 base 包的类（NotificationCompat / NotificationManagerCompat /
+# ContextCompat），故直接声明 base 构件；若将来用到 ktx 扩展再引入 androidx-core-ktx。
+androidx-core = { group = "androidx.core", name = "core", version.ref = "androidxCore" }
+androidx-core-ktx = { group = "androidx.core", name = "core-ktx", version.ref = "androidxCore" }
 kotlinx-coroutines-android = { group = "org.jetbrains.kotlinx", name = "kotlinx-coroutines-android", version.ref = "coroutines" }
 kotlinx-coroutines-core = { group = "org.jetbrains.kotlinx", name = "kotlinx-coroutines-core", version.ref = "coroutines" }
 kotlinx-serialization-json = { group = "org.jetbrains.kotlinx", name = "kotlinx-serialization-json", version.ref = "serialization" }
