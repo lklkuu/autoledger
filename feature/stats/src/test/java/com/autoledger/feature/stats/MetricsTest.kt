@@ -107,7 +107,10 @@ class MetricsTest {
         assertEquals(1, result.slices.size)
         assertEquals("unassigned", result.slices.first().key)
         assertEquals("未分类", result.slices.first().label)
-        assertEquals("#708786", result.slices.first().colorHex)
+        // v1.1.9：分类卡不再取分类字典自带的 colorHex（字典里相邻分类常常同色系，
+        // 且和商户/平台卡各自从第 1 色起步 ⇒ 同一屏多张饼图颜色必然撞车）。
+        // 统一取 MetricPalette 的第 0 色。
+        assertEquals(MetricPalette.at(0), result.slices.first().colorHex)
     }
 
     @Test
@@ -191,6 +194,54 @@ class MetricsTest {
         // 默认 platformId = unknown -> 展示名「未知」，并在副标题提示待补笔数
         assertEquals("未知", result.slices.first().label)
         assertTrue(result.subtitle!!.contains("1"), "应提示有 1 笔平台未知，实际 ${result.subtitle}")
+    }
+
+    // ------------------------------------------------------------ 配色收口（v1.1.9）
+
+    @Test
+    fun `every breakdown card gives its leading slices distinct colors`() = runBlocking {
+        // 回归钉子。v1.1.9 之前：
+        // - 分类卡取分类字典自带的 colorHex —— 字典里相邻分类常常是同一个色系；
+        // - 商户卡、平台卡各写一份 palette 字面量，三份重复实现且会各自漂移。
+        // 结果：同一屏里多张饼图的第 1 片撞色，用户分不清哪片属于哪张卡。
+        // 现在三张卡一律走 MetricPalette：前 N 片互不相同，且「第 i 名 = 调色板第 i 色」。
+        val n = MetricPalette.COLORS.size
+        // 故意给所有分类同一个 colorHex —— 一旦实现回退到 cat?.colorHex，下面必然撞色
+        val categories = (0 until n).map { i -> Category("cat_$i", "分类$i", "receipt", "#708786") }
+        val catTxns = (0 until n).map { i ->
+            Fixtures.txn("c$i", -(100L * (n - i)), categoryId = "cat_$i", occurredAtMillis = t0)
+        }
+        val merchantTxns = (0 until n).map { i ->
+            Fixtures.txn("m$i", -(100L * (n - i)), counterparty = "商户$i", occurredAtMillis = t0)
+        }
+        val platformTxns = (0 until n).map { i ->
+            Fixtures.txn("p$i", -(100L * (n - i)), occurredAtMillis = t0).copy(platformId = "plat_$i")
+        }
+
+        val cards = listOf(
+            "分类占比" to CategoryShareMetric().compute(
+                range(), FakeLedgerRepository(catTxns, categories),
+            ) as MetricResult.Breakdown,
+            "商户排行" to MerchantTopMetric(topN = n).compute(
+                range(), FakeLedgerRepository(merchantTxns),
+            ) as MetricResult.Breakdown,
+            "消费平台分布" to PlatformShareMetric(topN = n).compute(
+                range(), FakeLedgerRepository(platformTxns),
+            ) as MetricResult.Breakdown,
+        )
+
+        cards.forEach { (name, result) ->
+            val colors = result.slices.take(n).map { it.colorHex }
+            assertEquals(n, colors.size, "$name 应给出 $n 片，实际 ${colors.size}")
+            assertEquals(
+                colors.size, colors.distinct().size,
+                "$name 的前 $n 片颜色必须互不相同，实际 $colors",
+            )
+            // 第 i 名固定取调色板第 i 色：顺序稳定，不随分类字典内容漂移
+            colors.forEachIndexed { i, color ->
+                assertEquals(MetricPalette.at(i), color, "$name 第 $i 片应取 MetricPalette.at($i)")
+            }
+        }
     }
 
     // ------------------------------------------------------------ 月度趋势

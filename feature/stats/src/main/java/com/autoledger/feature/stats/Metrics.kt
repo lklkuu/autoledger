@@ -7,6 +7,7 @@ import com.autoledger.core.model.LedgerTransaction
 import com.autoledger.core.model.MetricProvider
 import com.autoledger.core.model.MetricResult
 import com.autoledger.core.model.MetricSnapshot
+import com.autoledger.core.model.MetricStat
 import com.autoledger.core.model.MetricTone
 import com.autoledger.core.model.Money
 import com.autoledger.core.model.TimeRange
@@ -48,14 +49,17 @@ class CategoryShareMetric : MetricProvider {
         val txns = resolveTxns(snapshot, range, repo)
         // 退款按分类冲抵支出（口径唯一真源见 ExpenseMath）
         val buckets = ExpenseMath.netBy(txns) { it.categoryId.orEmpty() }
-        val slices = buckets.entries.sortedByDescending { it.value }.map { (rawKey, minor) ->
+        // 排名下标即配色下标：不再取分类字典自带的 colorHex —— 字典里相邻分类常常是同一个色系，
+        // 同一屏内多张饼图还会各自从第 1 色起步，颜色必然撞车。统一走 [MetricPalette]，
+        // 「第 i 名 = 第 i 色」这条规则在 MetricsTest 里有断言钉死。
+        val slices = buckets.entries.sortedByDescending { it.value }.mapIndexed { i, (rawKey, minor) ->
             val key = rawKey.orEmpty()
             val cat = categories[key]
             MetricResult.Breakdown.Slice(
                 key = key.ifBlank { "unassigned" },
                 label = cat?.name ?: "未分类",
                 minor = minor,
-                colorHex = cat?.colorHex ?: "#708786",
+                colorHex = MetricPalette.at(i),
                 iconKey = cat?.iconKey,
             )
         }
@@ -80,10 +84,9 @@ class MerchantTopMetric(private val topN: Int = 8) : MetricProvider {
         val txns = resolveTxns(snapshot, range, repo)
         val buckets = ExpenseMath.netBy(txns) { it.counterparty.ifBlank { "未知商户" } }
         val ranked = buckets.entries.sortedByDescending { it.value }.take(topN)
-        val palette = listOf("#16856F", "#5C88B8", "#F6C95F", "#D95F5F", "#9B6AD0", "#116B5B", "#708786", "#163B3D")
         val slices = ranked.mapIndexed { i, (rawKey, minor) ->
             val key = rawKey.orEmpty()
-            MetricResult.Breakdown.Slice(key, key, minor, palette[i % palette.size])
+            MetricResult.Breakdown.Slice(key, key, minor, MetricPalette.at(i))
         }
         return MetricResult.Breakdown(MERCHANT_ID, title, null, buckets.values.sum(), slices)
     }
@@ -113,7 +116,7 @@ class PlatformShareMetric(private val topN: Int = 8) : MetricProvider {
                 key = key,
                 label = PlatformCatalog.displayNameOf(key),
                 minor = minor,
-                colorHex = PLATFORM_PALETTE[i % PLATFORM_PALETTE.size],
+                colorHex = MetricPalette.at(i),
             )
         }
         // 「未知」笔数单独提示：让用户一眼看出还有多少笔待补平台，形成修正闭环。
@@ -126,8 +129,6 @@ class PlatformShareMetric(private val topN: Int = 8) : MetricProvider {
 
     companion object {
         const val PLATFORM_ID = "platform_share"
-        private val PLATFORM_PALETTE =
-            listOf("#16856F", "#5C88B8", "#F6C95F", "#D95F5F", "#9B6AD0", "#116B5B", "#708786", "#163B3D")
     }
 }
 
@@ -147,7 +148,9 @@ class PlatformShareMetric(private val topN: Int = 8) : MetricProvider {
  */
 class IncomeBalanceMetric : MetricProvider {
     override val id: String = INCOME_BALANCE_ID
-    override val title: String = "收入 · 结余"
+    // v1.1.9：原「收入 · 结余」把支出藏在 subtitle 的半句话里，用户得自己在脑子里做减法。
+    // 改成「支出与结余」，并把支出 / 收入 / 结余拆成三行带标签的小指标（见 stats）。
+    override val title: String = "支出与结余"
     override val dimension: Dimension = Dimension.BALANCE
     override val order: Int = 35
 
@@ -164,11 +167,17 @@ class IncomeBalanceMetric : MetricProvider {
         return MetricResult.Scalar(
             providerId = INCOME_BALANCE_ID,
             title = title,
-            subtitle = "收入 ${Money(income).formatYuan()} · 净支出 ${Money(net).formatYuan()}",
+            // 口径说明留在副标题（原来这句在 secondaryText，与 subtitle 的拼串重复显示了一遍）
+            subtitle = "结余 = 收入 − 支出（退款已冲抵，不重复扣）",
             valueMinor = balance,
             // 负结余自带负号（formatYuan 恒保留符号）
             primaryText = Money(balance).formatYuan(),
-            secondaryText = "结余 = 收入 − 净支出（退款已冲抵，不重复扣）",
+            // v1.1.9：支出 / 收入 / 结余三行并列，各自带语义色，不再挤在一行拼串里
+            stats = listOf(
+                MetricStat("支出", Money(net).formatYuan(), MetricTone.EXPENSE),
+                MetricStat("收入", Money(income).formatYuan(), MetricTone.INCOME),
+                MetricStat("结余", Money(balance).formatYuan(), if (balance >= 0L) MetricTone.INCOME else MetricTone.NEUTRAL),
+            ),
             iconKey = "wallet",
             tone = if (balance >= 0L) MetricTone.INCOME else MetricTone.NEUTRAL,
         )

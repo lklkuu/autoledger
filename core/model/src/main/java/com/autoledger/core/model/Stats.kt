@@ -20,10 +20,35 @@ enum class Dimension { CATEGORY, MERCHANT, PLATFORM, ACCOUNT, TIME, BALANCE }
  */
 enum class MetricTone { EXPENSE, INCOME, NEUTRAL }
 
+/**
+ * 单值 KPI 卡里的**一行明细小指标**（v1.1.9）。
+ *
+ * 背景：「收入 · 结余」原来只有一行 `subtitle` 拼出来的 `收入 ¥x · 净支出 ¥y`，
+ * 支出被挤在半句话里、还和结余混在一起，用户得自己在脑子里做减法。
+ * 现在把「支出 / 收入 / 结余」拆成三行带标签的小指标，各自带语义色阶（[tone]）。
+ *
+ * 为什么是 `label + text + tone` 而不是直接给 `minor`：卡片只负责**展示**，
+ * 金额格式化由领域层的 `Money.formatYuan()` 统一决定，UI 不该自己拼 ¥ 符号。
+ */
+data class MetricStat(
+    val label: String,
+    val text: String,
+    val tone: MetricTone = MetricTone.NEUTRAL,
+)
+
 sealed interface MetricResult {
     val providerId: String
     val title: String
     val subtitle: String?
+    /**
+     * 时间范围后缀（v1.1.9），如「本月」「3 月」。
+     *
+     * ⚠️ **不能**把它拼进 [title]：title 是维度自身的东西（"消费结构"），一旦拼死，
+     * 同一张卡在「今日 / 本月 / 指定月份」三个场景就得各造一个实例，也会污染
+     * 设置页按维度开关卡片时的展示名。后缀单独存字段，由 UI 在渲染时拼
+     *（`${title} · ${rangeLabel}`），null / 空白 = 不拼。
+     */
+    val rangeLabel: String?
 
     /** 占比类（饼图 / 条形榜） */
     data class Breakdown(
@@ -32,6 +57,9 @@ sealed interface MetricResult {
         override val subtitle: String? = null,
         val totalMinor: Long,
         val slices: List<Slice>,
+        // 放在构造参数**末尾**：既有调用点全是位置参数（Breakdown(id, title, subtitle, total, slices)），
+        // 插在中间会把它们全部错位。
+        override val rangeLabel: String? = null,
     ) : MetricResult {
         data class Slice(
             val key: String,
@@ -49,6 +77,7 @@ sealed interface MetricResult {
         override val subtitle: String? = null,
         val unit: String,
         val points: List<Point>,
+        override val rangeLabel: String? = null,
     ) : MetricResult {
         data class Point(val label: String, val valueMinor: Long)
     }
@@ -69,13 +98,35 @@ sealed interface MetricResult {
         val secondaryText: String? = null,
         val iconKey: String? = null,
         /**
+         * 卡片主数值下方的**明细小指标行**（v1.1.9）。为空则 UI 不渲染该区块，
+         * 既有卡片（花掉的时间等）外观完全不变。
+         */
+        val stats: List<MetricStat> = emptyList(),
+        /**
          * 语义色阶（v1.1.6）。默认 [MetricTone.EXPENSE] ⇒ 既有支出类卡片（花掉的时间）外观不变。
          *
          * 结余类卡片用 [MetricTone.INCOME] / [MetricTone.NEUTRAL] 区分「有结余」与「入不敷出」，
          * 避免负数被涂成"赚到了"的颜色。
          */
         val tone: MetricTone = MetricTone.EXPENSE,
+        override val rangeLabel: String? = null,
     ) : MetricResult
+}
+
+/**
+ * 给统计结果打上时间范围后缀（v1.1.9）。
+ *
+ * 「消费结构」这张卡在今日页、本月账、3 月的发现页上**是同一个维度**，只是窗口不同。
+ * 与其为三个窗口各造一个 provider，不如在渲染侧统一贴标签：
+ * `消费结构 · 本月`、`消费结构 · 3 月`。
+ *
+ * 用 `copy` 而不是改 [MetricResult.title]，保证 title 始终是维度的**本名**（设置页展示、
+ * 按 id 查找都依赖它不被污染）。
+ */
+fun MetricResult.withRangeLabel(label: String): MetricResult = when (this) {
+    is MetricResult.Breakdown -> copy(rangeLabel = label)
+    is MetricResult.Trend -> copy(rangeLabel = label)
+    is MetricResult.Scalar -> copy(rangeLabel = label)
 }
 
 data class TimeRange(val startMillis: Long, val endInclusiveMillis: Long) {
