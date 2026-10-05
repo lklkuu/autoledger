@@ -60,10 +60,14 @@ import com.autoledger.core.model.LedgerTransaction
 import com.autoledger.core.model.TxnType
 import com.autoledger.core.model.txnExtras
 import com.autoledger.core.model.MetricResult
+import com.autoledger.core.model.TimeRange
 import com.autoledger.core.model.platform.PlatformCatalog
 import com.autoledger.core.model.platform.PlatformEntry
 import com.autoledger.feature.stats.BudgetCalculator
+import com.autoledger.feature.stats.MonthlyTrendMetric
+import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.launch
+import kotlinx.coroutines.withContext
 import java.time.Instant
 import java.time.LocalDate
 import java.time.ZoneId
@@ -78,7 +82,6 @@ fun ExpensesScreen(container: AppContainer) {
     // B4：离开页面时释放订阅（实例级作用域），避免往返导航累积孤儿订阅（R1）。
     DisposableEffect(store) { onDispose { store.close() } }
     val state by store.state.collectAsState()
-    val scope = androidx.compose.runtime.rememberCoroutineScope()
 
     var amountText by remember { mutableStateOf("") }
     var merchant by remember { mutableStateOf("") }
@@ -89,6 +92,11 @@ fun ExpensesScreen(container: AppContainer) {
     var editing by remember { mutableStateOf<LedgerTransaction?>(null) }
     // 点到「已并入其它流水」的行：用它弹说明，而不是默默无响应。
     var mergedHint by remember { mutableStateOf<String?>(null) }
+    // v1.1.9：保存按钮的「进行中 / 结果提示」状态。旧实现把保存放在 rememberCoroutineScope()
+    // 里且无反馈：协程可能半路被取消，用户既看不到失败也看不到成功，"点了没反应"。
+    var saving by remember { mutableStateOf(false) }
+    var saveHint by remember { mutableStateOf<String?>(null) }
+    var saveHintOk by remember { mutableStateOf(true) }
 
     LazyColumn(
         modifier = Modifier.fillMaxSize().padding(horizontal = 16.dp),
@@ -131,26 +139,67 @@ fun ExpensesScreen(container: AppContainer) {
                 )
                 Button(
                     onClick = {
-                        val yuanValue = amountText.toDoubleOrNull() ?: return@Button
+                        // v1.1.9 根因修复：
+                        // 1) 保存走 container.appScope（进程级、SupervisorJob），**不**用 rememberCoroutineScope()。
+                        //    后者绑在组合上，页面一被切走 / 配置变更就 cancel，ingest 跑一半中断 ——
+                        //    表现就是「点了保存没反应，偶尔才记上」。写库不该受页面生命周期管辖。
+                        // 2) 金额先校验再发起：非法输入给明确提示，绝不静默 return@Button（旧实现那样按钮像坏了）。
+                        // 3) 只有真的写成功了才清空输入框：失败时保留用户输入，避免辛苦打的字白丢。
+                        val yuanValue = amountText.trim().toDoubleOrNull()
+                        if (yuanValue == null || yuanValue <= 0.0) {
+                            saveHintOk = false
+                            saveHint = "金额要填大于 0 的数字"
+                            return@Button
+                        }
+                        if (saving) return@Button
                         val minor = com.autoledger.core.model.Money.fromYuanDouble(kotlin.math.abs(yuanValue)).minor
                             .coerceAtLeast(1L)
-                        scope.launch {
-                            val source = container.captureRegistry.find(com.autoledger.core.model.capture.CaptureSourceIds.MANUAL)
-                                as? com.autoledger.feature.capture.manual.ManualCaptureSource
-                            // 退款记为独立 REFUND 流水（正数、显式类型），不依赖订单
-                            val envelope = source?.envelope(
-                                amountMinor = if (isRefund) minor else -minor,
-                                counterparty = merchant,
-                                note = note,
-                                explicitType = if (isRefund) com.autoledger.core.model.TxnType.REFUND else null,
-                            ) ?: return@launch
-                            runCatching { container.ingestPipeline.ingest(envelope) }
-                            amountText = ""; merchant = ""; note = ""
+                        saving = true
+                        saveHint = null
+                        container.appScope.launch {
+                            val result = runCatching {
+                                val source = container.captureRegistry
+                                    .find(com.autoledger.core.model.capture.CaptureSourceIds.MANUAL)
+                                    as? com.autoledger.feature.capture.manual.ManualCaptureSource
+                                // 退款记为独立 REFUND 流水（正数、显式类型），不依赖订单
+                                val envelope = source?.envelope(
+                                    amountMinor = if (isRefund) minor else -minor,
+                                    counterparty = merchant,
+                                    note = note,
+                                    explicitType = if (isRefund) com.autoledger.core.model.TxnType.REFUND else null,
+                                ) ?: error("手动录入来源不可用")
+                                container.ingestPipeline.ingest(envelope)
+                            }
+                            // 结果回填必须回到主线程：Compose 状态只能在 Main 上写。
+                            withContext(Dispatchers.Main) {
+                                saving = false
+                                result.onSuccess {
+                                    saveHintOk = true
+                                    saveHint = "已记下"
+                                    amountText = ""; merchant = ""; note = ""
+                                }.onFailure {
+                                    saveHintOk = false
+                                    saveHint = "保存失败：${it.message ?: "未知错误"}"
+                                }
+                            }
                         }
                     },
                     Modifier.padding(top = 8.dp),
+                    enabled = !saving,
                     colors = ButtonDefaults.buttonColors(containerColor = LedgerPalette.Positive),
-                ) { Text(if (isRefund) "记下退款" else "保存并换算工时") }
+                ) { Text(if (saving) "保存中…" else if (isRefund) "记下退款" else "保存并换算工时") }
+                saveHint?.let { hint ->
+                    Text(
+                        hint,
+                        Modifier.padding(top = 8.dp),
+                        style = MaterialTheme.typography.bodySmall,
+                        color = if (saveHintOk) {
+                            MaterialTheme.colorScheme.primary
+                        } else {
+                            MaterialTheme.colorScheme.error
+                        },
+                    )
+                }
             }
         }
 
@@ -211,43 +260,70 @@ fun ExpensesScreen(container: AppContainer) {
             }
         }
 
-        if (state.loading) item { LoadingBox() }
-        state.error?.let { item { ErrorPanel(it, store::load) } }
+        // 流水检索区：**默认折叠**，不展示任何流水条目 —— 流水浏览统一由「账单」页承载。
+        // 但搜索框 / 消费平台筛选 / 标签筛选目前只挂在这一块上，直接删掉会把这三项能力一起弄丢，
+        // 故改为「有检索条件且命中结果时才展开」。
+        // 「显示内部划转与退款」是**展示开关**而非检索条件：单独勾选不应展开列表，
+        // 否则等于把全部流水搬回记账页，与「流水归账单」的初衷相悖。
+        val hasCriteria =
+            state.query.isNotBlank() || state.platformFilter != null || state.tagFilter != null
 
-        val visible = store.visibleItems()
-        if (!state.loading && visible.isEmpty()) {
-            item { EmptyHint("还没有匹配的流水") }
-        }
-
-        items(visible, key = { it.id }) { txn ->
-            val category = state.categories[txn.categoryId]
-            Column(Modifier.padding(horizontal = 4.dp)) {
-                TransactionRow(
-                    txn = txn,
-                    category = category,
-                    // 点整行 → 弹「修正商户名 / 备注 / 消费平台 / 金额 / 日期」对话框
-                    // （自动抓取的商户名经常缺失）。已并入其它流水时不给编辑入口。
-                    onClick = if (TxnEditRules.canEdit(txn)) {
-                        { editing = txn }
-                    } else {
-                        { mergedHint = txn.id }
-                    },
-                    trailing = {
-                        TxnRowTrailing(
-                            store = store,
-                            txn = txn,
-                            expanded = expandedId == txn.id,
-                            onToggleExpanded = { expandedId = if (expandedId == txn.id) null else txn.id },
-                        )
-                    },
-                )
-                if (expandedId == txn.id) {
-                    TxnEditExtras(
-                        store = store,
-                        txn = txn,
-                        categories = state.categories.values,
-                        onDone = { expandedId = null },
+        if (!hasCriteria) {
+            // 默认态：只给一句引导，不渲染任何流水条目
+            item {
+                AppCard {
+                    Text(
+                        "想找某笔流水？输入关键词，或选消费平台 / 标签，匹配到的会显示在这里。完整的流水列表在「账单」页。",
+                        style = MaterialTheme.typography.bodyMedium,
+                        color = MaterialTheme.colorScheme.onSurfaceVariant,
                     )
+                }
+            }
+        } else {
+            // 有检索条件：加载中 / 出错 / 无命中 / 命中列表，四种状态各自明确
+            if (state.loading) item { LoadingBox() }
+            state.error?.let { item { ErrorPanel(it, store::load) } }
+            val visible = store.visibleItems()
+            if (visible.isEmpty()) {
+                // 无匹配：列表回到隐藏，只给一条无数据提示（不清空用户的检索条件，让他能改关键词重试）
+                item { AppCard { EmptyHint("没有匹配的流水，换个关键词或清除筛选试试") } }
+            } else {
+                item {
+                    AppCard {
+                        SectionTitle("匹配结果", "共 ${visible.size} 笔")
+                    }
+                }
+                items(visible, key = { it.id }) { txn ->
+                    val category = state.categories[txn.categoryId]
+                    Column(Modifier.padding(horizontal = 4.dp)) {
+                        TransactionRow(
+                            txn = txn,
+                            category = category,
+                            // 点整行 → 弹「修正商户名 / 备注 / 消费平台 / 金额 / 日期」对话框
+                            // （自动抓取的商户名经常缺失）。已并入其它流水时不给编辑入口。
+                            onClick = if (TxnEditRules.canEdit(txn)) {
+                                { editing = txn }
+                            } else {
+                                { mergedHint = txn.id }
+                            },
+                            trailing = {
+                                TxnRowTrailing(
+                                    store = store,
+                                    txn = txn,
+                                    expanded = expandedId == txn.id,
+                                    onToggleExpanded = { expandedId = if (expandedId == txn.id) null else txn.id },
+                                )
+                            },
+                        )
+                        if (expandedId == txn.id) {
+                            TxnEditExtras(
+                                store = store,
+                                txn = txn,
+                                categories = state.categories.values,
+                                onDone = { expandedId = null },
+                            )
+                        }
+                    }
                 }
             }
         }
@@ -326,6 +402,17 @@ fun MonthlyScreen(container: AppContainer) {
     val monthGross = ExpenseMath.grossExpenseMinor(monthTxns)
     val monthBudgets = BudgetCalculator.statuses(state.categories.values.toList(), monthTxns)
 
+    // v1.1.9：月度趋势卡从今日页迁到账单页 —— 它是跨月宽窗（最近 N 个月），
+    // 搁在「只看本月」的今日页里口径突兀；账单页本来就在按时间看账，是它的自然归属。
+    // remember / LaunchedEffect 必须写在 composable 体内：LazyColumn 的 content lambda
+    // 不是 composable 上下文，在里面 remember 会直接编译不过。
+    var trend by remember { mutableStateOf<MetricResult?>(null) }
+    LaunchedEffect(container) {
+        val provider = container.metricRegistry.find(MonthlyTrendMetric.TREND_ID) ?: return@LaunchedEffect
+        // 趋势卡忽略快照、自查宽窗，故 snapshot 传 null（见 MonthlyTrendMetric 的说明）
+        trend = provider.compute(TimeRange.thisMonth(System.currentTimeMillis()), container.repository, null)
+    }
+
     LazyColumn(
         modifier = Modifier.fillMaxSize().padding(horizontal = 16.dp),
         verticalArrangement = Arrangement.spacedBy(14.dp),
@@ -365,6 +452,8 @@ fun MonthlyScreen(container: AppContainer) {
                         PaymentRefundTiles(monthGross, monthRefund)
                     }
                 }
+                // 月度趋势（v1.1.9 从今日页迁来）：算完才渲染，加载中不占位
+                trend?.let { result -> item { MetricCard(result) } }
                 if (monthBudgets.isNotEmpty()) {
                     item { BudgetCard(monthBudgets) }
                 }

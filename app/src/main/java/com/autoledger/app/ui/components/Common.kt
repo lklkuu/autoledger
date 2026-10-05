@@ -274,10 +274,18 @@ fun EmptyHint(text: String, iconKey: String = "spark") {
 /** 一张统计卡片：Render 逻辑按 [MetricResult] 类型分发，新增维度类型时这里加一个分支即可 */
 @Composable
 fun MetricCard(result: MetricResult, modifier: Modifier = Modifier.fillMaxWidth()) {
+    // v1.1.9：时间范围后缀**只在渲染时拼**，不进 result.title —— title 是维度的本名
+    // （设置页按维度开关卡片、按 id 查找都依赖它不被污染）。同一个维度在今日页 / 本月账 /
+    // 指定月份三个场景下复用同一个实例，只是贴上不同的范围标签。
+    val titleText = if (result.rangeLabel.isNullOrBlank()) {
+        result.title
+    } else {
+        "${result.title} · ${result.rangeLabel}"
+    }
     AppCard(modifier) {
         when (result) {
             is MetricResult.Scalar -> {
-                Text(result.title, style = MaterialTheme.typography.titleMedium)
+                Text(titleText, style = MaterialTheme.typography.titleMedium)
                 Text(
                     // 主指标不一定是钱：「花掉的时间」要显示「≈ 0.8 小时」而非折算金额。
                     result.primaryText ?: "¥${result.valueMinor.yuan()}",
@@ -286,13 +294,35 @@ fun MetricCard(result: MetricResult, modifier: Modifier = Modifier.fillMaxWidth(
                     // 不再一律 PositiveStrong（那样"入不敷出"也会被涂成"赚到了"的颜色）。
                     color = toneColor(result.tone.toLedgerTone()),
                 )
+                // v1.1.9：明细小指标（支出 / 收入 / 结余）排在副标题之前 —— 先给数字，再给口径说明。
+                if (result.stats.isNotEmpty()) {
+                    Row(
+                        Modifier.fillMaxWidth().padding(vertical = 4.dp),
+                        horizontalArrangement = Arrangement.spacedBy(16.dp),
+                    ) {
+                        result.stats.forEach { stat ->
+                            Column {
+                                Text(
+                                    stat.label,
+                                    style = MaterialTheme.typography.labelSmall,
+                                    color = MaterialTheme.colorScheme.onSurfaceVariant,
+                                )
+                                Text(
+                                    stat.text,
+                                    style = MaterialTheme.typography.bodyMedium,
+                                    color = toneColor(stat.tone.toLedgerTone()),
+                                )
+                            }
+                        }
+                    }
+                }
                 listOfNotNull(result.subtitle, result.secondaryText).forEach {
                     Text(it, style = MaterialTheme.typography.bodySmall, color = MaterialTheme.colorScheme.onSurfaceVariant)
                 }
             }
 
             is MetricResult.Breakdown -> {
-                Text(result.title, style = MaterialTheme.typography.titleMedium)
+                Text(titleText, style = MaterialTheme.typography.titleMedium)
                 result.subtitle?.let {
                     Text(it, style = MaterialTheme.typography.bodySmall, color = MaterialTheme.colorScheme.onSurfaceVariant)
                 }
@@ -327,7 +357,7 @@ fun MetricCard(result: MetricResult, modifier: Modifier = Modifier.fillMaxWidth(
             }
 
             is MetricResult.Trend -> {
-                Text(result.title, style = MaterialTheme.typography.titleMedium)
+                Text(titleText, style = MaterialTheme.typography.titleMedium)
                 val max = result.points.maxOfOrNull { it.valueMinor } ?: 0L
                 Row(
                     // 只给最小高度、不设固定高度：系统大字体下文字会变高，容器跟着长，避免裁掉金额标签

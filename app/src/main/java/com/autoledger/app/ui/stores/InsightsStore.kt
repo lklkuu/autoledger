@@ -8,6 +8,7 @@ import com.autoledger.core.model.MetricResult
 import com.autoledger.core.model.MetricSnapshot
 import com.autoledger.core.model.TimeRange
 import com.autoledger.core.model.TxnType
+import com.autoledger.core.model.withRangeLabel
 import com.autoledger.feature.stats.PlatformShareMetric
 import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.Dispatchers
@@ -207,6 +208,8 @@ class InsightsStore(private val container: AppContainer) {
                         txns = allMonth.filter { it.type != TxnType.TRANSFER },
                     )
                     it.compute(fresh, container.repository, snap)
+                        // v1.1.9：发现页可切月，卡片标题必须自报是哪个月，否则"消费结构"看起来像本月的
+                        .withRangeLabel("${selected.monthValue} 月")
                 }
                 // 用 copy 而非新建 State：保住 availableMonths 这类"不随月份重算"的字段。
                 val months = _state.value.availableMonths

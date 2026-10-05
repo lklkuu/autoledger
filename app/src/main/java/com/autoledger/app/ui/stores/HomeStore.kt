@@ -7,7 +7,8 @@ import com.autoledger.core.model.LedgerTransaction
 import com.autoledger.core.model.MetricResult
 import com.autoledger.core.model.MetricSnapshot
 import com.autoledger.core.model.TimeRange
-import com.autoledger.feature.stats.PlatformShareMetric
+import com.autoledger.core.model.withRangeLabel
+import com.autoledger.feature.stats.MonthlyTrendMetric
 import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.Job
@@ -131,9 +132,11 @@ class HomeStore(private val container: AppContainer) {
         // 快照口径：monthTransactions 已剔除 TRANSFER、保留 REFUND、由 Flow 排除 MERGED（契约见 MetricSnapshot）。
         val categories = container.repository.listCategories()
         val snap = MetricSnapshot(range = month, txns = monthTransactions, categories = categories)
+        // v1.1.9：「消费平台分布」不再从今日页剔除（同一屏既有消费结构也有平台结构，信息互补）；
+        // 「月度趋势」则迁到账单页（它是跨月宽窗，放在只看本月的今日页里口径突兀）。
         val metrics = container.metricRegistry.providers()
-            .filter { it.id != PlatformShareMetric.PLATFORM_ID }
-            .map { it.compute(month, container.repository, snap) }
+            .filter { it.id != MonthlyTrendMetric.TREND_ID }
+            .map { it.compute(month, container.repository, snap).withRangeLabel("本月") }
         State(
             loading = false,
             // 净支出（退款冲抵），口径唯一真源见 ExpenseMath
