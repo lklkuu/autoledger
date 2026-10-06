@@ -64,6 +64,7 @@ import com.autoledger.core.model.TimeRange
 import com.autoledger.core.model.platform.PlatformCatalog
 import com.autoledger.core.model.platform.PlatformEntry
 import com.autoledger.feature.stats.BudgetCalculator
+import com.autoledger.feature.stats.MetricPalette
 import com.autoledger.feature.stats.MonthlyTrendMetric
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.launch
@@ -563,12 +564,17 @@ fun MonthlyScreen(container: AppContainer) {
                                 title = "年度分类结构",
                                 subtitle = "全年共 ${yearTxns.size} 笔",
                                 totalMinor = yExpense,
-                                slices = byCategory.map { (cat, minor) ->
+                                // v1.1.9：与分类占比卡一样按下标取统一调色板的色。
+                                // 原来取 cat?.colorHex —— 分类字典里相邻分类常常是同一个色系
+                                // （「人情往来 / 餐饮」撞色就是这么来的），且和本月其它占比卡
+                                // 各自从第 1 色起步，同屏必然撞。byCategory 上方已按金额降序排好，
+                                // 排名下标即配色下标，与 CategoryShareMetric 口径一致。
+                                slices = byCategory.mapIndexed { i, (cat, minor) ->
                                     MetricResult.Breakdown.Slice(
                                         key = cat?.id ?: "unassigned",
                                         label = cat?.name ?: "未分类",
                                         minor = minor,
-                                        colorHex = cat?.colorHex ?: "#708786",
+                                        colorHex = MetricPalette.at(i),
                                         iconKey = cat?.iconKey,
                                     )
                                 },
