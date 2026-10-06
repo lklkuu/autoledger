@@ -500,6 +500,37 @@ class MetricsTest {
         assertEquals(MetricTone.INCOME, card.tone, "有结余 ⇒ 收入语义色")
     }
 
+    @Test
+    fun `balance card exposes income expense and balance as three labelled rows`() = runBlocking {
+        // 需求钉子（v1.1.9）：卡片必须同时给出「收入 / 支出 / 结余」三项，且按因果顺序排列
+        // （先进钱 → 再花钱 → 最后才是结余）。任何一项缺失、或支出行改用**毛支出**，
+        // 用户读到的结余都会和账本对不上。
+        val r = range(t0, t0 + day)
+        val repo = repo(
+            Fixtures.txn("i1", 100_000, type = TxnType.INCOME, occurredAtMillis = t0),
+            Fixtures.txn("e1", -135_000, occurredAtMillis = t0),
+            Fixtures.txn("r1", 20_000, type = TxnType.REFUND, occurredAtMillis = t0),
+        )
+        val card = IncomeBalanceMetric().compute(r, repo) as MetricResult.Scalar
+        assertEquals(
+            "支出与结余",
+            card.title,
+            "标题必须是「支出与结余」（原名「收入 · 结余」把支出藏进了副标题的一句话里）",
+        )
+        assertEquals(
+            listOf("收入", "支出", "结余"),
+            card.stats.map { it.label },
+            "三行必须齐全，且按 收入 → 支出 → 结余 排列",
+        )
+        assertEquals("1000", card.stats[0].text, "收入行 1000 分 ⇒ 1000 元")
+        // 支出行给的是**净支出**（毛支出 1350 − 退款 200 = 1150），不是毛支出 1350。
+        assertEquals("1150", card.stats[1].text, "支出行是净支出 1150 元（退款已冲抵一次）")
+        assertEquals("-150", card.stats[2].text, "结余行 = 1000 − 1150 = −150 元")
+        assertEquals(MetricTone.INCOME, card.stats[0].tone, "收入行用收入色")
+        assertEquals(MetricTone.EXPENSE, card.stats[1].tone, "支出行用支出色")
+        assertEquals(MetricTone.NEUTRAL, card.stats[2].tone, "负结余不得涂成收入色")
+    }
+
     // ------------------------------------------------------------ 时间成本
 
     @Test

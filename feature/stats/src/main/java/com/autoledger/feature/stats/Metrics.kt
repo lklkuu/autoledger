@@ -172,10 +172,11 @@ class IncomeBalanceMetric : MetricProvider {
             valueMinor = balance,
             // 负结余自带负号（formatYuan 恒保留符号）
             primaryText = Money(balance).formatYuan(),
-            // v1.1.9：支出 / 收入 / 结余三行并列，各自带语义色，不再挤在一行拼串里
+            // v1.1.9：收入 / 支出 / 结余三行并列（按因果顺序：先进钱、再花钱、最后才是结余），
+            // 各自带语义色，不再挤在一行拼串里
             stats = listOf(
-                MetricStat("支出", Money(net).formatYuan(), MetricTone.EXPENSE),
                 MetricStat("收入", Money(income).formatYuan(), MetricTone.INCOME),
+                MetricStat("支出", Money(net).formatYuan(), MetricTone.EXPENSE),
                 MetricStat("结余", Money(balance).formatYuan(), if (balance >= 0L) MetricTone.INCOME else MetricTone.NEUTRAL),
             ),
             iconKey = "wallet",
