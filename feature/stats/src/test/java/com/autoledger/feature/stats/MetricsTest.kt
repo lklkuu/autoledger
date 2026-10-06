@@ -172,7 +172,7 @@ class MetricsTest {
         assertTrue(result.slices.all { it.colorHex.startsWith("#") })
     }
 
-    // ------------------------------------------------------------ 消费平台分布
+    // ------------------------------------------------------------ 消费平台结构
 
     @Test
     fun `platform share aggregates by platform id and maps display names`() = runBlocking {
@@ -225,7 +225,7 @@ class MetricsTest {
             "商户排行" to MerchantTopMetric(topN = n).compute(
                 range(), FakeLedgerRepository(merchantTxns),
             ) as MetricResult.Breakdown,
-            "消费平台分布" to PlatformShareMetric(topN = n).compute(
+            "消费平台结构" to PlatformShareMetric(topN = n).compute(
                 range(), FakeLedgerRepository(platformTxns),
             ) as MetricResult.Breakdown,
         )

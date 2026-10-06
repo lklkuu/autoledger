@@ -95,14 +95,17 @@ class MerchantTopMetric(private val topN: Int = 8) : MetricProvider {
 }
 
 /**
- * 消费平台分布 —— 与 [MerchantTopMetric] 构成「消费平台 / 商户」两个并列的业务维度。
+ * 消费平台结构 —— 与 [MerchantTopMetric] 构成「消费平台 / 商户」两个并列的业务维度。
+ *
+ * v1.1.9 由「消费平台分布」改名为「消费平台结构」：与同屏的「消费结构」构成命名对仗，
+ * 用户一眼能看出两者是同一类「占比结构」图（数据口径本来就是一致的）。
  *
  * 与「采集来源」的区别：[LedgerTransaction.sourceId]（通知 / 短信 / 账单导入）是**技术追溯**字段，
  * 不是业务维度，因此不再作为统计口径（原 `ChannelShareMetric` 已删除）。
  */
 class PlatformShareMetric(private val topN: Int = 8) : MetricProvider {
     override val id: String = PLATFORM_ID
-    override val title: String = "消费平台分布"
+    override val title: String = "消费平台结构"
     override val dimension: Dimension = Dimension.PLATFORM
     override val order: Int = 30
 

@@ -132,7 +132,7 @@ class HomeStore(private val container: AppContainer) {
         // 快照口径：monthTransactions 已剔除 TRANSFER、保留 REFUND、由 Flow 排除 MERGED（契约见 MetricSnapshot）。
         val categories = container.repository.listCategories()
         val snap = MetricSnapshot(range = month, txns = monthTransactions, categories = categories)
-        // v1.1.9：「消费平台分布」不再从今日页剔除（同一屏既有消费结构也有平台结构，信息互补）；
+        // v1.1.9：「消费平台结构」不再从今日页剔除（同一屏既有消费结构也有平台结构，信息互补）；
         // 「月度趋势」则迁到账单页（它是跨月宽窗，放在只看本月的今日页里口径突兀）。
         val metrics = container.metricRegistry.providers()
             .filter { it.id != MonthlyTrendMetric.TREND_ID }
