@@ -281,14 +281,16 @@ fun ExpensesScreen(container: AppContainer) {
                 }
             }
         } else {
-            // 有检索条件：加载中 / 出错 / 无命中 / 命中列表，四种状态各自明确
-            if (state.loading) item { LoadingBox() }
+            // 有检索条件：出错 / 加载中 / 无命中 / 命中列表 —— 四个状态互斥，不得同帧并现
             state.error?.let { item { ErrorPanel(it, store::load) } }
+            if (state.loading) item { LoadingBox() }
             val visible = store.visibleItems()
-            if (visible.isEmpty()) {
+            // 加载中不判「无匹配」：此刻 items 还没到，否则会与上面的 LoadingBox 同帧并现，
+            // 用户刚敲一个字就看到「没有匹配」，看起来像功能坏了。
+            if (!state.loading && visible.isEmpty()) {
                 // 无匹配：列表回到隐藏，只给一条无数据提示（不清空用户的检索条件，让他能改关键词重试）
                 item { AppCard { EmptyHint("没有匹配的流水，换个关键词或清除筛选试试") } }
-            } else {
+            } else if (visible.isNotEmpty()) {
                 item {
                     AppCard {
                         SectionTitle("匹配结果", "共 ${visible.size} 笔")

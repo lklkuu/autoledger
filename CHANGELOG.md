@@ -10,7 +10,10 @@
 - AI 收支判定上线（实现与测试已全部就位，当前仅由 `AiFeatureGate.ENTRY_VISIBLE = false` 隐藏入口）
 - 多币种（当前金额一律按 CNY 处理）
 - 云同步真实后端（当前仅有接口与空实现，不发送任何数据）
-- 其余页面接入 Room Flow 实时刷新（账单 / 采集箱 / 发现 / 自由 / 退款 / 分类管理）
+- 其余页面的实时刷新**复核**：各 store 其实都已订阅 Room Flow（账单 `observeAll`、
+  采集箱 `observeRaw`、发现 `observeRange`/`observeSince`、自由 `observeAll`、退款 `observeOrders`、
+  分类管理 `observeCategories`），剩下的是逐页确认「每种写库路径都有对应的失效触发」，
+  而不是继续铺管道（此条原写作「其余页面接入 Room Flow」，与代码现状不符，2026-10-06 更正）
 - 加密备份的 UI 入口（后端能力已具备，当前设置页只有明文导出/导入）
 - 自适应布局（当前为手机竖屏优化）
 

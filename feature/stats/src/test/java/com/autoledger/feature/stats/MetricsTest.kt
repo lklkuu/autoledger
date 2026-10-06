@@ -17,11 +17,12 @@ import kotlinx.coroutines.runBlocking
 /**
  * 统计维度插件 —— 纯 JVM 单元测试。
  *
- * 仪表盘上每一个数字都来自这里：结构占比、商户排行、渠道分布、月度趋势、时间成本。
+ * 仪表盘上每一个数字都来自这里：结构占比、商户排行、消费平台结构、月度趋势、时间成本。
  * 金额一律以「分」聚合，任何一条算错都会直接体现在用户看到的月度支出上。
  *
- * 注意：本模块当前**无法编译**（Metrics.kt 调用了 LedgerRepository 上不存在的 listRange，
- * 见报告 S1）。修复 S1 后 `./gradlew :feature:stats:test` 即可运行。
+ * 运行：`./gradlew :feature:stats:test`。
+ * （历史注记：本模块曾因 `Metrics.kt` 调用了 `LedgerRepository` 上不存在的 `listRange`
+ * 而无法编译，该缺陷早已修复；此说明保留仅为解释旧报告的 S1 指代，不要据此判断当前状态。）
  */
 class MetricsTest {
 
@@ -242,6 +243,45 @@ class MetricsTest {
                 assertEquals(MetricPalette.at(i), color, "$name 第 $i 片应取 MetricPalette.at($i)")
             }
         }
+    }
+
+    @Test
+    fun `palette never repeats a colour across a wide index range`() {
+        // 上面的用例只把三张卡覆盖到「基础色环长度」为止，恰好漏掉了回绕区间 ——
+        // 而分类卡逐片出图、无 topN 截断，分类数由用户增删决定、上不封顶。
+        // 所以这里直接对 at() 本身下钉子：任意下标都必须给出互不相同的合法色值。
+        val n = 64
+        val colors = (0 until n).map { MetricPalette.at(it) }
+        assertEquals(n, colors.distinct().size, "at(0..${n - 1}) 必须两两不同，实际 $colors")
+        colors.forEachIndexed { i, c ->
+            assertTrue(
+                Regex("#[0-9A-F]{6}").matches(c),
+                "at($i) 必须是 #RRGGBB 形式的大写十六进制，实际 $c",
+            )
+        }
+    }
+
+    @Test
+    fun `category share keeps colours distinct when categories outnumber the base palette`() = runBlocking {
+        // QA 独立验证发现的残余缺陷：出厂种子自带 10 个支出分类（DefaultSeed.categories()），
+        // 而基础色环只有 8 色；分类卡又是逐片出图 ⇒ 第 9 片会与第 1 片撞色，
+        // 用户又看到「两个分类一个颜色」—— 也就是本次要修的那个最初毛病。
+        val n = MetricPalette.COLORS.size + 6
+        // 分类字典故意全给同一个色：一旦实现回退成取 cat?.colorHex，下面必然撞色
+        val categories = (0 until n).map { i -> Category("cat_$i", "分类$i", "receipt", "#D95F5F") }
+        val txns = (0 until n).map { i ->
+            Fixtures.txn("c$i", -(100L * (n - i)), categoryId = "cat_$i", occurredAtMillis = t0)
+        }
+        val card = CategoryShareMetric().compute(
+            range(), FakeLedgerRepository(txns, categories),
+        ) as MetricResult.Breakdown
+
+        assertEquals(n, card.slices.size, "分类卡不截断，应给出全部 $n 片")
+        val colors = card.slices.map { it.colorHex }
+        assertEquals(
+            n, colors.distinct().size,
+            "分类数（$n）超出基础色环（${MetricPalette.COLORS.size}）时仍不得撞色，实际 $colors",
+        )
     }
 
     // ------------------------------------------------------------ 月度趋势
