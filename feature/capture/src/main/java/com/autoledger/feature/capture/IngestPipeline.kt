@@ -78,6 +78,10 @@ class IngestPipeline(
             )
         )
 
+        // 手动录入手选的平台：**非空即权威**（RawEnvelope.platformHint 的契约）。
+        // null 走原来的自动识别路径（platformHint 为 unknown / 空白时已被采集端归一成 null）。
+        val manualPlatform = envelope.platformHint?.takeIf { it.isNotBlank() }
+
         val draft = LedgerTransaction(
             id = id,
             amountMinor = amount ?: 0L,
@@ -90,10 +94,12 @@ class IngestPipeline(
                 typeRefiner = typeRefiner,
             ),
             counterparty = counterparty,
-            platformId = platform.platformId,
-            platformConfidence = platform.confidence,
-            platformSource = PlatformSource.AUTO,
-            note = null,
+            // 手选平台优先；没手选时**逐字保持**自动识别的结果（含 confidence 与 AUTO 标记）。
+            platformId = manualPlatform ?: platform.platformId,
+            platformConfidence = if (manualPlatform != null) 1f else platform.confidence,
+            platformSource = if (manualPlatform != null) PlatformSource.USER else PlatformSource.AUTO,
+            // 采集端给的备注（手动录入的「备注」输入框）。以前恒为 null：用户输入只被拼进 rawText。
+            note = envelope.noteHint,
             sourceId = envelope.sourceId,
             sourceRef = envelope.sourceRef,
             rawTextSealed = runCatching { cryptoBox.sealString(envelope.rawText) }.getOrNull(),
@@ -124,9 +130,11 @@ class IngestPipeline(
 
         // 3) 分类（只对真正的消费逐个算）
         var confidence = 1f
-        var categoryId: String? = null
+        // 手选分类优先且是权威：不再跑分类器（也因此天然不需要进「待确认」）。
+        // hint 为 null 时下面两个分支与改动前逐字等价。
+        var categoryId: String? = envelope.categoryHint?.takeIf { it.isNotBlank() }
         var reason = "已入账"
-        if (typed.type == TxnType.EXPENSE) {
+        if (categoryId == null && typed.type == TxnType.EXPENSE) {
             val result = classifier.classify(
                 ClassificationContext(
                     counterparty = counterparty,
@@ -141,7 +149,7 @@ class IngestPipeline(
             categoryId = result.categoryId
             confidence = result.confidence
             reason = result.reason
-        } else {
+        } else if (typed.type != TxnType.EXPENSE) {
             reason = "识别为${transfer.kind.name}，不计入消费"
         }
 

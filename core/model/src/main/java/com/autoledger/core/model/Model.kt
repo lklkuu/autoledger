@@ -173,4 +173,19 @@ data class RawEnvelope(
      * 方向不得推翻金额。**不得**用它推导 `explicitType`（`Direction.IN` 既可能是收入也可能是退款）。
      */
     val directionHint: Direction? = null,
+    /**
+     * 采集端**已知**的消费平台 ID（手动录入让用户手选时给出）。
+     *
+     * 非空 ⇒ 权威：见 [LedgerTransaction.platformSource] —— 落 [PlatformSource.USER]
+     * 后，去重继承 / 重新解析等任何自动流程都不得改写 platformId。
+     *
+     * ⚠️ 因此**不得**用 [PlatformCatalog.UNKNOWN_ID] 填它：unknown 的语义是「没识别出来」，
+     * 一旦标成 USER 就等于把「不确定」钉成永久事实，以后再也补不上。
+     * 构造方负责把 unknown / 空白归一成 null（见 ManualCaptureSource.envelope）。
+     */
+    val platformHint: String? = null,
+    /** 采集端已知的分类 ID（手动录入让用户手选时给出）。非空时不跑分类器。 */
+    val categoryHint: String? = null,
+    /** 采集端已知的备注（手动录入）。此前备注只被拼进 rawText，落库后 LedgerTransaction.note 恒为 null。 */
+    val noteHint: String? = null,
 )

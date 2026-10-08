@@ -133,9 +133,12 @@ class DigitalRmbNotificationReproTest {
      */
     @Test
     fun `the mirror envelope function stays in step with RawEnvelope`() {
+        // platformHint / categoryHint / noteHint 是「手动录入」专用：自动采集链路（通知/短信/账单）
+        // 恒为空 ⇒ 镜像函数不必显式传这三个参数，默认值 null 即生产行为。
         val expected = setOf(
             "envelopeId", "sourceId", "sourceRef", "occurredAtMillis", "rawText",
             "counterpartyHint", "amountHint", "packageName", "explicitType", "directionHint",
+            "platformHint", "categoryHint", "noteHint",
         )
         val fieldNames = RawEnvelope::class.java.declaredFields.map { it.name }.toSet()
         assertEquals(
