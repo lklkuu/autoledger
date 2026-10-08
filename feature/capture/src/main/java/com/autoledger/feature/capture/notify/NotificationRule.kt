@@ -131,6 +131,18 @@ object DefaultNotificationRules {
         "先到先得", "首绑", "有礼", "奖励金",
     )
 
+    /**
+     * 支付宝侧**带上下文**的拒绝：账单 / 还款提醒里的「X元的支出」**不是一笔交易**。
+     * 例：「本月1,280.00元的支出，请于10日还款」是账单汇总/还款提醒，不该记成一笔支出 ——
+     * 而触发词「元的支出」（2026-10 为「你有一笔X元的支出」句式新增）会把这类文案一并吸进来。
+     *
+     * ⚠️ 必须是**合取**（账单·还款语境 **AND** 数字+「元的支出」）：
+     *    绝不能把裸词「还款」「账单」塞进 [NotificationRule.bodyRejectAny] ——
+     *    那会拒掉真实的「信用卡还款成功，￥500.00」这类通知（本项目「支付给」裸词翻车的教训）。
+     */
+    private val ALIPAY_BILL_CONTEXT_REJECT =
+        """(?s)(?=.*(?:账单|还款|应还|待还))(?=.*\d[\d.,]*\s?元的支出)"""
+
     val PACK: List<NotificationRule> = listOf(
         // ---------------- 退款（必须排在付款规则之前：付款规则会主动排除退款文案） ----------------
         NotificationRule(
@@ -214,6 +226,8 @@ object DefaultNotificationRules {
             // 裸「支出」会误命中该账单文案，而「元的支出」不会（账单文案里「元」后面跟的是「，」）。
             bodyMustContainAny = listOf("成功付款", "付款成功", "已付款", "支付成功", "即时到账交易", "元的支出"),
             bodyRejectAny = listOf("收款成功", "退款成功"),
+            // 账单 / 还款语境下的「X元的支出」不是一笔交易（合取式拒绝，见 [ALIPAY_BILL_CONTEXT_REJECT]）。
+            bodyRejectPatterns = listOf(ALIPAY_BILL_CONTEXT_REJECT),
             amountPatterns = listOf(
                 // 把金额**锚定在「的支出」前面那个数**，避免营销尾缀里的数字（如「领2元…红包」）被抢走。
                 // 取不到时自然回落到下面三条。
