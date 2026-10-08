@@ -79,8 +79,16 @@ class IngestPipeline(
         )
 
         // 手动录入手选的平台：**非空即权威**（RawEnvelope.platformHint 的契约）。
-        // null 走原来的自动识别路径（platformHint 为 unknown / 空白时已被采集端归一成 null）。
-        val manualPlatform = envelope.platformHint?.takeIf { it.isNotBlank() }
+        //
+        // 这里**自己再归一一次** unknown，不依赖采集端已经归一过：
+        // ManualCaptureSource 是今天唯一的产出方、它确实会把 unknown 归成 null，
+        // 但「不得用 UNKNOWN_ID 冒充手选」这条契约写在 RawEnvelope 上（Model.kt），
+        // 防线就必须落在**契约持有者所在的那条路径**上 ——
+        // 否则将来账单导入 / 新采集渠道 / 另一条 UI 路径直接构造信封塞进 unknown，
+        // 就会得到 {platformId=unknown, source=USER, confidence=1f}：
+        // 既盖掉自动识别结果，又因为这行被标成权威而**永远**无法被重解析 / 去重继承修正。
+        val manualPlatform = envelope.platformHint
+            ?.takeIf { it.isNotBlank() && it != PlatformCatalog.UNKNOWN_ID }
 
         val draft = LedgerTransaction(
             id = id,

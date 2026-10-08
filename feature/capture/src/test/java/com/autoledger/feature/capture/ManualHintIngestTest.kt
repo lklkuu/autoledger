@@ -110,6 +110,18 @@ class ManualHintIngestTest {
         autoMergeDuplicates = true,
     )
 
+    /**
+     * 把信封**直接**喂给管线（绕过采集端），用于验证管线**自己**持有的防线。
+     *
+     * 「unknown 不算手选」这条契约写在 [RawEnvelope.platformHint] 上，因此防线必须钉在管线上：
+     * 采集端归一得再干净，也挡不住将来有别的产出方直接构造信封塞 unknown 进来。
+     */
+    private fun ingestRawEnvelope(envelope: RawEnvelope): LedgerTransaction = runBlocking {
+        val repo = InMemoryRepo()
+        val outcome = newPipeline(repo, WeakClassifier()).ingest(envelope)
+        assertNotNull(repo.findById(outcome.txnId), "流水必须真的落库")
+    }
+
     /** 跑完「采集端信封 → 管线 → 落库」，返回回读出来的那条流水。 */
     private fun ingestAndReadBack(
         counterparty: String = "楼下便利店",
@@ -225,6 +237,35 @@ class ManualHintIngestTest {
 
         assertEquals("alipay", stored.platformId, "unknown = 没选 ⇒ 自动识别结果照旧生效")
         assertEquals(PlatformSource.AUTO, stored.platformSource, "★ unknown 绝不能被标成 USER")
+        assertEquals(0.42f, stored.platformConfidence, "unknown ⇒ 置信度照旧")
+    }
+
+    /**
+     * 同一条契约的**契约层**版本：穿透采集端、直接构造 [RawEnvelope] 塞进 unknown。
+     *
+     * 与上一条的差异在于防线落点：上一条证明「采集端归一正确」，这一条证明
+     * **管线自己也扛得住**（`IngestPipeline` 是唯一把 hint 换成 `PlatformSource.USER` 的地方，
+     * 契约既然写在 [RawEnvelope] 上，防线就必须在这里，而不是只指望上游）。
+     * 今天全仓只有 ManualCaptureSource 一个产出方，这条防的是将来新增的渠道 / UI 路径。
+     */
+    @Test
+    fun `a raw envelope carrying unknown as the platform hint is treated as no hint at all`() {
+        val stored = ingestRawEnvelope(
+            RawEnvelope(
+                envelopeId = "direct",
+                sourceId = "manual",
+                sourceRef = "manual:direct",
+                occurredAtMillis = now,
+                rawText = "楼下便利店",
+                counterpartyHint = "楼下便利店",
+                amountHint = -1234L,
+                // 直接喂进去：unknown 绝不能被当成用户手选。
+                platformHint = PlatformCatalog.UNKNOWN_ID,
+            ),
+        )
+
+        assertEquals("alipay", stored.platformId, "unknown ⇒ 自动识别结果照旧生效")
+        assertEquals(PlatformSource.AUTO, stored.platformSource, "★ 管线层防线：unknown 不得被标成 USER")
         assertEquals(0.42f, stored.platformConfidence, "unknown ⇒ 置信度照旧")
     }
 
