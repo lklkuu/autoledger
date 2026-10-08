@@ -144,6 +144,35 @@ class NotificationParserTest {
         assertNull(parser.parse(DefaultNotificationRules.PKG_WECHAT, "微信", "你有一条新消息"))
     }
 
+    // ------------------------------------------------------------ 支付宝新版交易提醒（真机样本回归）
+
+    @Test
+    fun `alipay expense wording with a marketing tail is parsed`() {
+        // 真机样本 2026-10-08 18:10：标题「交易提醒」/ 正文「你有一笔9.90元的支出，领2元小荷包支付红包。」
+        // 修复前：alipay_pay 的 bodyMustContainAny 只认「成功付款/付款成功/已付款/支付成功/即时到账交易」，
+        // 正文一个都不含 ⇒ 未命中规则、整条被丢弃。
+        val r = parser.parse(
+            DefaultNotificationRules.PKG_ALIPAY,
+            "交易提醒",
+            "你有一笔9.90元的支出，领2元小荷包支付红包。",
+        )
+        assertNotNull(r, "「你有一笔X元的支出」必须命中支付宝付款规则")
+        assertEquals("alipay_pay", r.ruleId)
+        assertEquals(-990L, r.amountMinor, "金额必须取支出额 9.90，而不是营销尾缀里的 2 元红包")
+        assertEquals(Direction.OUT, r.direction)
+        assertNull(r.explicitType)
+    }
+
+    @Test
+    fun `alipay monthly bill summary is not recorded as a transaction`() {
+        val r = parser.parse(
+            DefaultNotificationRules.PKG_ALIPAY,
+            "支付宝",
+            "你的花呗本月账单：本月支出1,280.00元，请于10日还款",
+        )
+        assertNull(r, "账单汇总文案不得记成一笔支出")
+    }
+
     // ------------------------------------------------------------ 短信：金额不得取自发件号码 / 尾号
 
     @Test
