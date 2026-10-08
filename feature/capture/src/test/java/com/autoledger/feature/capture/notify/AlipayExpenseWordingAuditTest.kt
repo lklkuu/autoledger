@@ -198,6 +198,18 @@ class AlipayExpenseWordingAuditTest {
     }
 
     @Test
+    fun `real transaction with a currency symbol is not rejected`() {
+        // 「一笔」与金额之间的币符必须容得下 —— 否则白名单会把真交易误判成账单文案整条拒绝。
+        // 口径与本规则首条金额正则 `一笔\s?([¥￥]?\s?\d+…` 保持一致。
+        listOf("￥", "¥").forEach { symbol ->
+            val r = parser.parse(alipay, "交易提醒", "你有一笔${symbol}9.90元的支出")
+            assertNotNull(r, "金额带币符的真机句式不得被白名单拒绝：$symbol")
+            assertEquals("alipay_pay", r.ruleId)
+            assertEquals(-990L, r.amountMinor, "金额必须取支出额 9.90（$symbol）")
+        }
+    }
+
+    @Test
     fun `accumulated bill figure is not recorded`() {
         assertNull(
             parser.parse(alipay, "支付宝", "账单：你本月累计9.90元的支出"),
