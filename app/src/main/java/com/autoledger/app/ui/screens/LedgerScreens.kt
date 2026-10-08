@@ -38,11 +38,13 @@ import com.autoledger.app.ui.components.AppCard
 import com.autoledger.app.ui.components.BreakdownTile
 import com.autoledger.app.ui.components.BudgetCard
 import com.autoledger.app.ui.components.CategoryChip
+import com.autoledger.app.ui.components.CategoryPicker
 import com.autoledger.app.ui.components.EmptyHint
 import com.autoledger.app.ui.components.ErrorPanel
 import com.autoledger.app.ui.components.HeroTile
 import com.autoledger.app.ui.components.LoadingBox
 import com.autoledger.app.ui.components.MetricCard
+import com.autoledger.app.ui.components.PlatformPicker
 import com.autoledger.app.ui.components.SectionTitle
 import com.autoledger.app.ui.components.TransactionRow
 import com.autoledger.app.ui.components.TxnEditDialog
@@ -55,6 +57,7 @@ import com.autoledger.app.ui.theme.LedgerIcons
 import com.autoledger.app.ui.theme.LedgerPalette
 import com.autoledger.app.ui.theme.LedgerTone
 import com.autoledger.app.ui.theme.toneColor
+import com.autoledger.core.model.CategoryKind
 import com.autoledger.core.model.ExpenseMath
 import com.autoledger.core.model.LedgerTransaction
 import com.autoledger.core.model.TxnType
@@ -84,6 +87,20 @@ fun ExpensesScreen(container: AppContainer) {
     DisposableEffect(store) { onDispose { store.close() } }
     val state by store.state.collectAsState()
 
+    // 录入表单里手选的「消费平台 / 分类」。此前链路里压根没有这两个字段：
+    // 表单没有对应控件，RawEnvelope 也没有承载它们的字段 ⇒ 手动记账只能落自动识别结果。
+    // 平台默认值取 UNKNOWN_ID（=「未知 / 请你自动识别」），不是 null：PlatformPicker 要一个选中项；
+    // 保存时若仍是 unknown，ManualCaptureSource 会把它归一成 null，自动识别路径完全不变。
+    var manualPlatformId by remember { mutableStateOf(PlatformCatalog.UNKNOWN_ID) }
+    var manualCategoryId by remember { mutableStateOf<String?>(null) }
+    // 录入区候选分类必须过滤：CategoryDao.observeAll() 不过滤 archived、也不过滤 kind，
+    // 直接拿会把「已归档分类」和「收入分类」混进支出录入区（选了就落进流水线）。
+    val manualCategories = remember(state.categories) {
+        state.categories.values
+            .filter { !it.archived && it.kind == CategoryKind.EXPENSE }
+            .sortedBy { it.sortOrder }
+    }
+
     var amountText by remember { mutableStateOf("") }
     var merchant by remember { mutableStateOf("") }
     var note by remember { mutableStateOf("") }
@@ -106,7 +123,7 @@ fun ExpensesScreen(container: AppContainer) {
     ) {
         item {
             AppCard {
-                SectionTitle("现在记一笔", "金额、商户、随手一句")
+                SectionTitle("现在记一笔", "金额、商户、平台、分类、随手一句")
                 OutlinedTextField(
                     value = amountText,
                     onValueChange = { amountText = it },
@@ -138,6 +155,27 @@ fun ExpensesScreen(container: AppContainer) {
                     label = { Text(if (isRefund) "退款（冲抵支出）" else "支出") },
                     modifier = Modifier.padding(top = 10.dp),
                 )
+                // 消费平台 / 分类：选中即权威（platformSource = USER，且不再跑分类器），
+                // 保存后与列表 / 详情读的是同一个字段（platformId / categoryId），不存在两套值。
+                Text(
+                    "消费平台",
+                    Modifier.padding(top = 10.dp),
+                    style = MaterialTheme.typography.labelMedium,
+                )
+                PlatformPicker(
+                    selected = manualPlatformId,
+                    onSelect = { manualPlatformId = it },
+                )
+                Text(
+                    "分类",
+                    Modifier.padding(top = 10.dp),
+                    style = MaterialTheme.typography.labelMedium,
+                )
+                CategoryPicker(
+                    selectedId = manualCategoryId,
+                    categories = manualCategories,
+                    onSelect = { manualCategoryId = it },
+                )
                 Button(
                     onClick = {
                         // v1.1.9 根因修复：
@@ -168,6 +206,8 @@ fun ExpensesScreen(container: AppContainer) {
                                     counterparty = merchant,
                                     note = note,
                                     explicitType = if (isRefund) com.autoledger.core.model.TxnType.REFUND else null,
+                                    platformId = manualPlatformId,
+                                    categoryId = manualCategoryId,
                                 ) ?: error("手动录入来源不可用")
                                 container.ingestPipeline.ingest(envelope)
                             }
@@ -177,7 +217,11 @@ fun ExpensesScreen(container: AppContainer) {
                                 result.onSuccess {
                                     saveHintOk = true
                                     saveHint = "已记下"
+                                    // 平台 / 分类必须一并复位：不重置的话，下一笔会带着
+                                    // 上一笔的选择静默入账（用户以为没选，实际被记成别的值）。
                                     amountText = ""; merchant = ""; note = ""
+                                    manualPlatformId = PlatformCatalog.UNKNOWN_ID
+                                    manualCategoryId = null
                                 }.onFailure {
                                     saveHintOk = false
                                     saveHint = "保存失败：${it.message ?: "未知错误"}"
@@ -222,9 +266,11 @@ fun ExpensesScreen(container: AppContainer) {
                     label = { Text("显示内部划转与退款") },
                     modifier = Modifier.padding(top = 8.dp),
                 )
-                // 消费平台筛选：点即筛选（再点取消）；「未知」用于集中补全历史/识别失败的流水
+                // 消费平台筛选：点即筛选（再点取消）；「未知」用于集中补全历史/识别失败的流水。
+                // 标题必须写清是「筛选」：上方录入区也有一个「消费平台」选择器，
+                // 同名会让用户以为这排 chip 是给正在录入的那笔选平台的（它只翻转列表筛选）。
                 Text(
-                    "消费平台",
+                    "按消费平台筛选",
                     Modifier.padding(top = 10.dp),
                     style = MaterialTheme.typography.labelMedium,
                 )

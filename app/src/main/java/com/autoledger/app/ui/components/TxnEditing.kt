@@ -32,6 +32,7 @@ import com.autoledger.app.ui.stores.canSwitchType
 import com.autoledger.app.ui.stores.typeSwitchBlockReason
 import com.autoledger.app.ui.theme.LedgerIcons
 import com.autoledger.app.ui.theme.LedgerPalette
+import com.autoledger.core.model.Category
 import com.autoledger.core.model.LedgerTransaction
 import com.autoledger.core.model.TxnType
 import com.autoledger.core.model.platform.PlatformCatalog
@@ -385,6 +386,47 @@ fun PlatformPicker(selected: String, onSelect: (String) -> Unit) {
                 selected = entry.id == selected,
                 onClick = { onSelect(entry.id) },
                 label = { Text(entry.displayName) },
+            )
+        }
+    }
+}
+
+/**
+ * 分类选择器：点已选中的项即取消选择（回到「未分类」）。
+ *
+ * 与 [PlatformPicker] 的两点差异是有意的：
+ * - 平台有「未知」兜底值、恒有一个选中项；分类允许**不选**（`selectedId = null` = 未分类），
+ *   因此给它一个显式的取消语义（再点一次同一个分类）。
+ * - 候选列表由调用方给定：本组件**不臆造**也不过滤，`categories` 里有什么就显示什么
+ *   —— 记账页传「未归档 + EXPENSE」的过滤结果，避免把收入分类和已归档分类混进支出录入区。
+ */
+@OptIn(ExperimentalLayoutApi::class)
+@Composable
+fun CategoryPicker(
+    selectedId: String?,
+    categories: List<Category>,
+    onSelect: (String?) -> Unit,
+) {
+    FlowRow(
+        horizontalArrangement = Arrangement.spacedBy(8.dp),
+        verticalArrangement = Arrangement.spacedBy(4.dp),
+        modifier = Modifier.fillMaxWidth().padding(top = 6.dp),
+    ) {
+        // 空列表给一句说明而不是留一片空白：否则用户会以为这块控件坏了。
+        // （调用方负责把「当前已选中的分类」也放进列表 —— 本组件不臆造 entry，
+        // 那会显示出一个只剩 id 的怪 chip。）
+        if (categories.isEmpty()) {
+            Text(
+                "还没有可用分类，去「分类」页添加一个。",
+                style = MaterialTheme.typography.bodySmall,
+                color = MaterialTheme.colorScheme.onSurfaceVariant,
+            )
+        }
+        categories.forEach { cat ->
+            FilterChip(
+                selected = cat.id == selectedId,
+                onClick = { onSelect(if (cat.id == selectedId) null else cat.id) },
+                label = { Text(cat.name) },
             )
         }
     }
