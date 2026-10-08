@@ -467,6 +467,11 @@ fun TransactionRow(
                     if (txn.type == com.autoledger.core.model.TxnType.REFUND) add("退款")
                     if (txn.type == com.autoledger.core.model.TxnType.TRANSFER) add("已识别为内部划转")
                     if (txn.status == com.autoledger.core.model.TxnStatus.RAW) add("待确认")
+                    // 备注放在**最后**一项：副标题只有一行（`maxLines = 1`），
+                    // 备注可能很长，放前面会把平台/分类/待确认这些信息挤掉。
+                    // 自动采集的流水 note 恒为 null ⇒ 渲染与加这一项之前**完全一致**，
+                    // 只有手动录入时填了备注的行会多出一项（此前备注只能进编辑框才看得到）。
+                    txn.note?.takeIf { it.isNotBlank() }?.let { add(it) }
                 }.joinToString(" · "),
                 style = MaterialTheme.typography.bodySmall,
                 color = MaterialTheme.colorScheme.onSurfaceVariant,
