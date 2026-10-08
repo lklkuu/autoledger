@@ -87,16 +87,11 @@ class AlipayExpenseWordingAuditTest {
     @Test
     fun `deleting the literal trigger phrase leaves the text unrecordable`() {
         // 「删掉『元的支出』触发词后仍为 null」：同一条会被记账的文本，抹掉四字短语即失效。
-        //
-        // ⚠️ 夹具原先是「你有一笔1,280.00元的支出，请于10日还款」，随 alipay_pay 新增
-        // 「账单/还款语境 + X元的支出」的合取式拒绝后，它会被判为还款提醒 ⇒ 不再可记账，
-        // 与本用例「作为对照前提必须可记」相冲突。去掉末尾还款从句后意图**完全不变**
-        // （仍在验证「四字短语而非裸『支出』起关键作用」），断言值也未改动。
-        val recorded = parser.parse(alipay, "交易提醒", "你有一笔1,280.00元的支出")
+        val recorded = parser.parse(alipay, "交易提醒", "你有一笔1,280.00元的支出，请于10日还款")
         assertNotNull(recorded, "含触发词时应能记账（作为对照前提）")
         assertEquals(-128_000L, recorded.amountMinor)
 
-        val stripped = "你有一笔1,280.00元的支出".replace("元的支出", "")
+        val stripped = "你有一笔1,280.00元的支出，请于10日还款".replace("元的支出", "")
         assertTrue(!stripped.contains("元的支出"))
         assertNull(
             parser.parse(alipay, "交易提醒", stripped),
@@ -119,7 +114,7 @@ class AlipayExpenseWordingAuditTest {
         }
     }
 
-    // ------------------------------ 账单 / 还款语境：合取式上下文拒绝（不得记成一笔支出）
+    // -------------------- 「X元的支出」的白名单收窄：只有「你有一笔X元的支出」才认
 
     @Test
     fun `bill summary with the literal phrase is not recorded`() {
@@ -138,18 +133,18 @@ class AlipayExpenseWordingAuditTest {
     }
 
     @Test
-    fun `real device sample is not rejected by the bill context guard`() {
+    fun `real device sample is not rejected by the template guard`() {
         val r = parser.parse(alipay, "交易提醒", "你有一笔9.90元的支出，领2元小荷包支付红包。")
-        assertNotNull(r, "真机样本不含账单/还款语境，不得被上下文拒绝误拒")
+        assertNotNull(r, "真机样本就是『你有一笔X元的支出』句式，不得被白名单拒绝误拒")
         assertEquals("alipay_pay", r.ruleId)
         assertEquals(-990L, r.amountMinor)
         assertEquals(Direction.OUT, r.direction)
     }
 
     @Test
-    fun `legacy pay wording is not rejected by the bill context guard`() {
+    fun `legacy pay wording is not rejected by the template guard`() {
         val r = parser.parse(alipay, "支付宝", "成功付款 ￥9.90")
-        assertNotNull(r, "旧文案既无语境词也无『X元的支出』，不得被上下文拒绝误拒")
+        assertNotNull(r, "旧文案不含『X元的支出』⇒ 拒绝条件根本不触发")
         assertEquals("alipay_pay", r.ruleId)
         assertEquals(-990L, r.amountMinor)
     }
@@ -158,11 +153,11 @@ class AlipayExpenseWordingAuditTest {
     fun `bare repayment word never rejects a real payment`() {
         // team-lead 指定的第 5 条探针：`信用卡还款成功，￥500.00`
         // 改动前 null / 改动后仍 null —— 两次都因为它压根不含任何触发词，
-        // **不是**被合取拒绝（合取还要求同时出现「X元的支出」）。
+        // **不是**被拒绝式命中（拒绝式还要求出现「数字+元的支出」）。
         assertNull(parser.parse(alipay, "支付宝", "信用卡还款成功，￥500.00"))
 
         // 对照组：摘掉 bodyRejectPatterns（即本轮改动前的状态），结果必须完全一致
-        // ⇒ 证明该探针的 null 与合取拒绝无关，改动对它零影响。
+        // ⇒ 证明该探针的 null 与白名单拒绝无关，改动对它零影响。
         val withoutGuard = NotificationParser(
             DefaultNotificationRules.PACK.map {
                 if (it.id == "alipay_pay") it.copy(bodyRejectPatterns = emptyList()) else it
@@ -170,29 +165,44 @@ class AlipayExpenseWordingAuditTest {
         )
         assertNull(
             withoutGuard.parse(alipay, "支付宝", "信用卡还款成功，￥500.00"),
-            "改动前同样为 null —— 第 5 条探针的结果与合取拒绝无关",
+            "改动前同样为 null —— 第 5 条探针的结果与白名单拒绝无关",
         )
 
-        // 更强的鉴别探针：让它真的命中 alipay_pay，再单独带上语境词。
-        // 合取不成立 ⇒ 必须照常记账。若把裸词「还款」塞进 bodyRejectAny，这条就会被整条拒掉
+        // 鉴别探针：让它真的命中 alipay_pay，再单独带上语境词。
+        // 本文本没有「元的支出」⇒ 拒绝条件不触发 ⇒ 必须照常记账。
+        // 若把裸词「还款」塞进 bodyRejectAny，这条就会被整条拒掉
         // （本项目「支付给」裸词翻车的同类教训）。
         val r = parser.parse(alipay, "支付宝", "成功付款 ￥500.00，请于10日前还款")
-        assertNotNull(r, "含『还款』但不含『X元的支出』⇒ 合取不成立，真实还款付款不得被拒")
+        assertNotNull(r, "含『还款』但不含『X元的支出』⇒ 拒绝不触发，真实还款付款不得被拒")
         assertEquals("alipay_pay", r.ruleId)
         assertEquals(-50_000L, r.amountMinor)
     }
 
     @Test
-    fun `each half of the conjunction alone does not reject`() {
-        // 拆开合取的两个条件逐条验证：只有**两者同时成立**才拒绝。
-        val keywordOnly = "成功付款 ￥500.00，你的本月账单已出" // 只有语境词，没有「X元的支出」
-        val phraseOnly = "成功付款，你有一笔500.00元的支出" // 只有「X元的支出」，没有语境词
-        listOf(keywordOnly, phraseOnly).forEach { body ->
-            val r = parser.parse(alipay, "支付宝", body)
-            assertNotNull(r, "只满足合取的一半不得拒绝：$body")
-            assertEquals("alipay_pay", r.ruleId)
-            assertEquals(-50_000L, r.amountMinor)
-        }
+    fun `real transaction with a repayment clause is still recorded`() {
+        // 与「黑名单」方案的**决定性差异**：这是真实的消费通知（花呗消费 + 还款提示），
+        // 白名单只看句式「你有一笔X元的支出」，不会因为带「还款」就整条丢掉。
+        val r = parser.parse(alipay, "交易提醒", "你有一笔1,280.00元的支出，请于10日还款")
+        assertNotNull(r, "带还款从句的真实交易必须照样记账 —— 黑名单方案会在这里误杀")
+        assertEquals("alipay_pay", r.ruleId)
+        assertEquals(-128_000L, r.amountMinor)
+    }
+
+    @Test
+    fun `spaced real transaction wording is not rejected`() {
+        // 证明白名单句式里的 `\s?` 生效：带空格的真句式不会被判成「非一笔句式」而拒绝。
+        val r = parser.parse(alipay, "交易提醒", "你有一笔 9.90 元的支出")
+        assertNotNull(r)
+        assertEquals("alipay_pay", r.ruleId)
+        assertEquals(-990L, r.amountMinor)
+    }
+
+    @Test
+    fun `accumulated bill figure is not recorded`() {
+        assertNull(
+            parser.parse(alipay, "支付宝", "账单：你本月累计9.90元的支出"),
+            "账单口径的累计「X元的支出」不是一笔交易",
+        )
     }
 
     // ------------------------------------------------------------ 跨规则副作用
