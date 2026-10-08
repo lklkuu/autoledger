@@ -210,6 +210,33 @@ class AlipayExpenseWordingAuditTest {
     }
 
     @Test
+    fun `real payment with a monthly aggregate clause is still recorded`() {
+        // QA-A1 回归：正文靠老触发词「成功付款」命中，只是**附带**了一句「…元的支出」汇总。
+        // 白名单收窄是给新触发词用的，不得顺手取消既有付款动词的资格（作用域放大）。
+        val r = parser.parse(alipay, "交易提醒", "成功付款9.90元。本月累计1,280.00元的支出。")
+        assertNotNull(r, "既有付款动词命中的真交易不得被白名单整条拒绝（QA-A1）")
+        assertEquals("alipay_pay", r.ruleId)
+        assertEquals(-990L, r.amountMinor, "金额必须取真实付款额 9.90，而不是累计句的 1,280.00")
+    }
+
+    @Test
+    fun `bill texts contain none of the legacy pay verbs so the narrowing still applies`() {
+        // 修法成立的前提：上述收窄之所以仍能挡住账单文案，是因为这些文案**不含**任何既有付款动词。
+        // 一旦将来有人在账单文案里加入这些动词，本用例会失败并迫使重新审视修法 —— 故意钉死前提，而不是假设。
+        val legacyVerbs = listOf("成功付款", "付款成功", "已付款", "支付成功", "即时到账交易")
+        val billTexts = listOf(
+            "本月1,280.00元的支出，请于10日还款",
+            "你的花呗账单：1,280.00元的支出，请于10日还款",
+            "账单：你本月累计9.90元的支出",
+        )
+        billTexts.forEach { body ->
+            val hits = legacyVerbs.filter { body.contains(it) }
+            assertTrue(hits.isEmpty(), "前提：账单文案不得含既有付款动词，实际命中 $hits：$body")
+            assertNull(parser.parse(alipay, "支付宝", body), "账单文案仍必须被拒：$body")
+        }
+    }
+
+    @Test
     fun `accumulated bill figure is not recorded`() {
         assertNull(
             parser.parse(alipay, "支付宝", "账单：你本月累计9.90元的支出"),
