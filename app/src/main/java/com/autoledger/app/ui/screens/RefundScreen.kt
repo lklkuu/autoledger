@@ -35,7 +35,7 @@ import com.autoledger.app.ui.components.EmptyHint
 import com.autoledger.app.ui.components.SectionTitle
 import com.autoledger.app.ui.components.yuan
 import com.autoledger.app.ui.stores.RefundStore
-import com.autoledger.app.ui.theme.LedgerPalette
+import com.autoledger.app.ui.theme.ledgerTokens
 import com.autoledger.core.model.refund.DeductionKind
 import com.autoledger.core.model.refund.OrderRefundState
 import com.autoledger.core.model.refund.RefundOutcome
@@ -63,7 +63,7 @@ fun RefundScreen(container: AppContainer) {
                 SectionTitle("订单与退款", "按原抵扣构成原路回退，金额可对账")
                 Button(onClick = { showAdd = true }, Modifier.padding(top = 10.dp)) { Text("登记一笔订单") }
                 state.message?.let {
-                    Text(it, Modifier.padding(top = 8.dp), style = MaterialTheme.typography.bodyMedium, color = LedgerPalette.Positive)
+                    Text(it, Modifier.padding(top = 8.dp), style = MaterialTheme.typography.bodyMedium, color = ledgerTokens().positive)
                 }
                 state.hint?.takeIf { it.isNotBlank() }?.let {
                     Text(it, style = MaterialTheme.typography.bodySmall, color = MaterialTheme.colorScheme.onSurfaceVariant)
@@ -116,7 +116,7 @@ private fun OrderRow(order: OrderRefundState) {
         Text(
             "剩余可退 ¥${remaining.yuan()}",
             style = MaterialTheme.typography.labelMedium,
-            color = if (remaining == 0L) MaterialTheme.colorScheme.onSurfaceVariant else LedgerPalette.Positive,
+            color = if (remaining == 0L) MaterialTheme.colorScheme.onSurfaceVariant else ledgerTokens().positive,
         )
     }
 }
@@ -166,7 +166,7 @@ private fun OrderDetail(order: OrderRefundState, store: RefundStore, allocations
                 Text(
                     line,
                     style = MaterialTheme.typography.bodySmall,
-                    color = if (a.outcome == RefundOutcome.RETURNED) LedgerPalette.Positive else MaterialTheme.colorScheme.onSurfaceVariant,
+                    color = if (a.outcome == RefundOutcome.RETURNED) ledgerTokens().positive else MaterialTheme.colorScheme.onSurfaceVariant,
                 )
             }
         }
@@ -187,7 +187,7 @@ private fun OrderDetail(order: OrderRefundState, store: RefundStore, allocations
                     amountText = ""
                 },
                 Modifier.padding(start = 8.dp),
-                colors = ButtonDefaults.buttonColors(containerColor = LedgerPalette.Positive),
+                colors = ButtonDefaults.buttonColors(containerColor = ledgerTokens().positive),
             ) { Text("发起退款") }
         }
     }

@@ -39,7 +39,7 @@ import com.autoledger.app.ui.components.TransactionRow
 import com.autoledger.app.ui.components.yuan
 import com.autoledger.app.ui.stores.FreedomStore
 import com.autoledger.app.ui.stores.InsightsStore
-import com.autoledger.app.ui.theme.LedgerPalette
+import com.autoledger.app.ui.theme.ledgerTokens
 import com.autoledger.app.ui.theme.LedgerTone
 import com.autoledger.app.ui.theme.toneColor
 import com.autoledger.core.model.FreedomMath
@@ -136,7 +136,7 @@ fun FreedomScreen(container: AppContainer) {
                     "当前月结余为负，先调结构：把「内部划转」排干净，再看看固定支出。",
                     Modifier.padding(top = 10.dp),
                     style = MaterialTheme.typography.bodyMedium,
-                    color = LedgerPalette.Warning,
+                    color = ledgerTokens().warning,
                 )
             }
         }
@@ -149,7 +149,7 @@ fun FreedomScreen(container: AppContainer) {
                 Button(
                     onClick = { store.saveGoal(targetMinor, currentMinor) },
                     Modifier.padding(top = 10.dp),
-                    colors = ButtonDefaults.buttonColors(containerColor = LedgerPalette.Positive),
+                    colors = ButtonDefaults.buttonColors(containerColor = ledgerTokens().positive),
                 ) { Text("保存目标") }
             }
         }

@@ -19,6 +19,12 @@ AutoLedger 静态一致性校验器。
      某个版本目录依赖，但 src/main 里**零 import** 命中该依赖对应的包前缀 ——
      疑似「声明了却没用」，应改为 testImplementation 或删除。
      （编译器与全量单测都抓不到这一类；有显式白名单，见 ZERO_IMPORT_ALLOWLIST。）
+ 10. 主题真源唯一：`isSystemInDarkTheme` 在 app/src/main 下的出现次数必须 ≤ 1 ——
+     它是「第二个主题真源」，一旦与 LedgerTheme 的明暗决定不一致，底色与语义文字色就会
+     不同套（实测最坏 1.25:1，界面不可读）。唯一决策点应收敛到 LedgerTheme。
+ 11. UI 层禁止裸用浅色调色板常量：ui/screens 与 ui/components 下的 .kt 不得出现
+     `LedgerPalette.`（那些是**浅色值**，裸用在夜间深底上对比度只有 1.6~4.5:1），
+     必须改走按主题分发的 `ledgerTokens().xxx`。（ui/theme 不在范围内，见函数注释。）
 
 用法： python3 tools/static_check.py
 退出码 0 = 通过，1 = 发现阻塞级问题。
@@ -385,6 +391,74 @@ def check_zero_import_deps(declared: list[str], errors: list[str], notices: list
                 )
 
 
+def _code_lines(path: Path) -> list[str]:
+    """返回「去掉注释后」的逐行内容。
+
+    复用 [strip_comments]：块注释整体被替换成等量换行、行注释被删除，
+    因此返回列表的**下标与原文行号一一对应**（line_no = index + 1），
+    纯注释行会变成空串，任何子串匹配都会自然跳过它。
+    """
+    return strip_comments(path.read_text(encoding="utf-8")).splitlines()
+
+
+def check_theme_single_source(errors: list[str]) -> None:
+    """规则 A：app/src/main 下 `isSystemInDarkTheme` 出现次数必须 ≤ 1。
+
+    为什么：Material 配色由 `LedgerTheme(darkTheme=)` 驱动，而语义色 `toneColor` 若另读
+    `isSystemInDarkTheme()`（**系统**深色），主题就有**两个真源**。当「App 夜间 + 手机浅色」
+    （或反之）时，底色走一套、文字色走另一套，实测对比度掉到 1.25:1，界面不可读。
+    故收敛到唯一决策点 `LedgerTheme`；将来若实现「跟随系统」，也只允许在解析主题的那一处出现
+    （上限 1），不得散布到 UI。
+    """
+    root = ROOT / "app/src/main/java"
+    if not root.exists():
+        return
+    hits: list[str] = []
+    for kt in sorted(root.rglob("*.kt")):
+        rel = kt.relative_to(ROOT).as_posix()
+        for lineno, line in enumerate(_code_lines(kt), start=1):
+            if "isSystemInDarkTheme" in line:
+                hits.append(f"{rel}:{lineno}")
+    if len(hits) > 1:
+        errors.append(
+            f"主题真源被分散：isSystemInDarkTheme 在 app/src/main 出现 {len(hits)} 次"
+            f"（应 ≤ 1，唯一决策点是 LedgerTheme 的 LocalLedgerDarkTheme），"
+            f"出现位置：{', '.join(hits)}"
+        )
+
+
+def check_ui_palette_literals(errors: list[str]) -> None:
+    """规则 B：UI 层（screens / components）不得裸用 `LedgerPalette.` 浅色常量。
+
+    为什么：`LedgerPalette.*` 全部是**浅色值**，裸用在夜间深底上对比度只有 1.6~4.5:1
+    （实测支出绿 3.33:1、警告 3.21:1、次要文字 3.97:1）。UI 必须改走按 [LocalLedgerDarkTheme]
+    分发的 `ledgerTokens().xxx`。
+
+    `ui/theme/` 目录**刻意排除**：那里是 token 定义本身（`Color.kt` 内 `LedgerPalette` 的
+    引用即定义，`Theme.kt:61` 的 `colorOf(hex, fallback = LedgerPalette.Muted)` 在非 composable
+    上下文、无法读 CompositionLocal，是**允许的例外**。
+    """
+    guarded_dirs = (
+        "app/src/main/java/com/autoledger/app/ui/screens",
+        "app/src/main/java/com/autoledger/app/ui/components",
+    )
+    for rel_dir in guarded_dirs:
+        dir_path = ROOT / rel_dir
+        if not dir_path.exists():
+            continue
+        for kt in sorted(dir_path.rglob("*.kt")):
+            rel = kt.relative_to(ROOT).as_posix()
+            for lineno, line in enumerate(_code_lines(kt), start=1):
+                if "LedgerPalette." not in line:
+                    continue
+                token_match = re.search(r'LedgerPalette\.(\w+)', line)
+                token = token_match.group(1) if token_match else "XXX"
+                errors.append(
+                    f"UI 层裸用浅色调色板常量：{rel}:{lineno} 用了 LedgerPalette.{token} "
+                    f"—— 请改用 ledgerTokens().xxx（夜间对比度）"
+                )
+
+
 def main() -> int:
     errors: list[str] = []
     notices: list[str] = []
@@ -487,6 +561,12 @@ def main() -> int:
 
     # ---- 9. 零引用依赖（main 作用域声明了但 src/main 零 import）
     check_zero_import_deps(declared, errors, notices)
+
+    # ---- 10. 主题真源唯一（isSystemInDarkTheme 在 app/src/main 的出现次数 ≤ 1）
+    check_theme_single_source(errors)
+
+    # ---- 11. UI 层禁止裸用浅色调色板常量（screens / components 不得出现 LedgerPalette.）
+    check_ui_palette_literals(errors)
 
     for n in notices:
         print("  - " + n)

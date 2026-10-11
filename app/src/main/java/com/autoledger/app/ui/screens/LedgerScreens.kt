@@ -54,7 +54,7 @@ import com.autoledger.app.ui.components.yuan
 import com.autoledger.app.ui.stores.LedgerStore
 import com.autoledger.app.ui.stores.TxnEditRules
 import com.autoledger.app.ui.theme.LedgerIcons
-import com.autoledger.app.ui.theme.LedgerPalette
+import com.autoledger.app.ui.theme.ledgerTokens
 import com.autoledger.app.ui.theme.LedgerTone
 import com.autoledger.app.ui.theme.toneColor
 import com.autoledger.core.model.CategoryKind
@@ -231,7 +231,7 @@ fun ExpensesScreen(container: AppContainer) {
                     },
                     Modifier.padding(top = 8.dp),
                     enabled = !saving,
-                    colors = ButtonDefaults.buttonColors(containerColor = LedgerPalette.Positive),
+                    colors = ButtonDefaults.buttonColors(containerColor = ledgerTokens().positive),
                 ) { Text(if (saving) "保存中…" else if (isRefund) "记下退款" else "保存并换算工时") }
                 saveHint?.let { hint ->
                     Text(

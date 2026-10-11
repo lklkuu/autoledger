@@ -43,7 +43,7 @@ import com.autoledger.app.ui.components.yuan
 import com.autoledger.app.ui.stores.CategoryDraft
 import com.autoledger.app.ui.stores.CategoryStore
 import com.autoledger.app.ui.theme.LedgerIcons
-import com.autoledger.app.ui.theme.LedgerPalette
+import com.autoledger.app.ui.theme.ledgerTokens
 import com.autoledger.app.ui.theme.colorOf
 import com.autoledger.core.model.Category
 import com.autoledger.core.model.CategoryKind
@@ -71,7 +71,7 @@ fun CategoryManageScreen(container: AppContainer) {
                         it,
                         Modifier.padding(top = 8.dp),
                         style = MaterialTheme.typography.bodySmall,
-                        color = LedgerPalette.Positive,
+                        color = ledgerTokens().positive,
                     )
                 }
             }

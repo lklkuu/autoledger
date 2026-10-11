@@ -36,7 +36,7 @@ import com.autoledger.app.ui.components.MetricCard
 import com.autoledger.app.ui.components.SectionTitle
 import com.autoledger.app.ui.components.yuan
 import com.autoledger.app.ui.stores.HomeStore
-import com.autoledger.app.ui.theme.LedgerPalette
+import com.autoledger.app.ui.theme.ledgerTokens
 import com.autoledger.app.ui.theme.LedgerTone
 import com.autoledger.core.model.MetricResult
 import com.autoledger.core.model.Money
@@ -100,10 +100,10 @@ fun DashboardScreen(container: AppContainer) {
                 AppCard(onClick = { nav.navigate(com.autoledger.app.ui.nav.Destination.CAPTURE) }) {
                     Row(verticalAlignment = Alignment.CenterVertically) {
                         Column(Modifier.weight(1f)) {
-                            Text("${state.pendingReview} 笔待确认", style = MaterialTheme.typography.titleMedium, color = LedgerPalette.Warning)
+                            Text("${state.pendingReview} 笔待确认", style = MaterialTheme.typography.titleMedium, color = ledgerTokens().warning)
                             Text("自动抓到但没把握的流水都在采集箱里等你拍板", style = MaterialTheme.typography.bodySmall)
                         }
-                        Text("去处理", style = MaterialTheme.typography.labelMedium, color = LedgerPalette.Positive)
+                        Text("去处理", style = MaterialTheme.typography.labelMedium, color = ledgerTokens().positive)
                     }
                 }
             }
@@ -183,7 +183,7 @@ fun HourlyScreen(container: AppContainer) {
                 Button(
                     onClick = { container.settings.updateWage(profile) },
                     Modifier.padding(top = 10.dp),
-                    colors = ButtonDefaults.buttonColors(containerColor = LedgerPalette.Positive),
+                    colors = ButtonDefaults.buttonColors(containerColor = ledgerTokens().positive),
                 ) { Text("保存参数") }
             }
         }
@@ -232,6 +232,6 @@ private fun FormulaLine(step: String, formula: String, substituted: String) {
     Column(Modifier.padding(vertical = 6.dp)) {
         Text(step, style = MaterialTheme.typography.labelMedium, color = MaterialTheme.colorScheme.onSurfaceVariant)
         Text(formula, style = MaterialTheme.typography.bodyMedium)
-        Text(substituted, style = MaterialTheme.typography.bodySmall, color = LedgerPalette.Positive)
+        Text(substituted, style = MaterialTheme.typography.bodySmall, color = ledgerTokens().positive)
     }
 }

@@ -13,7 +13,7 @@ import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.unit.dp
 import com.autoledger.app.ui.theme.LedgerIcons
-import com.autoledger.app.ui.theme.LedgerPalette
+import com.autoledger.app.ui.theme.ledgerTokens
 import com.autoledger.app.ui.theme.colorOf
 import com.autoledger.core.model.BudgetStatus
 
@@ -57,7 +57,7 @@ fun BudgetCard(statuses: List<BudgetStatus>, modifier: Modifier = Modifier) {
                         } else {
                             "剩 ¥${status.remainingMinor.yuan()}"
                         },
-                        color = if (status.isOverBudget) MaterialTheme.colorScheme.error else LedgerPalette.Positive,
+                        color = if (status.isOverBudget) MaterialTheme.colorScheme.error else ledgerTokens().positive,
                     )
                 }
             }

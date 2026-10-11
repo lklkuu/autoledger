@@ -32,7 +32,7 @@ import com.autoledger.app.ui.components.SectionTitle
 import com.autoledger.app.ui.stores.UserPlatformDraft
 import com.autoledger.app.ui.stores.UserPlatformStore
 import com.autoledger.app.ui.stores.from
-import com.autoledger.app.ui.theme.LedgerPalette
+import com.autoledger.app.ui.theme.ledgerTokens
 import com.autoledger.core.model.UserPlatform
 import com.autoledger.core.model.platform.PlatformKind
 
@@ -75,14 +75,14 @@ fun PlatformManageScreen(container: AppContainer) {
                 Button(
                     onClick = { creating = true },
                     Modifier.padding(top = 10.dp),
-                    colors = ButtonDefaults.buttonColors(containerColor = LedgerPalette.Positive),
+                    colors = ButtonDefaults.buttonColors(containerColor = ledgerTokens().positive),
                 ) { Text("新增平台") }
                 state.message?.let {
                     Text(
                         it,
                         Modifier.padding(top = 10.dp),
                         style = MaterialTheme.typography.bodyMedium,
-                        color = LedgerPalette.Blue,
+                        color = ledgerTokens().blue,
                     )
                 }
             }
@@ -165,7 +165,7 @@ private fun PlatformCard(
                 Text(
                     "已停用",
                     style = MaterialTheme.typography.labelMedium,
-                    color = LedgerPalette.Warning,
+                    color = ledgerTokens().warning,
                 )
             }
         }
@@ -239,7 +239,7 @@ private fun UserPlatformEditDialog(
                             OutlinedButton(
                                 onClick = { kind = k },
                                 colors = if (kind == k) {
-                                    ButtonDefaults.outlinedButtonColors(containerColor = LedgerPalette.PositivePale)
+                                    ButtonDefaults.outlinedButtonColors(containerColor = ledgerTokens().positivePale)
                                 } else {
                                     ButtonDefaults.outlinedButtonColors()
                                 },
@@ -276,7 +276,7 @@ private fun UserPlatformEditDialog(
                                     "或展开下方手动填写。",
                                 Modifier.padding(top = 4.dp),
                                 style = MaterialTheme.typography.bodySmall,
-                                color = LedgerPalette.Muted,
+                                color = ledgerTokens().muted,
                             )
                         } else {
                             recentPackages.forEach { pkg ->
@@ -309,7 +309,7 @@ private fun UserPlatformEditDialog(
                                 "点一下即可填入；只列出本机最近 30 条通知里出现过的真实包名。",
                                 Modifier.padding(top = 4.dp),
                                 style = MaterialTheme.typography.bodySmall,
-                                color = LedgerPalette.Muted,
+                                color = ledgerTokens().muted,
                             )
                         }
                     }
@@ -333,7 +333,7 @@ private fun UserPlatformEditDialog(
                             "比暂时不填更糟。",
                         Modifier.padding(top = 4.dp),
                         style = MaterialTheme.typography.bodySmall,
-                        color = LedgerPalette.Warning,
+                        color = ledgerTokens().warning,
                     )
                 }
                 // 让用户能提前看到「这个平台会被排序到哪」——内置平台永远排在前面

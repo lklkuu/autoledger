@@ -1,6 +1,5 @@
 package com.autoledger.app.ui.theme
 
-import androidx.compose.foundation.isSystemInDarkTheme
 import androidx.compose.runtime.Composable
 import androidx.compose.ui.graphics.Color
 import com.autoledger.core.model.LedgerTransaction
@@ -56,7 +55,9 @@ enum class LedgerTone {
  * 语义色阶 → 十六进制色值（纯函数，可 JVM 单测，不依赖 Compose）。
  *
  * 色值取自 [LedgerPalette] 里新增的四个收支语义 token，此处写十六进制是为了让判定逻辑可单测。
- * 深浅两套都满足 WCAG AA 正文对比度（≥4.5:1），底色分别为浅色卡 `#FFFDF7` 与深色卡 `#16292B`。
+ * 深浅两套都满足 WCAG AA 正文对比度（≥4.5:1）：
+ * 浅色侧对卡 `#FFFDF7` / 页 `#F8F5ED`（最弱的一档 BRAND #127A66 也有 4.82:1）；
+ * 深色侧对纯黑 `#000000`（最弱的一档 EXPENSE #5FC7AC 有 10.25:1）。
  *
  * 浅色值刻意与**改动前观感逐位一致**（BRAND=Positive、MUTED=Muted、INFO=Blue、NEUTRAL=InkDeep），
  * 所以本次改造在浅色模式下"看起来没变"，只修好了深色模式。
@@ -65,9 +66,10 @@ fun toneHex(tone: LedgerTone, dark: Boolean): String = when (tone) {
     LedgerTone.EXPENSE -> if (dark) "#5FC7AC" else "#116B5B"
     LedgerTone.INCOME -> if (dark) "#F2B8B5" else "#B3261E"
     LedgerTone.NEUTRAL -> if (dark) "#E4EFE9" else "#163B3D"
-    LedgerTone.BRAND -> if (dark) "#6FD6B4" else "#16856F"
-    LedgerTone.MUTED -> if (dark) "#B6CCC6" else "#708786"
-    LedgerTone.INFO -> if (dark) "#9FBDE3" else "#5C88B8"
+    // v1.1.11：浅色侧三档原先低于 WCAG AA 4.5:1，提到 4.85~5.19:1（对卡 #FFFDF7 与页 #F8F5ED 都过）
+    LedgerTone.BRAND -> if (dark) "#6FD6B4" else "#127A66"
+    LedgerTone.MUTED -> if (dark) "#B6CCC6" else "#5A706E"
+    LedgerTone.INFO -> if (dark) "#9FBDE3" else "#45739F"
 }
 
 /**
@@ -83,9 +85,15 @@ fun txnTone(txn: LedgerTransaction): LedgerTone = when (txn.type) {
     TxnType.REFUND, TxnType.TRANSFER -> LedgerTone.NEUTRAL
 }
 
-/** 语义色阶 → 实际颜色（跟随系统深浅色）。 */
+/**
+ * 语义色阶 → 实际颜色。
+ *
+ * ⚠️ 判据是 [LocalLedgerDarkTheme]（由 `LedgerTheme` 提供的**唯一**主题真源），
+ * **不是** `isSystemInDarkTheme()`。两者混用会造成「底色一套、语义色另一套」——
+ * 实测在「App 夜间 + 手机浅色」组合下墨色文字对比度掉到 1.25:1，界面不可读。
+ */
 @Composable
-fun toneColor(tone: LedgerTone): Color = colorOf(toneHex(tone, isSystemInDarkTheme()))
+fun toneColor(tone: LedgerTone): Color = colorOf(toneHex(tone, LocalLedgerDarkTheme.current))
 
 /**
  * 领域层语义（`MetricTone`，`core:model`）→ UI 语义（[LedgerTone]）。

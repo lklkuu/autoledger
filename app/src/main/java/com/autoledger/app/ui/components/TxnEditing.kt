@@ -31,7 +31,7 @@ import com.autoledger.app.ui.stores.TxnEditRules
 import com.autoledger.app.ui.stores.canSwitchType
 import com.autoledger.app.ui.stores.typeSwitchBlockReason
 import com.autoledger.app.ui.theme.LedgerIcons
-import com.autoledger.app.ui.theme.LedgerPalette
+import com.autoledger.app.ui.theme.ledgerTokens
 import com.autoledger.core.model.Category
 import com.autoledger.core.model.LedgerTransaction
 import com.autoledger.core.model.TxnType
@@ -69,7 +69,7 @@ fun TxnRowTrailing(
         Text(
             "已并入",
             style = MaterialTheme.typography.bodySmall,
-            color = LedgerPalette.Muted,
+            color = ledgerTokens().muted,
         )
         return
     }
@@ -236,7 +236,7 @@ fun TxnEditDialog(
                         reason,
                         Modifier.padding(top = 6.dp),
                         style = MaterialTheme.typography.bodySmall,
-                        color = LedgerPalette.Warning,
+                        color = ledgerTokens().warning,
                     )
                 }
 
@@ -267,7 +267,7 @@ fun TxnEditDialog(
                         "已与订单 / 退款 / 内部划转关联，金额与日期不可修改。",
                         Modifier.padding(top = 6.dp),
                         style = MaterialTheme.typography.bodySmall,
-                        color = LedgerPalette.Warning,
+                        color = ledgerTokens().warning,
                     )
                 }
 
@@ -282,7 +282,7 @@ fun TxnEditDialog(
                         "自动识别不确定，请确认平台是否正确。",
                         Modifier.padding(top = 6.dp),
                         style = MaterialTheme.typography.bodySmall,
-                        color = LedgerPalette.Warning,
+                        color = ledgerTokens().warning,
                     )
                 }
                 blockReason?.let {
@@ -290,7 +290,7 @@ fun TxnEditDialog(
                         it,
                         Modifier.padding(top = 6.dp),
                         style = MaterialTheme.typography.bodySmall,
-                        color = LedgerPalette.Warning,
+                        color = ledgerTokens().warning,
                     )
                 }
                 Text(
@@ -307,7 +307,7 @@ fun TxnEditDialog(
                         "已合并 ${mergedInto.size} 条",
                         Modifier.padding(top = 12.dp),
                         style = MaterialTheme.typography.labelMedium,
-                        color = LedgerPalette.Blue,
+                        color = ledgerTokens().blue,
                     )
                     mergedInto.forEach { absorbed ->
                         Row(
@@ -331,7 +331,7 @@ fun TxnEditDialog(
                         "撤销后该条回到「待确认」；主记录的商户/平台可能仍含合并时补上的值，请核对。",
                         Modifier.padding(top = 4.dp),
                         style = MaterialTheme.typography.bodySmall,
-                        color = LedgerPalette.Warning,
+                        color = ledgerTokens().warning,
                     )
                 }
             }

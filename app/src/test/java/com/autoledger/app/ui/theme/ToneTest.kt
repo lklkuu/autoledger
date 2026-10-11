@@ -1,11 +1,14 @@
 package com.autoledger.app.ui.theme
 
+import androidx.compose.ui.graphics.Color
 import com.autoledger.core.model.LedgerTransaction
 import com.autoledger.core.model.TxnStatus
 import com.autoledger.core.model.TxnType
+import kotlin.math.pow
 import kotlin.test.Test
 import kotlin.test.assertEquals
 import kotlin.test.assertNotEquals
+import kotlin.test.assertTrue
 
 /**
  * 收支语义色层的纯 JVM 护栏。
@@ -53,6 +56,62 @@ class ToneTest {
         assertEquals("#F2B8B5", toneHex(LedgerTone.INCOME, dark = true), "深底收入红")
         assertEquals("#163B3D", toneHex(LedgerTone.NEUTRAL, dark = false), "浅底中性 = InkDeep")
         assertEquals("#E4EFE9", toneHex(LedgerTone.NEUTRAL, dark = true), "深底中性")
+        // v1.1.11：浅色侧三档原先低于 WCAG AA 4.5:1，此处锁死提亮后的新常量，防后人"顺手调回"。
+        assertEquals("#127A66", toneHex(LedgerTone.BRAND, dark = false), "浅底品牌绿（原 #16856F 低于 4.5:1）")
+        assertEquals("#5A706E", toneHex(LedgerTone.MUTED, dark = false), "浅底次要灰绿（原 #708786 低于 4.5:1）")
+        assertEquals("#45739F", toneHex(LedgerTone.INFO, dark = false), "浅底信息蓝（原 #5C88B8 低于 4.5:1）")
+    }
+
+    /**
+     * WCAG 2.x 相对亮度对比度。
+     *
+     * `Color.red/green/blue` 已是 0..1 的 sRGB 分量（Compose 内部按 sRGB 存储），
+     * 所以这里直接按 WCAG 公式做线性化，不需要再做 /255。
+     */
+    private fun contrastRatio(a: Color, b: Color): Double {
+        fun channel(v: Float): Double {
+            val d = v.toDouble()
+            return if (d <= 0.04045) d / 12.92 else ((d + 0.055) / 1.055).pow(2.4)
+        }
+
+        fun luminance(c: Color): Double =
+            0.2126 * channel(c.red) + 0.7152 * channel(c.green) + 0.0722 * channel(c.blue)
+
+        val la = luminance(a)
+        val lb = luminance(b)
+        return (maxOf(la, lb) + 0.05) / (minOf(la, lb) + 0.05)
+    }
+
+    /**
+     * **对比度契约**：每个语义档位在它**实际被画上去的那个 surface** 上都必须 ≥4.5:1。
+     *
+     * 为什么上面那些断言不够：它们只证明「深浅两套值不同」，**证明不了屏幕上用的是哪一套**。
+     * 2026-10-11 的线上缺陷正是这类接线错误 —— 色值全对，但夜间皮肤下语义色走了
+     * `isSystemInDarkTheme()` 的浅色分支，深色值被画在浅底 / 浅色值被画在深底，
+     * 实测最坏 1.16:1，界面不可读，而当时全部单测是绿的。
+     *
+     * 这条把「色值」与「它所在的 surface」绑在一起：接线再错位，总有一侧跌破 4.5:1。
+     * `colorOf` 解析失败会回落到 `LedgerPalette.Muted`(#708786)，浅底上仅 3.75:1 ⇒ 同样会被抓出来。
+     */
+    @Test
+    fun `every tone clears WCAG AA against the surface it is actually drawn on`() {
+        LedgerTone.entries.forEach { tone ->
+            val lightHex = toneHex(tone, dark = false)
+            val lightRatio = contrastRatio(colorOf(lightHex), LightLedgerColors.surface)
+            assertTrue(
+                lightRatio >= 4.5,
+                "${tone.name} 浅色值 $lightHex 对 LightLedgerColors.surface 只有 " +
+                    "${"%.2f".format(lightRatio)}:1，低于 WCAG AA 4.5:1",
+            )
+
+            val darkHex = toneHex(tone, dark = true)
+            val darkRatio = contrastRatio(colorOf(darkHex), DarkLedgerColors.surface)
+            assertTrue(
+                darkRatio >= 4.5,
+                "${tone.name} 深色值 $darkHex 对 DarkLedgerColors.surface 只有 " +
+                    "${"%.2f".format(darkRatio)}:1，低于 WCAG AA 4.5:1",
+            )
+        }
     }
 
     @Test

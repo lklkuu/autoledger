@@ -67,7 +67,7 @@ import com.autoledger.app.ui.components.qrBitmapOf
 import com.autoledger.app.ui.stores.SettingsStore
 import com.autoledger.app.ui.stores.TransferStore
 import com.autoledger.app.ui.theme.LedgerIcons
-import com.autoledger.app.ui.theme.LedgerPalette
+import com.autoledger.app.ui.theme.ledgerTokens
 import com.autoledger.core.model.TxnStatus
 import com.autoledger.feature.capture.CaptureAction
 import com.autoledger.feature.capture.PermissionState
@@ -130,7 +130,7 @@ fun CaptureScreen(container: AppContainer) {
                             Text(
                                 if (isOn) "已开启" else "未开启",
                                 style = MaterialTheme.typography.labelMedium,
-                                color = if (isOn) LedgerPalette.Positive else LedgerPalette.Muted,
+                                color = if (isOn) ledgerTokens().positive else ledgerTokens().muted,
                             )
                         }
                         Row(Modifier.padding(top = 6.dp), horizontalArrangement = Arrangement.spacedBy(8.dp)) {
@@ -161,7 +161,7 @@ fun CaptureScreen(container: AppContainer) {
                     }
                 }
                 state.message?.let {
-                    Text(it, Modifier.padding(top = 10.dp), style = MaterialTheme.typography.bodyMedium, color = LedgerPalette.Positive)
+                    Text(it, Modifier.padding(top = 10.dp), style = MaterialTheme.typography.bodyMedium, color = ledgerTokens().positive)
                 }
                 if (state.working) LoadingBox()
             }
@@ -207,7 +207,7 @@ fun CaptureScreen(container: AppContainer) {
                 Text(
                     if (diagConnected) "监听服务：已连接" else "监听服务：未连接（可能未授权或被系统限制）",
                     style = MaterialTheme.typography.bodyMedium,
-                    color = if (diagConnected) LedgerPalette.Positive else LedgerPalette.Warning,
+                    color = if (diagConnected) ledgerTokens().positive else ledgerTokens().warning,
                 )
                 if (diagEntries.isEmpty()) {
                     EmptyHint("还没收到任何通知。请确认系统「通知使用权」已对本 App 开启。")
@@ -220,12 +220,12 @@ fun CaptureScreen(container: AppContainer) {
                                 color = MaterialTheme.colorScheme.onSurfaceVariant,
                             )
                             Text(e.body.take(80), style = MaterialTheme.typography.bodySmall)
-                            Text(e.outcome, style = MaterialTheme.typography.labelMedium, color = LedgerPalette.Blue)
+                            Text(e.outcome, style = MaterialTheme.typography.labelMedium, color = ledgerTokens().blue)
                         }
                     }
                     Button(
                         onClick = { NotificationDiag.clear() },
-                        colors = ButtonDefaults.buttonColors(containerColor = LedgerPalette.Muted),
+                        colors = ButtonDefaults.buttonColors(containerColor = ledgerTokens().muted),
                         modifier = Modifier.padding(top = 8.dp),
                     ) { Text("清空诊断记录") }
                 }
@@ -308,7 +308,7 @@ fun SettingsScreen(container: AppContainer) {
                     Button(
                         onClick = { importLauncher.launch("application/json") },
                         modifier = Modifier.weight(1f),
-                        colors = ButtonDefaults.buttonColors(containerColor = LedgerPalette.Blue),
+                        colors = ButtonDefaults.buttonColors(containerColor = ledgerTokens().blue),
                     ) { Icon(LedgerIcons.Download, null); Text(" 导入备份") }
                 }
                 // C3：加密导出/导入（口令保护，适合存网盘 / 发别人）
@@ -319,16 +319,16 @@ fun SettingsScreen(container: AppContainer) {
                     Button(
                         onClick = { encryptExportLauncher.launch("autoledger-backup-encrypted.json") },
                         modifier = Modifier.weight(1f),
-                        colors = ButtonDefaults.buttonColors(containerColor = LedgerPalette.Positive),
+                        colors = ButtonDefaults.buttonColors(containerColor = ledgerTokens().positive),
                     ) { Text(" 加密导出") }
                     Button(
                         onClick = { encryptImportLauncher.launch("application/json") },
                         modifier = Modifier.weight(1f),
-                        colors = ButtonDefaults.buttonColors(containerColor = LedgerPalette.Positive),
+                        colors = ButtonDefaults.buttonColors(containerColor = ledgerTokens().positive),
                     ) { Text(" 加密导入") }
                 }
                 state.message?.let {
-                    Text(it, Modifier.padding(top = 10.dp), style = MaterialTheme.typography.bodyMedium, color = LedgerPalette.Positive)
+                    Text(it, Modifier.padding(top = 10.dp), style = MaterialTheme.typography.bodyMedium, color = ledgerTokens().positive)
                 }
             }
         }
@@ -340,12 +340,12 @@ fun SettingsScreen(container: AppContainer) {
                     Button(
                         onClick = { transferStore.startSend() },
                         modifier = Modifier.weight(1f),
-                        colors = ButtonDefaults.buttonColors(containerColor = LedgerPalette.Positive),
+                        colors = ButtonDefaults.buttonColors(containerColor = ledgerTokens().positive),
                     ) { Text("发起迁移（旧机）") }
                     Button(
                         onClick = { showTransferInput = true },
                         modifier = Modifier.weight(1f),
-                        colors = ButtonDefaults.buttonColors(containerColor = LedgerPalette.Blue),
+                        colors = ButtonDefaults.buttonColors(containerColor = ledgerTokens().blue),
                     ) { Text("接收迁移（新机）") }
                 }
                 when (val ts = transferState) {
@@ -359,7 +359,7 @@ fun SettingsScreen(container: AppContainer) {
                             ts.ticket.encode(),
                             Modifier.padding(top = 6.dp),
                             style = MaterialTheme.typography.bodySmall,
-                            color = LedgerPalette.Blue,
+                            color = ledgerTokens().blue,
                         )
                     }
                     is TransferStore.State.Progress -> {
@@ -374,10 +374,10 @@ fun SettingsScreen(container: AppContainer) {
                         )
                     }
                     is TransferStore.State.Finished -> {
-                        Text(ts.summary, Modifier.padding(top = 10.dp), style = MaterialTheme.typography.bodyMedium, color = LedgerPalette.Positive)
+                        Text(ts.summary, Modifier.padding(top = 10.dp), style = MaterialTheme.typography.bodyMedium, color = ledgerTokens().positive)
                     }
                     is TransferStore.State.Failed -> {
-                        Text(ts.message, Modifier.padding(top = 10.dp), style = MaterialTheme.typography.bodyMedium, color = LedgerPalette.Danger)
+                        Text(ts.message, Modifier.padding(top = 10.dp), style = MaterialTheme.typography.bodyMedium, color = ledgerTokens().danger)
                     }
                     else -> {}
                 }
@@ -675,7 +675,7 @@ fun SettingsScreen(container: AppContainer) {
                             }
                         },
                         modifier = Modifier.padding(top = 8.dp),
-                        colors = ButtonDefaults.buttonColors(containerColor = LedgerPalette.Muted),
+                        colors = ButtonDefaults.buttonColors(containerColor = ledgerTokens().muted),
                     ) { Text("去系统设置开启通知") }
                 }
             }
@@ -686,7 +686,7 @@ fun SettingsScreen(container: AppContainer) {
                 SectionTitle("学习记录", "你纠正过 ${state.learnedRules} 条分类，它们会一直生效")
                 Button(
                     onClick = { store.resetLearning() },
-                    colors = ButtonDefaults.buttonColors(containerColor = LedgerPalette.Muted),
+                    colors = ButtonDefaults.buttonColors(containerColor = ledgerTokens().muted),
                 ) { Text("清空学习记录") }
             }
         }
@@ -715,7 +715,7 @@ fun SettingsScreen(container: AppContainer) {
                         Button(
                             onClick = { container.setBackgroundImagePath(null) },
                             modifier = Modifier.weight(1f),
-                            colors = ButtonDefaults.buttonColors(containerColor = LedgerPalette.Muted),
+                            colors = ButtonDefaults.buttonColors(containerColor = ledgerTokens().muted),
                         ) { Text("清除背景") }
                     }
                 }
@@ -801,7 +801,7 @@ fun SettingsScreen(container: AppContainer) {
                                 url!!,
                                 Modifier.padding(top = 6.dp),
                                 style = MaterialTheme.typography.bodyMedium,
-                                color = LedgerPalette.Positive,
+                                color = ledgerTokens().positive,
                                 textDecoration = TextDecoration.Underline,
                             )
                         }
@@ -957,7 +957,7 @@ private const val MAX_NOTES_CHARS = 300
 @Composable
 private fun BulletLine(icon: androidx.compose.ui.graphics.vector.ImageVector, text: String) {
     Row(Modifier.padding(vertical = 6.dp), verticalAlignment = Alignment.CenterVertically) {
-        Icon(icon, null, tint = LedgerPalette.Positive, modifier = Modifier.padding(end = 8.dp))
+        Icon(icon, null, tint = ledgerTokens().positive, modifier = Modifier.padding(end = 8.dp))
         Text(text, style = MaterialTheme.typography.bodyMedium)
     }
 }

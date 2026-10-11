@@ -36,7 +36,7 @@ import com.autoledger.app.ui.theme.toneColor
 import com.autoledger.app.ui.theme.toLedgerTone
 import com.autoledger.app.ui.theme.txnTone
 import com.autoledger.app.ui.theme.LedgerIcons
-import com.autoledger.app.ui.theme.LedgerPalette
+import com.autoledger.app.ui.theme.ledgerTokens
 import com.autoledger.app.ui.theme.LedgerTone
 import com.autoledger.core.model.MetricResult
 import com.autoledger.core.model.LedgerTransaction
@@ -391,7 +391,7 @@ fun MetricCard(result: MetricResult, modifier: Modifier = Modifier.fillMaxWidth(
                                     // （labelSmall 16 + 4 + 64 + 4 + labelMedium 18 = 106.dp ≤ 最小高度 110.dp）。
                                     .height((ratio * TREND_MAX_BAR_DP).coerceAtLeast(2f).dp)
                                     .clip(RoundedCornerShape(topStart = 6.dp, topEnd = 6.dp))
-                                    .background(if (point.valueMinor >= max) LedgerPalette.PositiveStrong else LedgerPalette.PositivePale),
+                                    .background(if (point.valueMinor >= max) ledgerTokens().positiveStrong else ledgerTokens().positivePale),
                             )
                             Spacer(Modifier.height(TREND_NODE_GAP))
                             Text(point.label, style = MaterialTheme.typography.labelMedium)
@@ -483,7 +483,7 @@ fun TransactionRow(
             Text(
                 workText,
                 style = MaterialTheme.typography.titleMedium,
-                color = LedgerPalette.PositiveStrong,
+                color = ledgerTokens().positiveStrong,
             )
         } else {
             Text(
@@ -504,8 +504,12 @@ fun ProgressLine(
     progress: Float,
     label: String,
     targetLabel: String,
-    color: Color = LedgerPalette.Positive,
+    color: Color? = null,
 ) {
+    // 默认进度色必须走语义 token：夜间黑皮肤下裸 LedgerPalette.Positive(#16856F) 对深底
+    // 对比度仅 3.33:1。改为可空参数 + 函数体内解析，是因为 @Composable 的 ledgerTokens()
+    // 不能出现在**默认参数**位置（那里不是 composable 上下文）。调用点无需改动（签名兼容）。
+    val ringColor = color ?: ledgerTokens().positive
     Column(verticalArrangement = Arrangement.spacedBy(6.dp)) {
         Row(Modifier.fillMaxWidth()) {
             Text(label, Modifier.weight(1f), style = MaterialTheme.typography.bodyMedium)
@@ -514,8 +518,8 @@ fun ProgressLine(
         LinearProgressIndicator(
             progress = { progress.coerceIn(0f, 1f) },
             modifier = Modifier.fillMaxWidth().height(10.dp).clip(RoundedCornerShape(999.dp)),
-            color = color,
-            trackColor = LedgerPalette.PositivePale,
+            color = ringColor,
+            trackColor = ledgerTokens().positivePale,
         )
     }
 }

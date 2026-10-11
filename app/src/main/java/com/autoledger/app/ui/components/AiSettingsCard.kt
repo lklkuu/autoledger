@@ -26,7 +26,7 @@ import androidx.compose.ui.Modifier
 import androidx.compose.ui.text.input.PasswordVisualTransformation
 import androidx.compose.ui.unit.dp
 import com.autoledger.app.di.AppContainer
-import com.autoledger.app.ui.theme.LedgerPalette
+import com.autoledger.app.ui.theme.ledgerTokens
 import com.autoledger.core.model.AiMode
 import kotlinx.coroutines.launch
 
@@ -196,7 +196,7 @@ fun AiSettingsCard(container: AppContainer, enabled: Boolean) {
 
             Button(
                 enabled = enabled && !probing,
-                colors = ButtonDefaults.buttonColors(containerColor = LedgerPalette.Muted),
+                colors = ButtonDefaults.buttonColors(containerColor = ledgerTokens().muted),
                 onClick = {
                     if (endpoint.isBlank()) {
                         addressError = "接口地址不能为空"
