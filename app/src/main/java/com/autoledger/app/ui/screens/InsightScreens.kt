@@ -106,18 +106,20 @@ fun FreedomScreen(container: AppContainer) {
                         "¥${monthlySavedUpMinor.yuan(withSign = true)}",
                         tone = LedgerTone.BRAND,
                         hint = "= 到手月薪 − 当月支出",
+                        modifier = Modifier.weight(1f),
                     )
                     HeroTile(
                         "累计已攒",
                         "¥${cumulativeSavedUpMinor.yuan(withSign = true)}",
                         tone = LedgerTone.BRAND,
                         hint = cumulativeHint,
+                        modifier = Modifier.weight(1f),
                     )
                 }
                 Row(Modifier.fillMaxWidth().padding(top = 10.dp), horizontalArrangement = Arrangement.SpaceBetween) {
                     // 目标 / 起始月是中性参考值 ⇒ NEUTRAL（浅色 = 原来的 InkDeep，观感不变）
-                    HeroTile("目标", "¥${targetMinor.yuan()}", tone = LedgerTone.NEUTRAL)
-                    HeroTile("起始月", startLabel, tone = LedgerTone.NEUTRAL)
+                    HeroTile("目标", "¥${targetMinor.yuan()}", tone = LedgerTone.NEUTRAL, modifier = Modifier.weight(1f))
+                    HeroTile("起始月", startLabel, tone = LedgerTone.NEUTRAL, modifier = Modifier.weight(1f))
                 }
                 ProgressLine(
                     progress = progress,

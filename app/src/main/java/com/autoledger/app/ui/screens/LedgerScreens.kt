@@ -488,14 +488,15 @@ fun MonthlyScreen(container: AppContainer) {
                         SectionTitle("本月总览", subtitle = DateTimeFormatter.ofPattern("yyyy 年 M 月").format(selectedMonth))
                         Row(Modifier.fillMaxWidth().padding(top = 8.dp), horizontalArrangement = Arrangement.SpaceBetween) {
                             // v1.1.6 收支颜色规范反转：收入红、支出绿（走 toneColor，深浅色自动切换）
-                            HeroTile("收入", "¥${monthIncome.yuan()}", tone = LedgerTone.INCOME)
+                            HeroTile("收入", "¥${monthIncome.yuan()}", tone = LedgerTone.INCOME, modifier = Modifier.weight(1f))
                             HeroTile(
                                 "支出", "¥${monthExpense.yuan()}",
                                 tone = LedgerTone.EXPENSE,
                                 hint = if (monthRefund > 0) "已扣退款 ¥${monthRefund.yuan()}" else null,
+                                modifier = Modifier.weight(1f),
                             )
                             // 结余是中性数值（既非收入也非支出）⇒ NEUTRAL
-                            HeroTile("结余", "¥${(monthIncome - monthExpense).yuan()}", tone = LedgerTone.NEUTRAL)
+                            HeroTile("结余", "¥${(monthIncome - monthExpense).yuan()}", tone = LedgerTone.NEUTRAL, modifier = Modifier.weight(1f))
                         }
                         // 三格主行保持不变，另起一行展示「付款总额 / 退款总额」两个独立数值
                         PaymentRefundTiles(monthGross, monthRefund)
@@ -570,13 +571,14 @@ fun MonthlyScreen(container: AppContainer) {
                     AppCard {
                         SectionTitle("年度总览", subtitle = "${selectedYear} 年")
                         Row(Modifier.fillMaxWidth().padding(top = 8.dp), horizontalArrangement = Arrangement.SpaceBetween) {
-                            HeroTile("收入", "¥${yIncome.yuan()}", tone = LedgerTone.INCOME)
+                            HeroTile("收入", "¥${yIncome.yuan()}", tone = LedgerTone.INCOME, modifier = Modifier.weight(1f))
                             HeroTile(
                                 "支出", "¥${yExpense.yuan()}",
                                 tone = LedgerTone.EXPENSE,
                                 hint = if (yRefund > 0) "已扣退款 ¥${yRefund.yuan()}" else null,
+                                modifier = Modifier.weight(1f),
                             )
-                            HeroTile("结余", "¥${(yIncome - yExpense).yuan()}", tone = LedgerTone.NEUTRAL)
+                            HeroTile("结余", "¥${(yIncome - yExpense).yuan()}", tone = LedgerTone.NEUTRAL, modifier = Modifier.weight(1f))
                         }
                         // 三格主行保持不变，另起一行展示「付款总额 / 退款总额」两个独立数值
                         PaymentRefundTiles(yGross, yRefund)

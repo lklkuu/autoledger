@@ -4,6 +4,7 @@ import androidx.compose.foundation.background
 import androidx.compose.foundation.clickable
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Box
+import androidx.compose.foundation.layout.BoxWithConstraints
 import androidx.compose.foundation.layout.Column
 import androidx.compose.foundation.layout.Row
 import androidx.compose.foundation.layout.Spacer
@@ -24,12 +25,18 @@ import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.OutlinedButton
 import androidx.compose.material3.Text
 import androidx.compose.runtime.Composable
+import androidx.compose.runtime.remember
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.clip
 import androidx.compose.ui.graphics.Color
+import androidx.compose.ui.platform.LocalDensity
+import androidx.compose.ui.text.TextStyle
 import androidx.compose.ui.text.font.FontWeight
+import androidx.compose.ui.text.rememberTextMeasurer
 import androidx.compose.ui.text.style.TextAlign
+import androidx.compose.ui.text.style.TextOverflow
+import androidx.compose.ui.unit.Constraints
 import androidx.compose.ui.unit.dp
 import com.autoledger.app.ui.theme.colorOf
 import com.autoledger.app.ui.theme.toneColor
@@ -178,21 +185,93 @@ fun SectionTitle(title: String, subtitle: String? = null, trailing: (@Composable
  * 于是深色模式下永远是浅色值（深底对比度掉到 2.0~2.4:1，比改造前更差）。
  * 必填而非给默认值，是为了逼每个调用点显式声明语义 ——  defaulted EXPENSE 会让"时薪"这类
  * 非收支数值被悄悄涂成支出绿。
+ *
+ * ⚠️ v1.1.12 起值文本**单行 + 量宽降字号**（见 [FitSingleLineText]）：
+ * 数字很长时不再换行竖排、也不再挤压同行的邻居块 —— 首页三格并排曾因
+ * 「¥52169.05」把「真实时薪」挤成一字宽、整卡变形（2026-10-11 真机截图）。
+ * 调用点若想让某块**独占固定份额**，传 `Modifier.weight(1f)`（所有并排调用点均已加）。
  */
 @Composable
-fun HeroTile(label: String, value: String, tone: LedgerTone, hint: String? = null) {
+fun HeroTile(
+    label: String,
+    value: String,
+    tone: LedgerTone,
+    hint: String? = null,
+    modifier: Modifier = Modifier,
+) {
     val accent = toneColor(tone)
-    Column {
+    Column(modifier) {
         Text(label, style = MaterialTheme.typography.labelMedium, color = MaterialTheme.colorScheme.onSurfaceVariant)
-        Text(
+        FitSingleLineText(
             value,
-            style = MaterialTheme.typography.headlineSmall,
+            candidates = listOf(
+                MaterialTheme.typography.headlineSmall,
+                MaterialTheme.typography.titleMedium,
+                MaterialTheme.typography.titleSmall,
+            ),
             color = accent,
             fontWeight = FontWeight.SemiBold,
         )
         if (hint != null) {
             Text(hint, style = MaterialTheme.typography.bodySmall, color = MaterialTheme.colorScheme.onSurfaceVariant)
         }
+    }
+}
+
+/**
+ * 单行自适应文本：按候选字号**从大到小**实测宽度，取第一个放得下的；全放不下时取最小档并省略号兜底。
+ *
+ * 为什么不用 `maxLines = 1` 了事：金额截断 = 丢信息；为什么不用换行：金额竖排 =
+ * 撑高卡片（首屏三格的变形根因）。降字号是唯一不丢信息也不破坏布局的手段
+ * （Compose BOM 2024.12.01 = UI 1.7，无内置 `TextAutoSize`，需自测）。
+ *
+ * 档位末位取 [MaterialTheme.typography.titleSmall]（14sp）：¥99,999,999.99（12 字符）在
+ * 三分之一卡宽（≈100dp）内 16sp 已放不下，14sp 实测可容纳 —— 再长的金额已超出记账 App 的
+ * 现实量级，由省略号兜底（比撑破布局好）。
+ *
+ * 测量用 [rememberTextMeasurer]（内部带当前 density/fontScale，大字体档位下测量仍准确）；
+ * 宽度上限取 [BoxWithConstraints] 的 `maxWidth` —— 无界上下文（水平滚动等）下不降级、
+ * 直接用首选档 + 省略号。
+ */
+@Composable
+private fun FitSingleLineText(
+    text: String,
+    candidates: List<TextStyle>,
+    color: Color,
+    fontWeight: FontWeight? = null,
+) {
+    BoxWithConstraints {
+        val measurer = rememberTextMeasurer()
+        val density = LocalDensity.current
+        val chosen = if (maxWidth.value.isInfinite()) {
+            candidates.first()
+        } else {
+            val maxPx = with(density) { maxWidth.roundToPx() }
+            // fontScale 必须进 remember 键：dp→px 的换算不含 fontScale，
+            // 大字体档变化时 maxPx 不变、但 sp 文本实际变宽，漏键会给出过时档位。
+            remember(text, maxPx, density.fontScale, candidates) {
+                candidates.firstOrNull { candidate ->
+                    !measurer
+                        .measure(
+                            text,
+                            style = candidate,
+                            maxLines = 1,
+                            softWrap = false,
+                            constraints = Constraints(maxWidth = maxPx),
+                        )
+                        .didOverflowWidth
+                } ?: candidates.last()
+            }
+        }
+        Text(
+            text,
+            style = chosen,
+            color = color,
+            fontWeight = fontWeight,
+            maxLines = 1,
+            softWrap = false,
+            overflow = TextOverflow.Ellipsis,
+        )
     }
 }
 
@@ -286,22 +365,28 @@ fun MetricCard(result: MetricResult, modifier: Modifier = Modifier.fillMaxWidth(
         when (result) {
             is MetricResult.Scalar -> {
                 Text(titleText, style = MaterialTheme.typography.titleMedium)
-                Text(
+                FitSingleLineText(
                     // 主指标不一定是钱：「花掉的时间」要显示「≈ 0.8 小时」而非折算金额。
                     result.primaryText ?: "¥${result.valueMinor.yuan()}",
-                    style = MaterialTheme.typography.headlineSmall,
+                    candidates = listOf(
+                        MaterialTheme.typography.headlineSmall,
+                        MaterialTheme.typography.titleMedium,
+                        MaterialTheme.typography.titleSmall,
+                    ),
                     // v1.1.6：主数值颜色由卡片自报的语义色阶决定（MetricTone → LedgerTone），
                     // 不再一律 PositiveStrong（那样"入不敷出"也会被涂成"赚到了"的颜色）。
                     color = toneColor(result.tone.toLedgerTone()),
                 )
                 // v1.1.9：明细小指标（支出 / 收入 / 结余）排在副标题之前 —— 先给数字，再给口径说明。
+                // v1.1.12：每格 `weight(1f, fill = false)` 限宽 —— 某格数字过长时只在自己的
+                // 份额内降级/省略，不把右边的格挤成一字宽（与 HeroTile 并排的防变形同源）。
                 if (result.stats.isNotEmpty()) {
                     Row(
                         Modifier.fillMaxWidth().padding(vertical = 4.dp),
                         horizontalArrangement = Arrangement.spacedBy(16.dp),
                     ) {
                         result.stats.forEach { stat ->
-                            Column {
+                            Column(Modifier.weight(1f, fill = false)) {
                                 Text(
                                     stat.label,
                                     style = MaterialTheme.typography.labelSmall,
