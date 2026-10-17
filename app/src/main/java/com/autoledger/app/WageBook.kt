@@ -14,6 +14,8 @@ import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.flow.StateFlow
 import kotlinx.coroutines.flow.asStateFlow
 import kotlinx.coroutines.launch
+import kotlinx.coroutines.sync.Mutex
+import kotlinx.coroutines.sync.withLock
 
 /**
  * **时薪版本的唯一写入口**（app 层）。
@@ -58,6 +60,20 @@ class WageBook(
     private var observeJob: Job? = null
 
     /**
+     * `save()` 的串行锁。
+     *
+     * `find(month) → upsert` 是读-改-写：两次并发保存（用户连点两下按钮、或保存与备份导入
+     * 撞在一起）时，后一次读到的可能是"还没有行"或"旧的 createdAt"，于是
+     * **`createdAtMillis` 会被覆盖成后一次的时间**，同月还可能出现两次"新建"。
+     * 那个字段是"该月时薪首次确定时间"的审计线索，被覆盖后无法复原。
+     *
+     * minSdk 26 的 SQLite 3.18 没有 `INSERT … ON CONFLICT DO UPDATE`（不能把
+     * "保留旧 createdAt"下推到 SQL 里原子完成），因此用协程 Mutex 在**进程内**串行化。
+     * 单进程内的竞争源就是同一批 UI/导入调用，够用；跨进程（多开）不在本 App 的形态内。
+     */
+    private val saveMutex = Mutex()
+
+    /**
      * 订阅版本表（幂等）。由 `AppContainer.bootstrap()` 预热调用。
      *
      * 用 [WageVersionDao.observeAll] 而不是一次性 `listAll`：备份导入、迁移播种、
@@ -87,7 +103,7 @@ class WageBook(
         profile: WageProfile,
         nowMillis: Long = System.currentTimeMillis(),
         zone: ZoneId = ZoneId.systemDefault(),
-    ): WageVersion {
+    ): WageVersion = saveMutex.withLock {
         val month = WageLedger.monthKeyOf(nowMillis, zone)
         val existing = dao.find(month)
         // 同月重存：保留 createdAt（审计"这个月的时薪首次确定于何时"），刷新 updatedAt。
@@ -102,7 +118,7 @@ class WageBook(
         refresh()
         // 双写 app_settings（不 await：UserSettings.updateWage 内部已把写库放进 scope）。
         settings.updateWage(profile)
-        return version
+        version
     }
 
     /** 重新从库里读一遍版本表（[init] 的订阅之外，供一次性确定性刷新用）。 */

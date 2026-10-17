@@ -122,6 +122,28 @@ val MIGRATION_6_7 = object : Migration(6, 7) {
 }
 
 /**
+ * `MIGRATION_7_8` 播种判据里用到的**出厂默认时薪快照**（= v8 时刻 `WageProfile()` 的默认值）。
+ *
+ * 为什么是常量而不是直接读 `WageProfile()`：
+ * 迁移是**冻结的历史**。将来若把出厂默认月薪从 4000 改成 5000，`MIGRATION_7_8` 的
+ * 判定语义不能跟着变 —— 否则同一份 v7 库在不同 App 版本上升级会得到不同结果。
+ *
+ * 代价是"两处默认值可能失配"，因此 `WageVersionMigrationTest` 有一条用例
+ * 把这 7 个常量与 `WageProfile()` 的字段**逐一比对**：谁改了默认值，那条测试立刻红，
+ * 提醒改的人显式决定"这次改动要不要影响 v7→v8 的播种判据"（通常答案是不要，
+ * 只需把测试里的期望改成"允许差异"并写明理由）。
+ */
+internal object MigrationWageDefaults {
+    const val SALARY_MINOR = 400_000L
+    const val PAY_MONTHS = 13
+    const val WORK_COST_MINOR = 85_000L
+    const val WORK_DAYS = 21.75
+    const val OFFICE_HOURS = 9.0
+    const val COMMUTE_MINUTES = 48
+    const val OVERTIME_HOURS = 0.6
+}
+
+/**
  * v7 → v8：时薪按月版本表 `wage_versions` + 用 `app_settings` 里现存的时薪播种一行。
  *
  * ⚠️ 与 MIGRATION_5_6 / 6_7 同级的**清库级**风险点：
@@ -132,9 +154,10 @@ val MIGRATION_6_7 = object : Migration(6, 7) {
  *
  * ## 播种规则（为什么是"最早流水所在月"）
  * - `month` = 账本**最早一笔流水**所在月；账本为空 ⇒ 当月。
- *   不选 `1970-01` 的原因：功能上等价（`WageLedger.effectiveVersion` 已保证更早月份
- *   会回落到最早版本、不会被清零），但 `1970-01` 会在 UI 版本列表里出现一条荒谬的
- *   「1970-01 起生效」，用户第一反应是"数据坏了"。
+ *   这个月就是用户"开始用这份时薪记账"的月，语义自洽。
+ *   （历史注记：早期方案里用 `1970-01` 播种，理由是"更早月份会回落到最早版本，功能等价"。
+ *   该前提已随 `WageLedger` 改为「只向后沿用、不向前回填」而失效 —— `1970-01` 现在会让
+ *   1970~用户在册首月之间的所有月份都拿到一个月收入，是明确的错数，故不采用。）
  * - `localtime` 修饰符与 App 业务时区（`ZoneId.systemDefault()`）一致，
  *   不会因 UTC 偏移把月份错切到上个月。
  * - **没有 `app_settings` 行 ⇒ 不播种（0 行）**。
@@ -191,6 +214,7 @@ val MIGRATION_7_8 = object : Migration(7, 8) {
         //    与 transactions / user_platforms 用同一个常量，避免同表出现两种取值。
         //    `createdAtMillis` / `updatedAtMillis` 写 0 是**有意**的指纹：0 = 「升级预填、用户尚未确认」，
         //    真实保存（WageBook.save / 旧档案播种）用的都是真实时间戳，详见 WageVersion 的 KDoc。
+        val d = MigrationWageDefaults
         db.execSQL(
             """
             INSERT INTO `wage_versions` (
@@ -210,16 +234,18 @@ val MIGRATION_7_8 = object : Migration(7, 8) {
                 0, 0, ${LedgerSchema.CURRENT}
             FROM `app_settings` s
             WHERE s.`id` = 'global'
-              -- 整块 7 个字段逐一等于 v8 出厂默认值 ⇒ 视为「从未设过时薪」，不播种。
-              -- 只要有一项不同 ⇒ 用户确实在时薪页动过手 ⇒ 播种。
-              AND NOT (
-                    s.`wageSalaryMinor` = 400000
-                AND s.`wagePayMonths` = 13
-                AND s.`wageWorkCostMinor` = 85000
-                AND s.`wageWorkDays` = 21.75
-                AND s.`wageOfficeHours` = 9.0
-                AND s.`wageCommuteMinutes` = 48
-                AND s.`wageOvertimeHours` = 0.6
+              -- 整块 7 列逐一是出厂默认值（见 MigrationWageDefaults）⇒ 视为「从未设过时薪」，不播种；
+              -- 任一项 ≠ 默认值 ⇒ 用户确实在时薪页动过手 ⇒ 播种。
+              -- 写成**正向**条件（`<>` 的 OR）而不是 `NOT (全相等)`：否定只落在"全相等"那一层，
+              -- 读起来不会误判成"任一项相等就跳过"。
+              AND (
+                    s.`wageSalaryMinor` <> ${d.SALARY_MINOR}
+                 OR s.`wagePayMonths` <> ${d.PAY_MONTHS}
+                 OR s.`wageWorkCostMinor` <> ${d.WORK_COST_MINOR}
+                 OR s.`wageWorkDays` <> ${d.WORK_DAYS}
+                 OR s.`wageOfficeHours` <> ${d.OFFICE_HOURS}
+                 OR s.`wageCommuteMinutes` <> ${d.COMMUTE_MINUTES}
+                 OR s.`wageOvertimeHours` <> ${d.OVERTIME_HOURS}
               )
             """.trimIndent(),
         )

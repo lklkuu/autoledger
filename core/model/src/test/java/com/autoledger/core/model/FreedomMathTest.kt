@@ -147,6 +147,33 @@ class FreedomMathTest {
     }
 
     @Test
+    fun `year month label stays ascii under an arabic default locale`() {
+        // 回归钉子（真实 Locale 切换版）：旧实现用 `String.format("%04d-%02d")`，走默认 Locale，
+        // 在阿拉伯语区输出 `٢٠٢٥-٠٣`（阿拉伯-印度数字）⇒ 该串作为
+        // `WageLedger.cumulativeIncomeMinor(fromMonth = …)` 的入参被严格 ASCII 的
+        // `isValidMonth` 拒绝 ⇒ **「累计已攒」的收入项静默变 0**，而「当月已攒」正常。
+        // 这类"某个语言环境下某个数字变 0"的缺陷在没有这条用例时几乎不可能被发现。
+        val original = java.util.Locale.getDefault()
+        try {
+            java.util.Locale.setDefault(java.util.Locale.forLanguageTag("ar-EG"))
+
+            val label = FreedomMath.yearMonthLabel(index(2025, 3))
+
+            assertEquals("2025-03", label, "阿拉伯语默认 Locale 下也必须输出 ASCII 数字")
+            assertTrue(WageLedger.isValidMonth(label), "必须能被 WageLedger 接受：$label")
+            // 12 个月全覆盖，防止只有个位数月份被"漏补"
+            for (m in 1..12) {
+                val key = FreedomMath.yearMonthLabel(index(2030, m))
+                assertEquals("2030-${m.toString().padStart(2, '0')}", key)
+                assertTrue(WageLedger.isValidMonth(key), "12 个月都必须合法：$key")
+            }
+        } finally {
+            // 必须恢复：Locale 是**进程全局**状态，漏恢复会污染其它用例（顺序相关的假红）
+            java.util.Locale.setDefault(original)
+        }
+    }
+
+    @Test
     fun `year month label is always ascii digits so WageLedger accepts it`() {
         // 回归钉子：该串是 `WageLedger.cumulativeIncomeMinor(fromMonth = …)` 的入参，
         // 而 `isValidMonth` 是严格 ASCII 校验。若实现退回 `String.format("%04d-%02d")`，

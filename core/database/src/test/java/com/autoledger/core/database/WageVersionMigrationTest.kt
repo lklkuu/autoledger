@@ -14,6 +14,7 @@ import java.time.YearMonth
 import java.time.ZoneId
 import kotlin.test.assertEquals
 import kotlin.test.assertNotNull
+import kotlin.test.assertNull
 import kotlin.test.assertTrue
 import kotlinx.coroutines.runBlocking
 import org.json.JSONObject
@@ -239,6 +240,25 @@ class WageVersionMigrationTest {
     }
 
     @Test
+    fun `the seed predicate constants still match the factory WageProfile`() {
+        // 播种判据用 `MigrationWageDefaults`（迁移里写死的 v8 出厂默认值快照），而不是现取
+        // `WageProfile()` —— 迁移是冻结的历史，将来改默认值不得改变 v7→v8 的播种语义。
+        // 代价是"两处默认值可能失配"，所以这条用例把它们**逐字段**锁在一起：
+        // 谁改了 `WageProfile` 的默认值，这里立刻红，改的人必须显式决定
+        // "这次改动要不要影响 v7→v8 的判据"（通常不要，那就把本用例改成允许差异并写明理由）。
+        val factory = WageProfile()
+        val d = MigrationWageDefaults
+
+        assertEquals(factory.monthlyNetSalaryMinor, d.SALARY_MINOR, "monthlyNetSalaryMinor")
+        assertEquals(factory.payMonthsPerYear, d.PAY_MONTHS, "payMonthsPerYear")
+        assertEquals(factory.monthlyWorkCostMinor, d.WORK_COST_MINOR, "monthlyWorkCostMinor")
+        assertEquals(factory.workDaysPerMonth, d.WORK_DAYS, "workDaysPerMonth")
+        assertEquals(factory.dailyOfficeHours, d.OFFICE_HOURS, "dailyOfficeHours")
+        assertEquals(factory.dailyCommuteMinutes, d.COMMUTE_MINUTES, "dailyCommuteMinutes")
+        assertEquals(factory.dailyOvertimeHours, d.OVERTIME_HOURS, "dailyOvertimeHours")
+    }
+
+    @Test
     fun `empty ledger seeds the current month`() {
         // 空账本：MIN(occurredAtMillis) 返回 NULL ⇒ COALESCE 兜到当月。
         seedV7(emptyList())
@@ -266,7 +286,7 @@ class WageVersionMigrationTest {
     }
 
     @Test
-    fun `settings row with untouched factory wage seeds nothing`() {
+    fun `settings row with default wage seeds nothing`() {
         // ★ 回归钉子（QA-income-review P1）：`app_settings` 是**单行整体 upsert**，
         //   用户只要动过**任何一个其它设置**（自由基金目标 / 自动合并 / AI），库里就有一行，
         //   而它的 wage 只是 WageProfile() 的出厂默认值（4000 元 / 13 薪 ⇒ 月度 4333.33 元）。
@@ -285,7 +305,7 @@ class WageVersionMigrationTest {
     }
 
     @Test
-    fun `a single edited wage field is enough to count as configured`() {
+    fun `customized wage seeds one row`() {
         // 「只有一项与默认值不同」也算用户动过时薪页 ⇒ 必须播种。
         // 这条防止把默认值判据写成"必须是完全不同的 profile"这类过严条件，
         // 否则真设过时薪的用户升级后收入会变成 0（比编数更糟）。
@@ -485,8 +505,9 @@ class WageVersionMigrationTest {
         assertNotNull(versions.firstOrNull())
         // 播种月本身
         assertEquals(1_300_000L, WageLedger.incomeForMonth(versions, "2025-03"))
-        // 早于播种月 ⇒ 回落最早版本，绝不清零
-        assertEquals(1_300_000L, WageLedger.incomeForMonth(versions, "2024-01"))
+        // 早于播种月 ⇒ **没有收入记录**（0），不向前回填（v8 起「只向后沿用」）
+        assertEquals(0L, WageLedger.incomeForMonth(versions, "2024-01"))
+        assertNull(WageLedger.effectiveVersion(versions, "2024-01"))
         // 晚于播种月 ⇒ 沿用最近版本
         assertEquals(1_300_000L, WageLedger.incomeForMonth(versions, "2026-12"))
     }

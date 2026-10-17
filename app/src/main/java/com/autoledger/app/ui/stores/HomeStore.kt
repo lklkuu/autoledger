@@ -81,10 +81,13 @@ class HomeStore(private val container: AppContainer) {
     }
 
     /**
-     * 同时订阅两条 Flow 并合成一次聚合：
+     * 同时订阅三条 Flow 并合成一次聚合：
      * - 本月流水（observeSince）：驱动今日/本月金额、最近流水、统计卡片；
      * - 待确认数量（observeRawCount）：**独立订阅**，与时间窗口解耦 ——
-     *   补录一笔更早日期的流水时窗口集合不变，但待确认卡片仍要刷新（R3）。
+     *   补录一笔更早日期的流水时窗口集合不变，但待确认卡片仍要刷新（R3）；
+     * - **时薪版本（wages.versions）**：收入口径的唯一来源。不订阅它的话，用户改完时薪
+     *   返回今日页，`真实时薪` 与「支出与结余」卡的收入仍显示旧值，必须杀掉进程/重进才刷新 ——
+     *   而这恰好是用户改完最想立刻验证的数字。
      */
     private suspend fun observe() {
         // 月初锚点订阅时取一次即可（本订阅生命周期内不变）；
@@ -94,7 +97,10 @@ class HomeStore(private val container: AppContainer) {
         combine(
             container.repository.observeSince(monthStart),
             container.repository.observeRawCount(),
-        ) { rawList, rawCount ->
+            container.wages.versions,
+        ) { rawList, rawCount, _ ->
+            // 版本只在**触发重算**的意义上参与（真正的取数在 compute() 里现取，
+            // 保证与「时薪页刚保存的值」一致）；这里不解构它的内容，只用它作为失效信号。
             // 裁剪在 flowOn(Dispatchers.Default) 上游执行（R5，离主线程）
             clipToMonthSpending(rawList, spendingWindow(monthStart, System.currentTimeMillis())) to rawCount
         }

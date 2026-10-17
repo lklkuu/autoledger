@@ -16,7 +16,8 @@ import kotlin.test.assertTrue
  * 这里错一分，全站都错，而且是**静默**错（不会崩、只是数字不对）。
  *
  * 重点钉住四类行为：
- * 1. 版本解析：取「不晚于该月的最大一条」；该月早于最早版本时**回落最早一条**（历史不清零）；
+ * 1. 版本解析：取「不晚于该月的最大一条」；该月**早于最早版本时没有收入**（不向前回填 ——
+ *    账本开始前的年份不能凭空长出一整年收入）；
  * 2. 脏数据不崩：月份格式非法 / 同月重复行 / 空列表，一律给保守结果而不是抛异常；
  * 3. 年度与区间：往年 12 个月、当年只到当月、未来年 0；区间只算「月首落在区间内」的月份；
  * 4. 累计：跨版本来回比对，证明"逐月求和"而非"月数 × 单个月薪"。
@@ -89,14 +90,27 @@ class WageLedgerTest {
     }
 
     @Test
-    fun `months before the first version reuse the earliest row`() {
+    fun `months before the first version have no income`() {
         val versions = ladder()
 
-        // 2025-12 早于最早版本（2026-01）：必须**回落最早一条**，而不是 0。
-        // 这是「补录一笔很久以前的流水不会把历史收入清零」的唯一保障。
-        assertEquals("2026-01", WageLedger.effectiveVersion(versions, "2025-12")?.month)
-        assertEquals(salary12k13, WageLedger.incomeForMonth(versions, "2025-12"))
-        assertNotEquals(0L, WageLedger.incomeForMonth(versions, "2025-12"), "历史月份绝不能是 0")
+        // 2025-12 早于最早版本（2026-01）⇒ **没有任何收入记录**，返回 null / 0。
+        // 刻意**不**回落到最早一条：账本始于 2026-01 的用户点开 2025 年度时，
+        // 不能凭空长出一整年的收入（那是"回填估算"，需求是"以生效月份为界，向后沿用"）。
+        assertNull(WageLedger.effectiveVersion(versions, "2025-12"))
+        assertEquals(0L, WageLedger.incomeForMonth(versions, "2025-12"))
+        assertNull(WageLedger.profileForMonth(versions, "2025-12"))
+    }
+
+    @Test
+    fun `year entirely before the first version is zero`() {
+        // 账本 / 版本始于 2026-01 ⇒ 2025 全年收入必须是 0（不是 12 × 月薪）。
+        // 这条是"不做向前回填"在产品口径上的直接体现。
+        val versions = ladder()
+
+        assertEquals(0L, WageLedger.incomeForYear(versions, 2025, "2026-12"))
+        assertEquals(0L, WageLedger.cumulativeIncomeMinor(versions, "2025-01", "2025-12"))
+        // 而首版所在年起就有收入（对照组）
+        assertEquals(salary12k13, WageLedger.incomeForMonth(versions, "2026-01"))
     }
 
     @Test
@@ -182,8 +196,8 @@ class WageLedgerTest {
 
         assertEquals(17_850_000L, expected)
         assertEquals(expected, WageLedger.incomeForYear(versions, 2026, "2026-12"))
-        // 往年（2025）没有更早的版本 ⇒ 12 个月全按最早版本 13000 = 156000 元
-        assertEquals(12 * salary12k13, WageLedger.incomeForYear(versions, 2025, "2026-12"))
+        // 往年（2025）整年早于首版（2026-01）⇒ 0，**不向前回填**（见 year entirely before…）
+        assertEquals(0L, WageLedger.incomeForYear(versions, 2025, "2026-12"))
     }
 
     @Test
@@ -275,8 +289,8 @@ class WageLedgerTest {
             salary12k13,
             WageLedger.cumulativeIncomeMinor(versions, "2026-01", "2026-01"),
         )
-        // 跨年：2025-12 → 2026-01 = 13000 + 13000（2025-12 回落最早版本）
-        assertEquals(2 * salary12k13, WageLedger.cumulativeIncomeMinor(versions, "2025-12", "2026-01"))
+        // 跨年：2025-12 早于首版 ⇒ 0；2026-01 起才有收入
+        assertEquals(salary12k13, WageLedger.cumulativeIncomeMinor(versions, "2025-12", "2026-01"))
         // 非法 / 反向区间 ⇒ 0
         assertEquals(0L, WageLedger.cumulativeIncomeMinor(versions, "2026-05", "2026-01"))
         assertEquals(0L, WageLedger.cumulativeIncomeMinor(versions, "abc", "2026-01"))
