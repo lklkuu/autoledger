@@ -761,23 +761,40 @@ internal fun platformFilterChips(currentFilter: String?): List<PlatformEntry> {
  *
  * @param monthKeys 本次统计覆盖的月份键（月度 1 个、年度 12 个）
  * - 无版本 ⇒ 指路去「时薪」页（收入按 ¥0 计，绝不回落到流水求和）；
- * - 全是**迁移预填**（`createdAtMillis == 0`，用户升级后还没确认过）⇒ 如实说明来源并请他确认：
+ * - 全是**迁移预填 / 旧档案预填**（`createdAtMillis == 0`，用户还没确认过）⇒ 说明来源并请他确认：
  *   v8 的口径变化（13 薪摊平）会让数字与升级前不同，不说明会被当成算错；
- * - 覆盖范围内只解析出**一个**版本 ⇒ 直接标出该版本的月份；
- * - 跨多个版本 ⇒ 说明是"各月版本"合计，避免只标一个月份造成误解。
+ * - **整个区间都早于首个版本** ⇒ 收入恒为 ¥0（金额不回填），必须说清"不是没赚到，是没有记录"；
+ * - 只有部分月份早于首个版本（跨首版那年）⇒ 在正常提示后补「X 起计」，避免用户以为整年都算了；
+ * - 全部月份都 ≥ 首个版本 ⇒ 单版本标出月份，跨版本说明是"各月版本"合计。
  */
 private fun incomeHintOf(versions: List<WageVersion>, vararg monthKeys: String): String {
     if (versions.isEmpty()) return "未设置时薪，去「时薪」页填写"
     if (WageLedger.allMigrationSeeded(versions)) {
         return "时薪为升级前保存的值，请到「时薪」页确认"
     }
-    val effectiveMonths = monthKeys
+    val earliest = versions
+        .map { it.month }
+        .filter { WageLedger.isValidMonth(it) }
+        .minOrNull()
+        ?: return "未设置时薪，去「时薪」页填写"
+
+    // 金额口径「不回填」：整段区间都早于首个版本时，收入是 0，不能标一个"按 X 月推算"骗人
+    val covered = monthKeys.filter { it >= earliest }
+    if (covered.isEmpty()) return "早于首个时薪版本，不计收入"
+
+    val effectiveMonths = covered
         .mapNotNull { WageLedger.effectiveVersion(versions, it)?.month }
         .distinct()
-    return if (effectiveMonths.size == 1) {
+    val base = if (effectiveMonths.size == 1) {
         "按 ${yyyyMmLabel(effectiveMonths.single())} 时薪推算"
     } else {
         "按各月时薪版本推算"
+    }
+    // 跨首版的那一年：部分月份没有收入记录，必须点明从哪个月起才算
+    return if (covered.size < monthKeys.size) {
+        "$base（${yyyyMmLabel(earliest)} 起计）"
+    } else {
+        base
     }
 }
 

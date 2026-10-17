@@ -19,6 +19,7 @@ import com.autoledger.core.model.TxnStatus
 import com.autoledger.core.model.TxnType
 import com.autoledger.core.model.UserPlatform
 import com.autoledger.core.model.WageLedger
+import com.autoledger.core.model.WageProfile
 import com.autoledger.core.model.WageVersion
 import com.autoledger.core.model.platform.PlatformCatalog
 import com.autoledger.core.model.platform.PlatformKind
@@ -240,8 +241,8 @@ class BackupManager(
         // 三种情形必须区分（设计文档 D6）：
         //  ① 档案里有 `wageVersions`（新档案） ⇒ **以档案为准**：REPLACE_ALL 先清表再逐条 upsert。
         //     用户导入新档案的意图就是"恢复这份快照"，同月行必须被覆盖。
-        //  ② 档案里没有 `wageVersions`（旧档案）但 `settings.wage` 存在 ⇒ 播种**单版本**，
-        //     月份 = 本档案最早流水所在月（无流水 ⇒ 当月）。用 insertIfAbsent：
+        //  ② 档案里没有 `wageVersions`（v7 及更早导出的旧档案）但 `settings.wage` 存在
+        //     ⇒ 播种**单版本**，月份 = 本档案最早流水所在月（无流水 ⇒ 当月）。用 insertIfAbsent：
         //     本地已有的版本更权威，绝不能被一个"最近一次编辑的快照"覆盖。
         //  ③ 两者都没有 ⇒ 不动本地版本表（没有信息可用于推断）。
         val wageVersionDao = db.wageVersionDao()
@@ -252,15 +253,23 @@ class BackupManager(
             wageVersionDao.upsertAll(restored.map { it.toEntity() })
             restored.size
         } else {
-            val legacySettings = payload.optJSONObject("settings")
-            if (legacySettings == null) {
+            val seedProfile = payload.optJSONObject("settings")?.parseAppSettings()?.wage
+            // ⚠️ 与 `MIGRATION_7_8` **同一判据**（那道门关了，这道门也必须关）：
+            // `app_settings` 是整行 upsert —— 用户只改过「自动合并」或存过自由基金目标，
+            // 档案里的 `settings.wage` 就是出厂默认 `WageProfile()`。那不是"用户填过的时薪"，
+            // 播种它会让收入变回 ¥4333.33/月，而且档案播种用的是真实时间戳（旧实现），
+            // 连「请确认」三态提示都不会出现 —— 比迁移那条路更隐蔽。
+            // `WageProfile` 是 data class，`==` 逐字段比较 7 个值，等价于迁移 SQL 的 7 个 `<>`。
+            if (seedProfile == null || seedProfile == WageProfile()) {
                 0
             } else {
                 val seedMonth = earliestMonthKeyOf(txns)
+                // `nowMillis = 0` ⇒ `createdAtMillis == 0`：旧档案播种也是**预填、未经用户确认**，
+                // 与迁移播种共用 `WageLedger.isMigrationSeeded` 判据，UI 才会提示「请确认」。
                 val seed = WageVersion.of(
                     month = seedMonth,
-                    profile = legacySettings.parseAppSettings().wage,
-                    nowMillis = System.currentTimeMillis(),
+                    profile = seedProfile,
+                    nowMillis = 0L,
                 )
                 // 先查再插：`insertIfAbsent` 在"本地已有同月"时是空操作，
                 // 但 ImportOutcome 里的计数必须是**真实落库行数**（UI 的导入提示依赖它）。

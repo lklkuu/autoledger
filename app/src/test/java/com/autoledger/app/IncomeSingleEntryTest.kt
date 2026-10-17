@@ -5,7 +5,6 @@ import com.autoledger.core.model.WageProfile
 import com.autoledger.core.model.WageVersion
 import kotlin.test.Test
 import kotlin.test.assertEquals
-import kotlin.test.assertNull
 
 /**
  * **单一入口护栏（设计文档 R4）**：同一份时薪版本，三个地方算出的收入必须逐分相等。
@@ -99,9 +98,10 @@ class IncomeSingleEntryTest {
     @Test
     fun `every month resolves to exactly one version and never to two`() {
         // 单一入口的另一面：某月只会命中**一个**版本（否则同一个月会出现两种收入）。
-        // 早于最早版本的月份 ⇒ **没有版本**（收入 0）：只向后沿用，不向前回填。
+        // 早于最早版本的月份 ⇒ **收入 0**（金额不回填）；时薪参数仍回退到最早一行。
         val versions = versions()
-        assertNull(WageLedger.effectiveVersion(versions, "2024-06"))
+        assertEquals(0L, WageLedger.incomeForMonth(versions, "2024-06"))
+        assertEquals("2025-01", WageLedger.effectiveVersion(versions, "2024-06")?.month)
         assertEquals("2025-01", WageLedger.effectiveVersion(versions, "2025-01")?.month)
         assertEquals("2025-01", WageLedger.effectiveVersion(versions, "2025-03")?.month)
         assertEquals("2025-04", WageLedger.effectiveVersion(versions, "2025-04")?.month)

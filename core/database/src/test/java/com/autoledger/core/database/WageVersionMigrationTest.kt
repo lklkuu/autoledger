@@ -14,7 +14,6 @@ import java.time.YearMonth
 import java.time.ZoneId
 import kotlin.test.assertEquals
 import kotlin.test.assertNotNull
-import kotlin.test.assertNull
 import kotlin.test.assertTrue
 import kotlinx.coroutines.runBlocking
 import org.json.JSONObject
@@ -505,9 +504,9 @@ class WageVersionMigrationTest {
         assertNotNull(versions.firstOrNull())
         // 播种月本身
         assertEquals(1_300_000L, WageLedger.incomeForMonth(versions, "2025-03"))
-        // 早于播种月 ⇒ **没有收入记录**（0），不向前回填（v8 起「只向后沿用」）
+        // 早于播种月 ⇒ **收入 0**（金额不回填）；但时薪参数回退到最早一行（供工时换算）
         assertEquals(0L, WageLedger.incomeForMonth(versions, "2024-01"))
-        assertNull(WageLedger.effectiveVersion(versions, "2024-01"))
+        assertEquals("2025-03", WageLedger.effectiveVersion(versions, "2024-01")?.month)
         // 晚于播种月 ⇒ 沿用最近版本
         assertEquals(1_300_000L, WageLedger.incomeForMonth(versions, "2026-12"))
     }

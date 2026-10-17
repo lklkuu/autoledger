@@ -143,6 +143,9 @@ internal fun JSONArray?.parseWageVersions(): List<WageVersion> {
             // 宁可现算一个合理值，也不要让该月收入变成 0。
             monthlyIncomeMinor = o.optLong("monthlyIncomeMinor", profile.effectiveMonthlySalaryMinor),
             createdAtMillis = createdAt,
+            // `createdAtMillis` 缺失 ⇒ 兜底 0 ⇒ 被判为「预填、待用户确认」
+            // （见 WageLedger.isMigrationSeeded）。方向是安全的：这份数据确实不是
+            // 用户在本机 v8 里亲手保存的，提示确认比默认"已确认"更诚实。
             updatedAtMillis = o.optLong("updatedAtMillis", createdAt),
         )
     }

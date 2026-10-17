@@ -19,22 +19,26 @@ import java.time.ZoneId
  *   只有"收入汇总"改用本对象。这条差异有专门的单测钉子。
  * - 账本里的 `INCOME` 流水**不参与**收入汇总（见 [ExpenseMath.actualReceivedMinor]）。
  *
- * ## 版本解析规则（[effectiveVersion]）
+ * ## 版本解析规则（[effectiveVersion] / 收入专用解析）
  * 1. `month` 格式非法 ⇒ `null`；
  * 2. 取「`version.month <= month`」中**最大**的一条（同一月份出现多行时取列表**靠后**的一条，
  *    兼容手改库等脏数据，绝不抛异常）；
- * 3. 不存在这样的行（该月**早于最早版本**）⇒ `null`（收入 0）—— 见下节「只向后沿用」；
+ * 3. **该月早于最早版本**时，两个口径**分道扬镳**（见下节）；
  * 4. `versions` 为空 ⇒ `null`。
  *
- * ## 只向后沿用，**不向前回填**
- * 版本从生效月起**向后**沿用（改一次时薪，后续月份自动跟着变）；
- * 但**早于最早版本**的月份**没有收入记录**，一律记 0，不拿最早那条去"猜"。
+ * ## 金额不回填，工时参数可回退（**两个口径必须分开**）
+ * - **收入**（[incomeForMonth] / [incomeForYear] / [incomeForRange] / [cumulativeIncomeMinor]）：
+ *   `month < 最早版本 ⇒ 0`。**绝不**拿最早那条去"猜"。
+ *   理由：账本始于 2025-03 的用户点开 2024 年度，会被算出「12 × 月薪收入、0 支出、结余 +5 万」
+ *   —— 那时用户还没开始记账，甚至还没有这份工资。需求是「以生效月份为界，向后沿用」，
+ *   向前回填与它相反。代价是"补录一笔早于首版时薪的历史流水"时那个月只有支出没有收入
+ *   （结余为负）—— 这是**诚实**的：确实不知道那时的时薪。
+ * - **时薪参数**（[profileForMonth]）：`month < 最早版本 ⇒ 最早一行的 profile`。
+ *   它**只用于把金额换算成工时**（「花掉的时间」、明细行右侧工时），不参与任何金额计算；
+ *   这里回退到最接近的历史参数，比返回 `null` 让调用方掉回"今天的时薪"更贴近事实。
+ *   （返回 `null` 时调用方会回落 `settings.wage`，那是**当下**的值，对历史月份更不准。）
  *
- * 为什么不做向前回填：账本始于 2025-03 的用户点开 2024 年度，会被算出
- * 「12 × 月薪收入、0 支出、结余 +5 万」这类**凭空长出来的年度数据** ——
- * 那时用户还没开始记账，甚至还没有这份工资。需求是「以生效月份为界，当月及之后」，
- * 向前回填与它相反。代价是"补录一笔早于首版时薪的历史流水"时，那个月只有支出没有收入
- * （结余为负）—— 这是**诚实**的：我们确实不知道那时的时薪，宁可显示 0 也不编一个。
+ * 一句话：**不回填的是钱，可回退的是参数。**
  *
  * ## 月份比较一律用字符串比较
  * `YYYY-MM` 是定长的，字典序即时间序（`"2026-03" < "2026-04"`、`"2026-12" < "2027-01"`），
@@ -82,9 +86,13 @@ object WageLedger {
     // ------------------------------------------------------------------ 版本解析
 
     /**
-     * 解析某月生效的版本，规则见文件头。空列表 / 月份非法 / **早于最早版本** ⇒ `null`。
+     * 解析某月生效的版本（**允许向前回落到最早一行**），规则见文件头。
      *
-     * @return 生效版本；`versions` 为空、月份非法、或该月早于最早版本时 `null`
+     * 只用于**时薪参数**（[profileForMonth]）：金额口径必须用 [incomeVersion]，
+     * 它不会把最早版本回填到更早的月份。两者不可混用 —— 把本方法拿去算钱
+     * 会让账本开始前的年份凭空长出收入。
+     *
+     * @return 生效版本；`versions` 为空或月份非法时 `null`；早于最早版本时返回**最早一行**
      */
     fun effectiveVersion(versions: List<WageVersion>, month: String): WageVersion? {
         if (versions.isEmpty()) return null
@@ -102,23 +110,40 @@ object WageLedger {
                 break
             }
         }
-        // 该月早于最早版本 ⇒ 没有收入记录 ⇒ null（收入 0）。
-        // **刻意不回落到最早一条**：那会让账本开始前的年份/月份凭空长出收入（见文件头）。
-        return chosen
+        // 早于最早版本 ⇒ 回落最早一行。**这只对"时薪参数"成立**（工时换算需要一套可用的参数），
+        // 金额口径见 incomeVersion：那里必须返回 null，否则会回填出不存在的收入。
+        return chosen ?: clean.first()
     }
 
     /**
-     * 某月收入（分）。**没有可用的版本 ⇒ `0`**（无版本就没有可推算的收入，
-     * 展示层负责提示「未设置时薪」，绝不回落到 INCOME 流水求和 —— 那会引入第二口径）。
+     * **收入口径专用**解析：只取 `month <= 目标月` 的版本，**绝不向前回填**。
+     *
+     * 与 [effectiveVersion] 的差异只有"早于最早版本"这一种情形：
+     * 这里返回 `null`（⇒ 收入 0），那边返回最早一行（⇒ 工时参数可回退）。
+     * 刻意不复用 [effectiveVersion] 的回落逻辑：金额一旦回填，账本开始前的年度
+     * 就会凭空长出 12 个月收入（见文件头「金额不回填，工时参数可回退」）。
+     */
+    private fun incomeVersion(versions: List<WageVersion>, month: String): WageVersion? {
+        if (!isValidMonth(month)) return null
+        return versions
+            .filter { isValidMonth(it.month) && it.month <= month }
+            .maxByOrNull { it.month }
+    }
+
+    /**
+     * 某月收入（分）。**没有可用的版本 ⇒ `0`**：
+     * 「还没设过时薪」与「该月早于首个版本」都返回 0，绝不回落到 INCOME 流水求和
+     * （那会引入第二口径），也绝不拿最早版本向前回填（那会造出不存在的收入）。
      */
     fun incomeForMonth(versions: List<WageVersion>, month: String): Long =
-        effectiveVersion(versions, month)?.monthlyIncomeMinor ?: 0L
+        incomeVersion(versions, month)?.monthlyIncomeMinor ?: 0L
 
     /**
      * 某月生效的时薪参数快照（含工时参数）。
      *
      * 用于「花掉的时间」这类需要把金额换算成工时的卡片：切到历史月份时应当用**当时**的参数，
-     * 而不是今天的。无版本时返回 `null`，由调用方决定回落到 `settings.wage`。
+     * 而不是今天的。**早于最早版本时回落到最早一行**（参数可回退，金额不可 —— 见 [incomeForMonth]）；
+     * 完全没有版本时返回 `null`，由调用方回落到 `settings.wage`。
      */
     fun profileForMonth(versions: List<WageVersion>, month: String): WageProfile? =
         effectiveVersion(versions, month)?.profile

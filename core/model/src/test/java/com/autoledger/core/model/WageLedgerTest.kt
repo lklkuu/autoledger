@@ -93,12 +93,19 @@ class WageLedgerTest {
     fun `months before the first version have no income`() {
         val versions = ladder()
 
-        // 2025-12 早于最早版本（2026-01）⇒ **没有任何收入记录**，返回 null / 0。
-        // 刻意**不**回落到最早一条：账本始于 2026-01 的用户点开 2025 年度时，
-        // 不能凭空长出一整年的收入（那是"回填估算"，需求是"以生效月份为界，向后沿用"）。
-        assertNull(WageLedger.effectiveVersion(versions, "2025-12"))
+        // 2025-12 早于最早版本（2026-01）⇒ **收入 0**：金额不回填，不拿最早那条去"猜"。
+        // 否则账本始于 2026-01 的用户点开 2025 年度会凭空长出一整年的收入。
         assertEquals(0L, WageLedger.incomeForMonth(versions, "2025-12"))
-        assertNull(WageLedger.profileForMonth(versions, "2025-12"))
+        assertEquals(0L, WageLedger.incomeForYear(versions, 2025, "2026-12"))
+
+        // 但**时薪参数**可以回退到最早一行：它只把金额换算成工时，不参与任何金额计算。
+        // 一句话：不回填的是钱，可回退的是参数。
+        assertEquals("2026-01", WageLedger.effectiveVersion(versions, "2025-12")?.month)
+        assertEquals(
+            WageLedger.effectiveVersion(versions, "2026-01")?.profile,
+            WageLedger.profileForMonth(versions, "2025-12"),
+            "早于首版时，工时参数回退到最早一行",
+        )
     }
 
     @Test
