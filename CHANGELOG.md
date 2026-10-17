@@ -6,6 +6,23 @@
 
 ## [Unreleased]
 
+### 计划中
+- AI 收支判定上线（实现与测试已全部就位，当前仅由 `AiFeatureGate.ENTRY_VISIBLE = false` 隐藏入口）
+- 多币种（当前金额一律按 CNY 处理）
+- 云同步真实后端（当前仅有接口与空实现，不发送任何数据）
+- 其余页面的实时刷新**复核**：各 store 其实都已订阅 Room Flow（账单 `observeAll`、
+  采集箱 `observeRaw`、发现 `observeRange`/`observeSince`、自由 `observeAll`、退款 `observeOrders`、
+  分类管理 `observeCategories`），剩下的是逐页确认「每种写库路径都有对应的失效触发」，
+  而不是继续铺管道（此条原写作「其余页面接入 Room Flow」，与代码现状不符，2026-10-06 更正）
+- 加密备份的 UI 入口（后端能力已具备，当前设置页只有明文导出/导入）
+- 自适应布局（当前为手机竖屏优化）
+- 支付宝规则的**真机样本补充**：按约定不凭猜加宽触发词，待真机样本再针对性补齐
+  （未覆盖句式与未验证前提的完整清单见 1.1.10 的「已知限制」）。
+- 主题三态（浅色 / 夜间 / **跟随系统**）待确认：当前只有前两档且默认浅色。
+  改三态需要换存储 key —— `getBoolean("dark_theme", false)` **无法区分「没设过」与「显式选浅色」**。
+
+## [1.1.13] - 2026-10-17
+
 ### 变更
 - **收入口径改为「时薪推算的月度到手收入」，并按月版本化**：
   - 收入不再等于「INCOME 流水合计」。流水来自通知抓取，覆盖不全（某月没抓到工资短信，
@@ -60,21 +77,6 @@
 - **`ExpenseMath.actualReceivedMinor` 保留为对账 API**：生产代码当前没有调用点
   （收入已全部走 `WageLedger`），它只用于「实际到账」的语义定义与将来的对账页；
   明细行标签「实际到账」体现的正是这个口径。
-
-### 计划中
-- AI 收支判定上线（实现与测试已全部就位，当前仅由 `AiFeatureGate.ENTRY_VISIBLE = false` 隐藏入口）
-- 多币种（当前金额一律按 CNY 处理）
-- 云同步真实后端（当前仅有接口与空实现，不发送任何数据）
-- 其余页面的实时刷新**复核**：各 store 其实都已订阅 Room Flow（账单 `observeAll`、
-  采集箱 `observeRaw`、发现 `observeRange`/`observeSince`、自由 `observeAll`、退款 `observeOrders`、
-  分类管理 `observeCategories`），剩下的是逐页确认「每种写库路径都有对应的失效触发」，
-  而不是继续铺管道（此条原写作「其余页面接入 Room Flow」，与代码现状不符，2026-10-06 更正）
-- 加密备份的 UI 入口（后端能力已具备，当前设置页只有明文导出/导入）
-- 自适应布局（当前为手机竖屏优化）
-- 支付宝规则的**真机样本补充**：按约定不凭猜加宽触发词，待真机样本再针对性补齐
-  （未覆盖句式与未验证前提的完整清单见 1.1.10 的「已知限制」）。
-- 主题三态（浅色 / 夜间 / **跟随系统**）待确认：当前只有前两档且默认浅色。
-  改三态需要换存储 key —— `getBoolean("dark_theme", false)` **无法区分「没设过」与「显式选浅色」**。
 
 ## [1.1.12] - 2026-10-16
 
@@ -680,7 +682,8 @@
 - 未做 Android 自适应布局，当前为手机竖屏优化
 - 捐赠渠道为**配置占位**：填入收款方式后自动在设置页出现
 
-[Unreleased]: https://github.com/lklkuu/autoledger/compare/v1.1.12...HEAD
+[Unreleased]: https://github.com/lklkuu/autoledger/compare/v1.1.13...HEAD
+[1.1.13]: https://github.com/lklkuu/autoledger/releases/tag/v1.1.13
 [1.1.12]: https://github.com/lklkuu/autoledger/releases/tag/v1.1.12
 [1.1.11]: https://github.com/lklkuu/autoledger/releases/tag/v1.1.11
 [1.1.10]: https://github.com/lklkuu/autoledger/releases/tag/v1.1.10

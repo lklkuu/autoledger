@@ -16,10 +16,10 @@ android {
         targetSdk = 35
         // versionCode 是**分包基准**：三个 ABI 包实际为 base*1000 + abiOffset
         // （armv7=1 / arm64=2 / universal=9）⇒ 1.1.9=11001/11002/11009，1.1.10=12001/12002/12009，
-        // 1.1.11=13001/13002/13009，1.1.12=14001/14002/14009。
+        // 1.1.11=13001/13002/13009，1.1.12=14001/14002/14009，1.1.13=15001/15002/15009。
         // 只改这里的 base，不要在 productFlavors / splits 里另算一份。
-        versionCode = 14
-        versionName = "1.1.12"
+        versionCode = 15
+        versionName = "1.1.13"
 
         // 体积优化 ③：收敛语言资源。
         // 实测（aapt2 dump configurations，收敛前）：resources.arsc 共 91 个配置，其中
