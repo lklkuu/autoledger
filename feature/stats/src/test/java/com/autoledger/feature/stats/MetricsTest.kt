@@ -636,6 +636,19 @@ class MetricsTest {
     }
 
     @Test
+    fun `subtitle explains that a range before the first version counts no income`() = runBlocking {
+        // 第 ④ 态（防御性）：versions 非空，但整个统计窗口早于首个版本 ⇒ 收入恒为 0（不回填）。
+        // 生产上今日页只传本月窗口、发现页不渲染这张卡，所以当前不可达；
+        // 留着是为了将来有人给这卡传历史月窗口时，不会显示"结余 = 收入 − 支出"这种误导性口径。
+        val card = cardWith(versionAt(month = "2026-01"))
+            .compute(monthRange(), repo(), null) as MetricResult.Scalar
+
+        assertEquals("0", card.stats[0].text, "收入必须是 0")
+        assertEquals("早于首个时薪版本，不计收入", card.subtitle)
+        assertEquals(0L, card.valueMinor, "没有收入记录时，结余 = −净支出（此处无支出 ⇒ 0）")
+    }
+
+    @Test
     fun `month aligned range counts exactly one month while a mid month range counts none`() = runBlocking {
         // 收入是**月度应计值，不按天摊分**：3/15–4/14 只含 4/1 一个月首 ⇒ 一个月收入；
         // 3/15–3/20 不含任何月首 ⇒ 0。这条锁住 incomeForRange 的边界语义不被"帮用户摊分"改坏。

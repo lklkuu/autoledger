@@ -85,14 +85,20 @@ fun FreedomScreen(container: AppContainer) {
     val startLabel = state.startYearMonth?.let { FreedomMath.yearMonthLabel(it) } ?: "—"
     // 空账本时累计按 0 处理（FreedomMath 口径），这句提示要把它讲清楚，
     // 否则用户会以为「填了存款却显示 0」是 bug。
-    // 三种状态都必须显式说明，否则用户无法判断"数字不对"是没设、待确认、还是真变了：
+    // 四种状态都必须显式说明，否则用户无法判断"数字不对"是没设、待确认、还是真变了：
     //   ① 没设过时薪 ⇒ 收入恒为 0（不是"这个月没赚钱"）；
     //   ② 只有升级预填的版本 ⇒ 数字来自升级前的时薪快照，口径已变，请他确认；
-    //   ③ 正常 ⇒ 说明按月版本合计。
+    //   ③ 空账本 ⇒ 累计按 0 处理；
+    //   ④ 正常 ⇒ 说明按月版本合计；**时薪晚于账本起始月时必须点明从哪个月起计**
+    //      （金额不回填：首版之前的月份只有支出、没有收入）。
+    val firstVersionMonth = state.firstWageVersionMonth
+    val hourlyStartsLater = firstVersionMonth != null && firstVersionMonth > startLabel
     val cumulativeHint = when {
         !state.hasWageVersion -> "未设置时薪：收入按 ¥0 计，去「时薪」页填写"
         state.wageVersionSeeded -> "时薪为升级前保存的值，请到「时薪」页确认"
         state.monthsUsed <= 0 -> "账本暂无流水，累计按 0 处理"
+        hourlyStartsLater -> "起始月 $startLabel 起 ${state.monthsUsed} 个月" +
+            "（时薪自 ${yyyyMmLabel(firstVersionMonth!!)} 起计，此前月份不计收入）"
         else -> "起始月 $startLabel 起 ${state.monthsUsed} 个月（按各月时薪版本合计）"
     }
 

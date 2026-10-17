@@ -87,6 +87,16 @@ class WageLedgerTest {
             "同月两行必须取后写的那条",
         )
         assertEquals("2026-01", picked?.month)
+
+        // 收入口径必须与参数口径**取同一条**（两个函数共用文件头规则 2）。
+        // 用 `maxByOrNull` 的旧实现会在相等时保留第一个 ⇒ 标签按 2 月版、钱按 1 月版。
+        assertEquals(
+            profile(2_000_000L).effectiveMonthlySalaryMinor,
+            WageLedger.incomeForMonth(duplicate, "2026-01"),
+            "incomeForMonth 也必须取靠后一条（tie-break 与 effectiveVersion 一致）",
+        )
+        // 反向锁：绝不能取第一个（1_000_000 × 13 / 12 = 1_083_333）
+        assertNotEquals(1_083_333L, WageLedger.incomeForMonth(duplicate, "2026-01"))
     }
 
     @Test

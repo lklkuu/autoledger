@@ -18,6 +18,7 @@ import com.autoledger.core.model.endDate
 import com.autoledger.core.model.formatYuan
 import com.autoledger.core.model.platform.PlatformCatalog
 import com.autoledger.core.model.startDate
+import com.autoledger.core.model.startMonthKey
 import java.time.YearMonth
 
 /**
@@ -190,16 +191,27 @@ class IncomeBalanceMetric(private val versions: () -> List<WageVersion>) : Metri
         val income = WageLedger.incomeForRange(versionsNow, range.startDate, range.endDate)
         val net = ExpenseMath.netExpenseMinor(txns)
         val balance = income - net
+        // 首个版本月：用于第 ④ 态（区间整段早于首版 ⇒ 收入恒为 0）。
+        // 生产上今日页只传本月窗口、发现页不渲染本卡，所以这一支目前不可达；
+        // 留着是为了将来有人给这张卡传历史月窗口时不至于显示"结余 = 收入 − 支出"这类
+        // 误导性口径（收入其实是 0，因为金额不回填）。
+        val firstVersionMonth = versionsNow
+            .map { it.month }
+            .filter { WageLedger.isValidMonth(it) }
+            .minOrNull()
         return MetricResult.Scalar(
             providerId = INCOME_BALANCE_ID,
             title = title,
             // 口径说明留在副标题（原来这句在 secondaryText，与 subtitle 的拼串重复显示了一遍）
-            // 三种状态必须区分（见 WageLedger.isMigrationSeeded）：
+            // 四种状态必须区分：
             //   ① 没有任何版本 ⇒ 收入按 0 计，指路去设置；
-            //   ② 全是「升级预填、未确认」的版本 ⇒ 如实说明来源，提示去确认（v8 口径变化会让数字变）；
-            //   ③ 用户已确认过 ⇒ 正常口径说明。
+            //   ② 区间整段早于首版 ⇒ 收入 0 是"没有记录"（不回填），必须说清；
+            //   ③ 全是「预填、未确认」的版本 ⇒ 如实说明来源，提示去确认（v8 口径变化会让数字变）；
+            //   ④ 用户已确认过 ⇒ 正常口径说明。
             subtitle = when {
                 versionsNow.isEmpty() -> "未设置时薪：收入按 ¥0 计，去「时薪」页填写"
+                firstVersionMonth != null && range.startMonthKey < firstVersionMonth ->
+                    "早于首个时薪版本，不计收入"
                 WageLedger.allMigrationSeeded(versionsNow) ->
                     "收入按时薪推算（时薪为升级前保存的值，请到「时薪」页确认）"
                 else -> "结余 = 时薪推算收入 − 支出（退款已冲抵）"

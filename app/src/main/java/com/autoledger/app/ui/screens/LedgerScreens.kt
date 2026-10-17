@@ -769,18 +769,21 @@ internal fun platformFilterChips(currentFilter: String?): List<PlatformEntry> {
  */
 private fun incomeHintOf(versions: List<WageVersion>, vararg monthKeys: String): String {
     if (versions.isEmpty()) return "未设置时薪，去「时薪」页填写"
-    if (WageLedger.allMigrationSeeded(versions)) {
-        return "时薪为升级前保存的值，请到「时薪」页确认"
-    }
     val earliest = versions
         .map { it.month }
         .filter { WageLedger.isValidMonth(it) }
         .minOrNull()
         ?: return "未设置时薪，去「时薪」页填写"
 
-    // 金额口径「不回填」：整段区间都早于首个版本时，收入是 0，不能标一个"按 X 月推算"骗人
+    // 金额口径「不回填」：整段区间都早于首个版本时，收入是 0，不能标一个"按 X 月推算"骗人。
+    // 这一支排在"预填待确认"**之前**：此时收入为 0 的原因是"没有记录"，比"来源待确认"更贴切
+    // （也与 IncomeBalanceMetric.subtitle 的判定顺序保持一致）。
     val covered = monthKeys.filter { it >= earliest }
     if (covered.isEmpty()) return "早于首个时薪版本，不计收入"
+
+    if (WageLedger.allMigrationSeeded(versions)) {
+        return "时薪为升级前保存的值，请到「时薪」页确认"
+    }
 
     val effectiveMonths = covered
         .mapNotNull { WageLedger.effectiveVersion(versions, it)?.month }

@@ -70,6 +70,15 @@ class FreedomStore(private val container: AppContainer) {
          * 判据由 [WageLedger.allMigrationSeeded] 统一给出，UI 不自己发明规则。
          */
         val wageVersionSeeded: Boolean = false,
+        /**
+         * **首个时薪版本所在月** `YYYY-MM`；没有任何合法版本时为 `null`。
+         *
+         * 为什么需要它：`cumulativeIncomeMinor` 对**首版之前**的月份返回 0（金额不回填），
+         * 而 [monthsUsed] 是"账本起始月 → 当月"的自然月数。两者之差就是"有支出但无收入"的月份。
+         * 少了这个字段，页面只能宣称"起始月 X 起 N 个月"，而实际参与合计的月份更少 ——
+         * 文案与数字对不上（导入过旧账单、最近才设时薪的用户必现）。
+         */
+        val firstWageVersionMonth: String? = null,
     )
 
     private val _state = MutableStateFlow(State())
@@ -144,6 +153,8 @@ class FreedomStore(private val container: AppContainer) {
                     monthsUsed = FreedomMath.monthsUsed(startYearMonth, FreedomMath.yearMonthIndex(now, zone)),
                     hasWageVersion = versions.isNotEmpty(),
                     wageVersionSeeded = WageLedger.allMigrationSeeded(versions),
+                    // 版本表按月升序（DAO ORDER BY、WageBook 也保持有序），首个即最早
+                    firstWageVersionMonth = versions.firstOrNull { WageLedger.isValidMonth(it.month) }?.month,
                 )
             }
     }

@@ -122,12 +122,18 @@ object WageLedger {
      * 这里返回 `null`（⇒ 收入 0），那边返回最早一行（⇒ 工时参数可回退）。
      * 刻意不复用 [effectiveVersion] 的回落逻辑：金额一旦回填，账本开始前的年度
      * 就会凭空长出 12 个月收入（见文件头「金额不回填，工时参数可回退」）。
+     *
+     * 同月重复行必须与 [effectiveVersion] **取同一条**（文件头规则 2：取列表靠后的一条）：
+     * 所以先 `sortedBy`（Kotlin 的排序是稳定的，入参顺序在相等键上保持）再 `lastOrNull`。
+     * 用 `maxByOrNull` 是错的 —— 它在相等时保留**第一个**，会让"标签按 2 月版、钱按 1 月版"
+     * 这类脏数据下自相矛盾（生产上 PK 保证唯一，但两个函数共用一份文档，不能各自表述）。
      */
     private fun incomeVersion(versions: List<WageVersion>, month: String): WageVersion? {
         if (!isValidMonth(month)) return null
         return versions
-            .filter { isValidMonth(it.month) && it.month <= month }
-            .maxByOrNull { it.month }
+            .filter { isValidMonth(it.month) }
+            .sortedBy { it.month }
+            .lastOrNull { it.month <= month }
     }
 
     /**
@@ -148,13 +154,13 @@ object WageLedger {
     fun profileForMonth(versions: List<WageVersion>, month: String): WageProfile? =
         effectiveVersion(versions, month)?.profile
 
-    // ------------------------------------------------------------------ 迁移预填标记
+    // ------------------------------------------------------------------ 预填标记
 
     /**
-     * 该版本是否由 `MIGRATION_7_8` 从升级前的 `app_settings` **预填**、用户尚未在 v8 里确认。
+     * 该版本是否**预填**（来自 `MIGRATION_7_8` 或旧档案导入）、用户尚未在 v8 里确认。
      *
-     * 判据是 `createdAtMillis == 0L`：迁移是唯一会写 0 的地方，真实保存
-     * （`WageBook.save` / 旧备份档案播种）用的都是真实时间戳。
+     * 判据是 `createdAtMillis == 0L`：**预填**（迁移播种 / 旧档案播种）一律写 0；
+     * 用户在 v8 里真实保存（`WageBook.save`）写真实时间戳。
      *
      * 为什么需要它：预填值来自用户在 v7 里存的时薪（可能只是"进过时薪页随手留下"的值），
      * 而 v8 改了口径（13 薪摊平后数字会变）。把"预填"与"用户确认过"区分开，
@@ -163,7 +169,7 @@ object WageLedger {
     fun isMigrationSeeded(version: WageVersion): Boolean = version.createdAtMillis == 0L
 
     /**
-     * 所有版本都还是迁移预填的（= 用户升级后从未保存过时薪）。
+     * 所有版本都还是**预填**的（= 用户升级后从未在 v8 里保存过时薪）。
      *
      * 空列表返回 `false`：那是「完全没设过时薪」，与「有预填值待确认」是两种不同的提示。
      */
