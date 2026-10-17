@@ -114,14 +114,15 @@ class AiSettingsMigrationTest {
     @Test
     fun `version contract and migration chain stay in sync`() {
         // 漏登记 ALL_MIGRATIONS 与推进 DATABASE_VERSION 是同一个事故的两面，先静态钉死。
-        assertEquals(7, LedgerSchema.DATABASE_VERSION, "DATABASE_VERSION 必须已推进到 7")
+        // v8（时薪按月版本表）落地后这里的上限随之推进；本用例仍然钉住 6→7 这一段存在。
+        assertEquals(8, LedgerSchema.DATABASE_VERSION, "DATABASE_VERSION 必须已推进到 8（v8 = wage_versions）")
         assertTrue(
             LedgerDatabaseFactory.ALL_MIGRATIONS.any { it.startVersion == 6 && it.endVersion == 7 },
             "ALL_MIGRATIONS 必须含 6→7 的一段，否则升级会退回破坏性重建",
         )
-        // 链必须连续：4→5→6→7，不允许有断点。
+        // 链必须连续：4→5→6→7→8，不允许有断点。
         val versions = LedgerDatabaseFactory.ALL_MIGRATIONS.map { it.startVersion to it.endVersion }
-        assertEquals(listOf(4 to 5, 5 to 6, 6 to 7), versions, "迁移链必须逐版本连续")
+        assertEquals(listOf(4 to 5, 5 to 6, 6 to 7, 7 to 8), versions, "迁移链必须逐版本连续")
     }
 
     @Test

@@ -131,10 +131,14 @@ class ExpenseMathTest {
         assertEquals(0L, net.values.sum())
     }
 
-    // ------------------------------------------------------------ 收入口径（v1.1.6）
+    // ------------------------------------------------------------ 实际到账口径（v8 改名）
+    //
+    // ⚠️ 本段断言的是「实际到账合计」= INCOME 流水合计，**只用于对账 / 明细展示**。
+    // 收入汇总的唯一真源是 WageLedger（版本化的月度应计值），见 WageLedgerTest。
+    // 这些用例保留是为了钉住「改名不改行为」以及 MERGED / IGNORED 的过滤语义。
 
     @Test
-    fun `income sums absolute amounts and ignores everything else`() {
+    fun `actual received sums absolute amounts and ignores everything else`() {
         val list = listOf(
             txn("i1", 9_000, TxnType.INCOME),
             txn("i2", 1_000, TxnType.INCOME),
@@ -143,35 +147,35 @@ class ExpenseMathTest {
             txn("t1", -5_000, TxnType.TRANSFER),
         )
         // 只计 INCOME；支出/退款/划转一律不计（退款是冲抵项、划转不是收支）
-        assertEquals(10_000L, ExpenseMath.incomeMinor(list))
+        assertEquals(10_000L, ExpenseMath.actualReceivedMinor(list))
     }
 
     @Test
-    fun `income takes the absolute value regardless of the sign`() {
+    fun `actual received takes the absolute value regardless of the sign`() {
         // 收入的正负号是采集侧的历史约定（银行卡入账短信识别为负的情况），合计只取金额大小
-        assertEquals(3_000L, ExpenseMath.incomeMinor(listOf(txn("i1", 3_000, TxnType.INCOME))))
-        assertEquals(3_000L, ExpenseMath.incomeMinor(listOf(txn("i2", -3_000, TxnType.INCOME))))
+        assertEquals(3_000L, ExpenseMath.actualReceivedMinor(listOf(txn("i1", 3_000, TxnType.INCOME))))
+        assertEquals(3_000L, ExpenseMath.actualReceivedMinor(listOf(txn("i2", -3_000, TxnType.INCOME))))
     }
 
     @Test
-    fun `income excludes merged and ignored rows`() {
+    fun `actual received excludes merged and ignored rows`() {
         val list = listOf(
             txn("i1", 9_000, TxnType.INCOME),
             txn("i-merged", 5_000, TxnType.INCOME, status = TxnStatus.MERGED),
             txn("i-ignored", 7_000, TxnType.INCOME, status = TxnStatus.IGNORED),
         )
-        assertEquals(9_000L, ExpenseMath.incomeMinor(list), "被合并 / 被忽略的收入都不算账")
+        assertEquals(9_000L, ExpenseMath.actualReceivedMinor(list), "被合并 / 被忽略的收入都不算账")
     }
 
     @Test
-    fun `income and net expense never cancel each other`() {
+    fun `actual received and net expense never cancel each other`() {
         // 两条独立口径：退款只冲抵支出，绝不冲抵收入（否则「退款」会被当成"少赚了钱"）
         val list = listOf(
             txn("i1", 1_000_00, TxnType.INCOME),
             expense("e1", 1_350_00),
             refund("r1", 200_00),
         )
-        assertEquals(1_000_00L, ExpenseMath.incomeMinor(list))
+        assertEquals(1_000_00L, ExpenseMath.actualReceivedMinor(list))
         assertEquals(1_150_00L, ExpenseMath.netExpenseMinor(list), "退款只冲抵支出")
     }
 }

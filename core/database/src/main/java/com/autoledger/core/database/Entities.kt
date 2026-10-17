@@ -284,3 +284,47 @@ data class ResourceBalanceEntity(
     val availableQuantity: Int,
     val expiresAtMillis: Long?,
 )
+
+/**
+ * 时薪按月版本（v8 新增）。主键 = 生效月 `YYYY-MM`。
+ *
+ * ## 为什么要有这张表
+ * `app_settings` 只有一行 `wage`，改一次时薪就把上一版**覆盖**掉，
+ * 于是历史月份的收入只能靠"用今天的时薪重算"来展示 —— 那正是用户明令禁止的回溯覆盖。
+ * 把「某月的时薪」落成独立行之后，"改时薪不回写历史"从**约定**变成了**数据结构的性质**。
+ *
+ * ## 为什么整行存全量快照而不是「只存变动字段」
+ * 历史月份必须能**独立复现**当时的收入口径，差量存储会让「某字段从哪版开始生效」
+ * 变成需要回溯推导的问题，且一旦漏一个字段就静默错。
+ * 行数极少（用户一年改几次），存储成本可忽略。
+ *
+ * ## 列名约定（踩过坑，务必遵守）
+ * 列名沿用本项目约定：**不带 `@ColumnInfo` 的属性名就是列名**（camelCase），
+ * 见 `app_settings` / `user_platforms`；只有显式 `@ColumnInfo` 才是 snake_case。
+ * 本项目的 Room **没有开启** camelCase→snake_case 转换，把 `monthlyIncomeMinor`
+ * 写成 `monthly_income_minor` 会让 `exportSchema` 校验报 "migration didn't properly handle"
+ * ⇒ 退回 `fallbackToDestructiveMigration` ⇒ **全库流水清空**。
+ *
+ * ## 索引 / 默认值
+ * - 主键 `month` 自带隐式索引（`sqlite_autoindex_wage_versions_1`）⇒ **不额外建索引**；
+ * - 全部 NOT NULL 且**不给 `DEFAULT`**：新表不需要为旧行补值
+ *   （`ALTER TABLE` 的 DEFAULT 惯例只针对既有表加列，见 MIGRATION_4_5 / 6_7）。
+ */
+@Entity(tableName = "wage_versions")
+data class WageVersionEntity(
+    /** 生效月，"YYYY-MM"（当月及之后生效）。 */
+    @PrimaryKey val month: String,
+    val monthlyNetSalaryMinor: Long,
+    val payMonthsPerYear: Int,
+    val monthlyWorkCostMinor: Long,
+    val workDaysPerMonth: Double,
+    val dailyOfficeHours: Double,
+    val dailyCommuteMinutes: Int,
+    val dailyOvertimeHours: Double,
+    /** 折算后的月度收入（分），写入时锁定，公式变更不回写历史。 */
+    val monthlyIncomeMinor: Long,
+    val createdAtMillis: Long,
+    val updatedAtMillis: Long,
+    /** 行级结构版本，与 user_platforms / transactions 一致（便于将来单行自救）。 */
+    val schemaVersion: Int,
+)

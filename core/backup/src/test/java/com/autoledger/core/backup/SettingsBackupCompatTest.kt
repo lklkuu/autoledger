@@ -101,4 +101,40 @@ class SettingsBackupCompatTest {
         assertEquals(12_000_000L, parsed.goal.targetMinor)
         assertEquals(3_000_000L, parsed.goal.currentMinor)
     }
+
+    // ------------------------------------------------------------------ v8：时薪版本数组与 settings 段解耦
+
+    @Test
+    fun `legacy single wage object still round trips after the v8 change`() {
+        // 老档案只有 `wage` 单对象（没有 `wageVersions`）：必须照旧能导入、照旧能导出。
+        // 这条防的是「改用版本表后顺手把老字段删了」——那会让所有存量档案丢时薪。
+        val legacy = JSONObject(
+            """
+            {"wage":{"monthlyNetSalaryMinor":1200000,"payMonthsPerYear":13,
+             "monthlyWorkCostMinor":85000,"workDaysPerMonth":21.75,
+             "dailyOfficeHours":9.0,"dailyCommuteMinutes":48,"dailyOvertimeHours":0.6},
+             "goal":{"targetMinor":12000000,"currentMinor":3000000},"autoMerge":true}
+            """.trimIndent(),
+        )
+
+        val parsed = legacy.parseAppSettings()
+        assertEquals(1_200_000L, parsed.wage.monthlyNetSalaryMinor, "老档案的时薪必须原样导入")
+
+        val reExported = parsed.toSettingsJson()
+        assertEquals(
+            1_200_000L,
+            reExported.getJSONObject("wage").getLong("monthlyNetSalaryMinor"),
+            "`wage` 单对象必须继续导出（时薪页初值 / 旧版本导入都依赖它）",
+        )
+        assertTrue(reExported.has("wage"), "wage 段不得被版本表取代")
+    }
+
+    @Test
+    fun `settings json never carries the wage version array`() {
+        // 版本数组必须放在 payload **根级**（与 platforms 同级）。
+        // 若误放进 settings 段，`db.settingsDao().global()?.let { … }` 在设置行缺失时会
+        // 把版本数组一起丢掉（见 BackupManager.buildPayload 的注释）。
+        val json = sample.toSettingsJson()
+        assertFalse(json.has("wageVersions"), "settings 段里不允许出现 wageVersions")
+    }
 }

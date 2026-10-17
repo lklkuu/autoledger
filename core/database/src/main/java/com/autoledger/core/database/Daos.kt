@@ -325,3 +325,46 @@ interface ResourceBalanceDao {
     @Query("SELECT * FROM resource_balances WHERE kind = :kind AND resourceId = :resourceId LIMIT 1")
     suspend fun find(kind: DeductionKind, resourceId: String): ResourceBalanceEntity?
 }
+
+/**
+ * 时薪按月版本（v8 新增表）。
+ *
+ * ## 三种写入语义为什么必须分开
+ * - [upsert] / [upsertAll]：**覆盖**同月行。前者用于用户改时薪（当月），
+ *   后者用于导入新档案（"以档案为准"是用户显式表达"恢复这份快照"的意图）；
+ * - [insertIfAbsent]：**不覆盖**同月行。用于导入**旧档案**（没有 `wageVersions` 一节）时的播种
+ *   —— 本地已有的版本更权威，档案里的 `settings.wage` 只是"最近一次编辑的快照"。
+ *
+ * ## 为什么没有 UPDATE ... ON CONFLICT
+ * minSdk 26 的 SQLite 是 3.18，不支持 `INSERT ... ON CONFLICT DO UPDATE`；
+ * "同月二次保存要保留 createdAt"由调用方读-改-写实现（见 `WageBook.save`），
+ * 这里只提供最朴素的覆盖语义。
+ */
+@Dao
+interface WageVersionDao {
+
+    /** 按主键覆盖（调用方负责保留 `createdAtMillis`）。 */
+    @Upsert suspend fun upsert(version: WageVersionEntity)
+
+    /** 导入新档案：以档案为准覆盖同月行。 */
+    @Upsert suspend fun upsertAll(versions: List<WageVersionEntity>)
+
+    /** 旧档案播种：同月已存在则不覆盖（用户本地版本更权威）。 */
+    @Insert(onConflict = OnConflictStrategy.IGNORE)
+    suspend fun insertIfAbsent(version: WageVersionEntity)
+
+    /** 月份升序（字典序 = 时间序），便于 `WageLedger` 直接使用。 */
+    @Query("SELECT * FROM wage_versions ORDER BY month ASC")
+    suspend fun listAll(): List<WageVersionEntity>
+
+    /** 实时订阅：时薪改动（含备份导入）后，版本卡片与收入展示自动刷新。 */
+    @Query("SELECT * FROM wage_versions ORDER BY month ASC")
+    fun observeAll(): Flow<List<WageVersionEntity>>
+
+    @Query("SELECT * FROM wage_versions WHERE month = :month LIMIT 1")
+    suspend fun find(month: String): WageVersionEntity?
+
+    /** `REPLACE_ALL` 导入前清表（"以档案为准"）。 */
+    @Query("DELETE FROM wage_versions")
+    suspend fun clear()
+}

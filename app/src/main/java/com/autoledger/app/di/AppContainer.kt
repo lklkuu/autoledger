@@ -12,6 +12,7 @@ import androidx.core.app.NotificationManagerCompat
 import com.autoledger.app.R
 import com.autoledger.app.NotifyOnRecordDefault
 import com.autoledger.app.UserSettings
+import com.autoledger.app.WageBook
 import com.autoledger.app.ui.MainActivity
 import com.autoledger.app.ui.nav.Destination
 import com.autoledger.core.backup.BackupManager
@@ -189,6 +190,19 @@ class AppContainer(context: Context) {
 
     /** 设置：Room 单行存储，金额以「分」存，随账本备份导出。惰性初始化避免启动期触碰数据库。 */
     val settings: UserSettings by lazy { UserSettings(database.settingsDao(), appScope).also { it.init() } }
+
+    /**
+     * 时薪按月版本（v8）：**收入的唯一来源**。
+     *
+     * `init()` 订阅 `wage_versions` 表 ⇒ 用户改时薪（当月 upsert）、备份导入、迁移播种
+     * 都会让 [WageBook.versions] 实时刷新；调用方把版本列表交给 `WageLedger` 换算成收入。
+     *
+     * ⚠️ 与 [settings] 是**双写**关系而不是替代：`app_settings.wage` 降级为
+     * 「最近一次编辑的快照」（时薪页初值 / 旧备份 / 无版本兜底仍在读它）。
+     */
+    val wages: WageBook by lazy {
+        WageBook(database.wageVersionDao(), settings, appScope).also { it.init() }
+    }
 
     /**
      * AI 接口密钥保险箱（Keystore 包裹，**不进 Room、不进备份**）。
@@ -419,6 +433,9 @@ class AppContainer(context: Context) {
                 // 后台预热：在 IO 线程先把加密库与设置建好，避免 UI 首次触碰时主线程兜底加载。
                 runCatching { database }
                 runCatching { settings }
+                // 时薪版本表：订阅 + 首次加载。放在启动期而不是首次进「时薪 / 账单」页，
+                // 以免用户第一次看到的是"空版本 ⇒ 收入 0"的中间态。
+                runCatching { wages }
                 // outbox 条数上限淘汰（保留最近 5000 条）：sync_outbox 只增不删，长期使用会无限膨胀。
                 // 放在启动时做一次（导入完成后 BackupManager 也会做一次），**绝不**放进每笔写事务。
                 runCatching { repository.trimOutbox() }

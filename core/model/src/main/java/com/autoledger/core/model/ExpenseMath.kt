@@ -42,17 +42,25 @@ object ExpenseMath {
         grossExpenseMinor(txns) - refundMinor(txns)
 
     /**
-     * **收入合计（正数）**。
+     * **实际到账合计（正数）—— 仅用于对账 / 明细，不得用于收入汇总。**
      *
-     * 为什么要单列：收入此前**没有单一真源** —— 账单页月汇总 / 年度汇总 / 逐月趋势表三处各写一遍
-     * `filter { type == INCOME }.sumOf { abs(amountMinor) }`，改口径要改三处、漏一处就漂移。
+     * ## 为什么改名（原 `incomeMinor`）
+     * 旧名字让它看起来是「收入的真源」，于是账单页月汇总 / 年度汇总 / 逐月趋势表三处都用它，
+     * 而它统计的是**通知抓到的 INCOME 流水**：覆盖不全（没抓到工资短信那个月就是 0），
+     * 且与用户填的时薪口径通常相差数倍。
      *
-     * 口径与支出侧对齐：只计 `INCOME` 且排除 MERGED / IGNORED；**INCOME 不参与支出冲抵**
+     * v8 起收入的唯一真源是 [WageLedger]（版本化的月度应计值）。改名并**删掉旧名**是
+     * 刻意的机械手段：让编译器把每一个遗留调用点都报出来，这是保证「穷举完成」的唯一办法。
+     * 若某处确实需要"这月实际到账多少"，请显式写 [actualReceivedMinor]，并在展示上
+     * 与「推算收入」区分（明细行标签为「实际到账」）。
+     *
+     * ## 口径
+     * 只计 `INCOME` 且排除 MERGED / IGNORED；**INCOME 不参与支出冲抵**
      * （见文件头 KDoc：退款才是冲抵项，内部划转与收入都不是），故不复用 netExpenseMinor 的减法。
      * 金额取绝对值：收入的正负号是采集侧的历史约定（银行卡入账短信识别为正），
      * 这里只要金额大小，不让符号影响合计。
      */
-    fun incomeMinor(txns: List<LedgerTransaction>): Long =
+    fun actualReceivedMinor(txns: List<LedgerTransaction>): Long =
         txns.filter { it.type == TxnType.INCOME && it.status != TxnStatus.MERGED && it.status != TxnStatus.IGNORED }
             .sumOf { abs(it.amountMinor) }
 

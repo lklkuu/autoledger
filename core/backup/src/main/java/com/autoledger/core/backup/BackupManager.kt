@@ -7,6 +7,7 @@ import com.autoledger.core.database.LedgerDatabase
 import com.autoledger.core.database.repository.RoomLedgerRepository
 import com.autoledger.core.database.toAppSettings
 import com.autoledger.core.database.toEntity
+import com.autoledger.core.database.toWageVersion
 import com.autoledger.core.crypto.CryptoBox
 import com.autoledger.core.model.AccountKind
 import com.autoledger.core.model.CategoryKind
@@ -17,10 +18,13 @@ import com.autoledger.core.model.RuleKind
 import com.autoledger.core.model.TxnStatus
 import com.autoledger.core.model.TxnType
 import com.autoledger.core.model.UserPlatform
+import com.autoledger.core.model.WageLedger
+import com.autoledger.core.model.WageVersion
 import com.autoledger.core.model.platform.PlatformCatalog
 import com.autoledger.core.model.platform.PlatformKind
 import com.autoledger.core.model.platform.PlatformSource
 import com.autoledger.core.model.toPlatformEntry
+import java.time.ZoneId
 import org.json.JSONArray
 import org.json.JSONObject
 
@@ -47,6 +51,8 @@ class BackupManager(
         val rulesUpserted: Int,
         /** v6：导入的自定义消费平台数量（旧档案没有这一节时为 0）。 */
         val userPlatformsUpserted: Int = 0,
+        /** v8：导入的时薪版本行数（旧档案播种单版本时记 1，无相关数据时 0）。 */
+        val wageVersionsUpserted: Int = 0,
     )
 
     private val txnDao = db.transactionDao()
@@ -139,6 +145,11 @@ class BackupManager(
             put("accounts", accounts)
             put("rules", rules)
             put("platforms", platforms)
+            // 时薪按月版本（v8）。**必须放在根级**（与 platforms 同级）而不是 settings 段：
+            // 下一行的 `settings` 是 `?.let`，设置行不存在时整段不写，
+            // 版本数组会被一起丢掉；而版本表完全可能非空（导入过新档案 / 迁移播种过）。
+            // 旧版本 App 用 optJSONArray 取不到就当没有 ⇒ 双向兼容，故 BACKUP_VERSION 不必 +1。
+            put("wageVersions", db.wageVersionDao().listAll().map { it.toWageVersion() }.toWageVersionsJson())
             db.settingsDao().global()?.let { put("settings", it.toAppSettings().toSettingsJson()) }
         }
     }
@@ -225,6 +236,40 @@ class BackupManager(
 
         payload.optJSONObject("settings")?.let { db.settingsDao().upsert(it.parseAppSettings().toEntity()) }
 
+        // ---------------------------------------------------------- 时薪按月版本（v8）
+        // 三种情形必须区分（设计文档 D6）：
+        //  ① 档案里有 `wageVersions`（新档案） ⇒ **以档案为准**：REPLACE_ALL 先清表再逐条 upsert。
+        //     用户导入新档案的意图就是"恢复这份快照"，同月行必须被覆盖。
+        //  ② 档案里没有 `wageVersions`（旧档案）但 `settings.wage` 存在 ⇒ 播种**单版本**，
+        //     月份 = 本档案最早流水所在月（无流水 ⇒ 当月）。用 insertIfAbsent：
+        //     本地已有的版本更权威，绝不能被一个"最近一次编辑的快照"覆盖。
+        //  ③ 两者都没有 ⇒ 不动本地版本表（没有信息可用于推断）。
+        val wageVersionDao = db.wageVersionDao()
+        val wageVersionArray = payload.optJSONArray("wageVersions")
+        val wageVersionsUpserted: Int = if (wageVersionArray != null) {
+            val restored = wageVersionArray.parseWageVersions()
+            if (strategy == MergeStrategy.REPLACE_ALL) wageVersionDao.clear()
+            wageVersionDao.upsertAll(restored.map { it.toEntity() })
+            restored.size
+        } else {
+            val legacySettings = payload.optJSONObject("settings")
+            if (legacySettings == null) {
+                0
+            } else {
+                val seedMonth = earliestMonthKeyOf(txns)
+                val seed = WageVersion.of(
+                    month = seedMonth,
+                    profile = legacySettings.parseAppSettings().wage,
+                    nowMillis = System.currentTimeMillis(),
+                )
+                // 先查再插：`insertIfAbsent` 在"本地已有同月"时是空操作，
+                // 但 ImportOutcome 里的计数必须是**真实落库行数**（UI 的导入提示依赖它）。
+                val willInsert = wageVersionDao.find(seedMonth) == null
+                wageVersionDao.insertIfAbsent(seed.toEntity())
+                if (willInsert) 1 else 0
+            }
+        }
+
         // 自定义消费平台。旧档案没有 `platforms` 一节 ⇒ optJSONArray 返回 null ⇒ 跳过，导入不报错。
         val platforms = payload.optJSONArray("platforms")?.let { arr ->
             (0 until arr.length()).map { i ->
@@ -274,11 +319,32 @@ class BackupManager(
             categoriesUpserted = cats.size,
             rulesUpserted = rules.size,
             userPlatformsUpserted = platforms.size,
+            wageVersionsUpserted = wageVersionsUpserted,
         )
     }
 
     /** 解密导入时用的口令，UI 通过赋值给它来注入（用完即弃，不落盘） */
     @Volatile var currentPassphrase: CharArray? = null
+
+    /**
+     * 旧档案播种用的月份：**本档案里最早流水所在月**；没有流水 ⇒ 当月。
+     *
+     * 与迁移（`MIGRATION_7_8`）选同一个月份口径，理由也相同：
+     * 功能上 `1970-01` 与"最早流水月"等价（更早的月份会回落到最早版本），
+     * 但后者在 UI 的版本列表里语义自洽，不会让用户以为"数据坏了"。
+     *
+     * 直接算内存里的流水（`txns` 已解析好）而不查库：导入是"把档案搬进来"，
+     * 插进库的流水与内存里的是同一批，没必要多一次全表扫描。
+     */
+    private fun earliestMonthKeyOf(txns: List<LedgerTransaction>): String {
+        val zone = ZoneId.systemDefault()
+        val earliest = txns.minByOrNull { it.occurredAtMillis }?.occurredAtMillis
+        return if (earliest == null) {
+            WageLedger.monthKeyOf(System.currentTimeMillis(), zone)
+        } else {
+            WageLedger.monthKeyOf(earliest, zone)
+        }
+    }
 
     // 流水的备份 JSON 编解码已抽到顶层纯函数（见 TxnJson.kt）：便于不经 Room 直接单测。
     // 设置的编解码同理抽到 SettingsJson.kt（toSettingsJson / parseAppSettings），

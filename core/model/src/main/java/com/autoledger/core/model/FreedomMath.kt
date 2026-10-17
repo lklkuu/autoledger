@@ -9,27 +9,27 @@ import java.time.ZoneId
  *
  * ## 两个指标（用户明确要求）
  * ```
- * 当月已攒 = 到手月薪 − 当月支出
- * 累计已攒 = (使用月数 × 到手月薪) − 累计支出 + 当前存款
+ * 当月已攒 = 当月收入 − 当月支出
+ * 累计已攒 = 逐月收入之和 − 累计支出 + 当前存款
  * ```
+ *
+ * ## v8 口径变更：收入项不再自己取数
+ * 改造前两个公式的收入项是「到手月薪 × 使用月数」（乘法压缩），一旦用户改时薪，
+ * 历史月份会被**整体重算** —— 这正是用户明令禁止的回溯覆盖。
+ * 现在收入项由调用方经 [WageLedger] 逐月求和后传入（[cumulativeSavedUpMinor] 的第一个参数），
+ * 本对象只做加减，不再持有任何"月薪"概念。
  *
  * ## 「使用月数」的定义
  * 从**账本最早一笔流水所在的月份**到**当月**，按**自然月**计数，**含首尾**：
  * 3 月开始记、现在是 5 月 → 使用月数 = 3（3 月、4 月、5 月）。
  *
- * ⚠️ **这是刻意的近似，不是 bug**：中间没有流水的月份照样算一个月工资。
+ * ⚠️ **这是刻意的近似，不是 bug**：中间没有流水的月份照样算一个月收入。
  * 因此补录一笔很久以前的历史流水会把起始月突然拉前，累计已攒随之跳变 ——
- * 这是「按自然月 × 固定月薪」公式的固有含义。若哪天要改成
- * 「只统计有流水的月份」或「用当月账本实际收入替代月薪」，必须**改这里的公式 + 改单测**，
- * 不能在 UI 层偷偷补偿。
- *
- * ## 「月薪」为什么用固定值而不是账本收入
- * 账本里的 `INCOME` 流水来自通知抓取，**覆盖不全**：某月没抓到工资短信，
- * 该月就会被算成净支出，累计值被严重低估且不可复现。
- * `WageProfile.monthlyNetSalaryMinor` 是用户主动填的稳定值，口径可解释、可测。
+ * 这是「按自然月计数」公式的固有含义。若哪天要改成
+ * 「只统计有流水的月份」，必须**改这里的公式 + 改单测**，不能在 UI 层偷偷补偿。
  *
  * ## 一律不做 `coerceAtLeast(0)`
- * 支出大于「月薪 × 月数 + 存款」是真实且有意义的状态（在吃老本），
+ * 支出大于「累计收入 + 存款」是真实且有意义的状态（在吃老本），
  * 夹到 0 会让用户误以为收支平衡。负值 / 0 都是合法结果，
  * 展示层负责把符号显示出来（见 `Long.yuan(withSign = true)` —— 默认的 `yuan()` 会吞掉负号）。
  */
@@ -38,15 +38,18 @@ object FreedomMath {
     // ------------------------------------------------------------------ 当月已攒
 
     /**
-     * 当月已攒（分）= [monthlyNetSalaryMinor] − [monthlyExpenseMinor]。
+     * 当月已攒（分）= [monthlyIncomeMinor] − [monthlyExpenseMinor]。
+     *
+     * @param monthlyIncomeMinor 当月收入（分），由 [WageLedger.incomeForMonth] 给出。
+     *   **不是** INCOME 流水合计，也**不是**「到手月薪」——见 [WageLedger] 的口径定义。
      *
      * 注意：**不含存款**。存款是「过去的积累」，属于累计口径的加项，
      * 混进当月会让它看起来像这个月又赚了一笔。
      */
     fun monthlySavedUpMinor(
-        monthlyNetSalaryMinor: Long,
+        monthlyIncomeMinor: Long,
         monthlyExpenseMinor: Long,
-    ): Long = monthlyNetSalaryMinor - monthlyExpenseMinor
+    ): Long = monthlyIncomeMinor - monthlyExpenseMinor
 
     // ------------------------------------------------------------------ 起始月 / 使用月数
 
@@ -77,9 +80,8 @@ object FreedomMath {
     ): Int? = txns.minByOrNull { it.occurredAtMillis }?.let { yearMonthIndex(it.occurredAtMillis, zone) }
 
     /**
-     * 使用月数（含起始月与当月）。
+     * 账本为空（[earliestYearMonthIndex] 为 `null`）→ `0`，此时 [cumulativeSavedUpMinor] 直接按 0 处理。
      *
-     * - 账本为空（[earliestYearMonthIndex] 为 `null`）→ `0`，此时 [cumulativeSavedUpMinor] 直接按 0 处理。
      * - 至少为 `1`：只要账本里有流水就至少算一个月。起始月晚于当月
      *   （存在未来日期的流水，如预授权）时也不会算出 0 或负数 —— 这是**计数**不是金额，
      *   夹下界是为了避免出现「有流水却算 0 个月」的自相矛盾状态。
@@ -94,25 +96,30 @@ object FreedomMath {
     // ------------------------------------------------------------------ 累计已攒
 
     /**
-     * 累计已攒（分）= [monthsUsed] × [monthlyNetSalaryMinor] − [cumulativeExpenseMinor] + [currentDepositMinor]。
+     * 累计已攒（分）= [cumulativeIncomeMinor] − [cumulativeExpenseMinor] + [currentDepositMinor]。
      *
-     * 与 `Σ(每个月：月薪 − 该月支出) + 存款` 等价，只是把逐月求和压成一次乘法。
+     * 与 `Σ(每个月：该月收入 − 该月支出) + 存款` 等价。
      *
-     * @param monthsUsed 使用月数，见 [monthsUsed]。**0 = 账本为空**，此时公式照跑：
-     *   累计 = 0 − 0 + 存款 = **存款**。
+     * ## 为什么收入项改成「逐月之和」而不是「月数 × 月薪」
+     * v8 起收入按月版本化（[WageVersion]），跨版本时"月数 × 单个月薪"在数学上就不成立：
+     * 3 月 12000、4 月起 15000 的两个月，正确合计是 27000，乘法压缩只能给出 24000 或 30000，
+     * 而且会把历史月份**整体重算**。收入侧逐月求和由 [WageLedger.cumulativeIncomeMinor] 负责
+     * （它按月解析生效版本），本函数只做剩下的加减。
      *
-     *   ⚠️ 这里**刻意不**写成 `if (monthsUsed <= 0) return 0L`：存款是用户**明确输入的真实值**，
-     *   不该因为账本还空就被抹掉。刚装 App、先填了「当前存款 5 万」的用户，
-     *   若看到「累计已攒 ¥0」只会困惑 —— 他要的是"我总共攒了多少"，而存款正是其中真实的一部分。
-     *   空账本真正要防的是**报错 / NaN**，而不是把结果改成 0。
+     * @param cumulativeIncomeMinor 起始月到当月的**逐月收入之和**（分）
+     * @param cumulativeExpenseMinor 同期累计支出（分）
+     * @param currentDepositMinor 当前存款（分，可负 = 欠款）
+     *
+     * ⚠️ 这里**刻意不**写成 `if (累计收入 <= 0) return 0L`：存款是用户**明确输入的真实值**，
+     * 不该因为账本还空（或用户没设时薪）就被抹掉。刚装 App、先填了「当前存款 5 万」的用户，
+     * 若看到「累计已攒 ¥0」只会困惑 —— 他要的是"我总共攒了多少"，而存款正是其中真实的一部分。
+     * 空账本真正要防的是**报错 / NaN**，而不是把结果改成 0。
      */
     fun cumulativeSavedUpMinor(
-        monthsUsed: Int,
-        monthlyNetSalaryMinor: Long,
+        cumulativeIncomeMinor: Long,
         cumulativeExpenseMinor: Long,
         currentDepositMinor: Long,
-    ): Long = monthsUsed.toLong().coerceAtLeast(0L) * monthlyNetSalaryMinor -
-        cumulativeExpenseMinor + currentDepositMinor
+    ): Long = cumulativeIncomeMinor - cumulativeExpenseMinor + currentDepositMinor
 
     // ------------------------------------------------------------------ 进度 / 还差
 

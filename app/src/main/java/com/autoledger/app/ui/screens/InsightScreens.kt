@@ -60,16 +60,21 @@ fun FreedomScreen(container: AppContainer) {
     // 存款用**输入框当前值**而不是已保存值：这样用户一边敲「累计已攒」就一边变（需求 3 的实时更新）。
     val currentMinor = Money.fromYuanDouble(current.toDoubleOrNull() ?: 0.0).minor
     // 两个「已攒」的口径都在 FreedomMath（纯函数、有单测），UI 不发明公式：
-    //   当月已攒 = 到手月薪 − 当月支出（不含存款）
-    //   累计已攒 = 使用月数 × 月薪 − 累计支出 + 存款
+    //   当月已攒 = 当月收入 − 当月支出（不含存款）
+    //   累计已攒 = 逐月收入之和 − 累计支出 + 存款
     // 刻意不夹断：结果为负说明这个月在吃老本，是真实且需要被看见的状态。
+    //
+    // ⚠️ 待 T04 收口：v8 起「当月收入」应由 WageLedger.incomeForMonth（按月版本）给出，
+    // 这里暂时仍是「到手月薪」——T01 只做了签名收窄（收入项由调用方传入），
+    // 因此以 `月数 × 到手月薪` 喂进累计项，数值与改造前**逐分一致**（不加新逻辑）。
+    val monthlyIncomeMinor = state.monthlyNetSalaryMinor
+    val cumulativeIncomeMinor = state.monthsUsed.toLong() * state.monthlyNetSalaryMinor
     val monthlySavedUpMinor = FreedomMath.monthlySavedUpMinor(
-        monthlyNetSalaryMinor = state.monthlyNetSalaryMinor,
+        monthlyIncomeMinor = monthlyIncomeMinor,
         monthlyExpenseMinor = state.monthlyExpenseMinor,
     )
     val cumulativeSavedUpMinor = FreedomMath.cumulativeSavedUpMinor(
-        monthsUsed = state.monthsUsed,
-        monthlyNetSalaryMinor = state.monthlyNetSalaryMinor,
+        cumulativeIncomeMinor = cumulativeIncomeMinor,
         cumulativeExpenseMinor = state.cumulativeExpenseMinor,
         currentDepositMinor = currentMinor,
     )

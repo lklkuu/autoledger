@@ -11,15 +11,20 @@ import kotlin.test.assertNull
  *
  * 口径（唯一真源见 [FreedomMath]）：
  * ```
- * 当月已攒 = 到手月薪 − 当月支出
- * 累计已攒 = (使用月数 × 到手月薪) − 累计支出 + 当前存款
+ * 当月已攒 = 当月收入 − 当月支出
+ * 累计已攒 = 逐月收入之和 − 累计支出 + 当前存款
  * 使用月数 = 账本最早一笔流水所在月份 → 当月（按自然月，含首尾）
  * ```
  *
+ * v8 口径变更：收入项不再由 [FreedomMath] 自己取（旧版是「使用月数 × 到手月薪」的乘法压缩），
+ * 改由调用方经 [WageLedger] **逐月求和**后传入。因此本文件的断言全部按新签名书写，
+ * 并额外保留一条**与原实现逐分相等**的对照断言（[legacyCumulativeSavedUpMinor]），
+ * 证明「每月收入同额时」新公式与老公式在数值上完全一致 —— 避免口径切换顺手改了算术。
+ *
  * 重点覆盖：
  * - 起始月为空（账本没流水）/ 只有一个月 / 跨多个月（含跨年）
- * - 支出大于月薪 → **负累计**必须保留，不得夹断
- * - 存款为负、月薪为 0 都得照常算
+ * - 支出大于累计收入 → **负累计**必须保留，不得夹断
+ * - 存款为负、收入为 0 都得照常算
  * - 进度与「还差」跟随**累计已攒**
  */
 class FreedomMathTest {
@@ -50,14 +55,50 @@ class FreedomMathTest {
         sourceRef = id,
     )
 
+    /**
+     * **旧实现的对照公式**（v7 及以前）：`月数 × 固定月薪 − 累计支出 + 存款`。
+     *
+     * 只出现在测试里，用于证明「每月收入同额」时新公式逐分等价 —— 这是口径迁移的回归护栏。
+     */
+    private fun legacyCumulativeSavedUpMinor(
+        monthsUsed: Int,
+        monthlyNetSalaryMinor: Long,
+        cumulativeExpenseMinor: Long,
+        currentDepositMinor: Long,
+    ): Long = monthsUsed.toLong().coerceAtLeast(0L) * monthlyNetSalaryMinor -
+        cumulativeExpenseMinor + currentDepositMinor
+
+    /** 每月同额场景下，新旧公式必须逐分相等。 */
+    private fun assertMatchesLegacy(
+        monthsUsed: Int,
+        monthlyIncomeMinor: Long,
+        cumulativeExpenseMinor: Long,
+        currentDepositMinor: Long,
+    ) {
+        assertEquals(
+            legacyCumulativeSavedUpMinor(
+                monthsUsed = monthsUsed,
+                monthlyNetSalaryMinor = monthlyIncomeMinor,
+                cumulativeExpenseMinor = cumulativeExpenseMinor,
+                currentDepositMinor = currentDepositMinor,
+            ),
+            FreedomMath.cumulativeSavedUpMinor(
+                cumulativeIncomeMinor = monthsUsed.toLong() * monthlyIncomeMinor,
+                cumulativeExpenseMinor = cumulativeExpenseMinor,
+                currentDepositMinor = currentDepositMinor,
+            ),
+            "每月收入同额时，新公式必须与原实现逐分相等",
+        )
+    }
+
     // ------------------------------------------------------------------ 当月已攒
 
     @Test
-    fun `monthly saved up is salary minus this month expense`() {
-        // 月薪 12000 元 − 当月支出 4500 元 = 7500 元
+    fun `monthly saved up is income minus this month expense`() {
+        // 当月收入 12000 元 − 当月支出 4500 元 = 7500 元
         assertEquals(
             750_000L,
-            FreedomMath.monthlySavedUpMinor(monthlyNetSalaryMinor = 1_200_000L, monthlyExpenseMinor = 450_000L),
+            FreedomMath.monthlySavedUpMinor(monthlyIncomeMinor = 1_200_000L, monthlyExpenseMinor = 450_000L),
         )
     }
 
@@ -67,7 +108,7 @@ class FreedomMathTest {
         // 这条锁住两个指标不会因为「存款被算了两次」而对不上。
         assertEquals(
             -200_000L,
-            FreedomMath.monthlySavedUpMinor(monthlyNetSalaryMinor = 1_000_000L, monthlyExpenseMinor = 1_200_000L),
+            FreedomMath.monthlySavedUpMinor(monthlyIncomeMinor = 1_000_000L, monthlyExpenseMinor = 1_200_000L),
         )
     }
 
@@ -78,12 +119,12 @@ class FreedomMathTest {
 
     @Test
     fun `monthly saved up keeps its negative sign`() {
-        // 支出 15000 > 月薪 12000 → −3000 元（这个月在吃老本）
+        // 支出 15000 > 收入 12000 → −3000 元（这个月在吃老本）
         assertEquals(-300_000L, FreedomMath.monthlySavedUpMinor(1_200_000L, 1_500_000L))
     }
 
     @Test
-    fun `monthly saved up with zero salary does not crash`() {
+    fun `monthly saved up with zero income does not crash`() {
         assertEquals(-200_000L, FreedomMath.monthlySavedUpMinor(0L, 200_000L))
         assertEquals(0L, FreedomMath.monthlySavedUpMinor(0L, 0L))
     }
@@ -153,48 +194,65 @@ class FreedomMathTest {
     // ------------------------------------------------------------------ 累计已攒
 
     @Test
-    fun `cumulative for a single month is salary minus expense plus deposit`() {
-        // 用了 1 个月：月薪 12000 − 支出 4500 + 存款 30000 = 37500 元
+    fun `cumulative for a single month is income minus expense plus deposit`() {
+        // 累计收入 12000 − 支出 4500 + 存款 30000 = 37500 元
         assertEquals(
             3_750_000L,
             FreedomMath.cumulativeSavedUpMinor(
-                monthsUsed = 1,
-                monthlyNetSalaryMinor = 1_200_000L,
+                cumulativeIncomeMinor = 1_200_000L,
                 cumulativeExpenseMinor = 450_000L,
                 currentDepositMinor = 3_000_000L,
             ),
         )
+        assertMatchesLegacy(monthsUsed = 1, monthlyIncomeMinor = 1_200_000L, 450_000L, 3_000_000L)
     }
 
     @Test
-    fun `cumulative over several months multiplies the salary`() {
-        // 2025-03 起始、现在是 2025-05 → 3 个月
+    fun `cumulative over several months sums the monthly incomes`() {
+        // 2025-03 起始、现在是 2025-05 → 3 个月，每月同额 12000 ⇒ 累计收入 36000
         // 3 × 12000 − 累计支出 24000 + 存款 30000 = 42000 元
         val months = FreedomMath.monthsUsed(index(2025, 3), index(2025, 5))
         assertEquals(3, months)
         assertEquals(
             4_200_000L,
             FreedomMath.cumulativeSavedUpMinor(
-                monthsUsed = months,
-                monthlyNetSalaryMinor = 1_200_000L,
+                cumulativeIncomeMinor = months.toLong() * 1_200_000L,
                 cumulativeExpenseMinor = 2_400_000L,
                 currentDepositMinor = 3_000_000L,
             ),
         )
+        assertMatchesLegacy(monthsUsed = months, monthlyIncomeMinor = 1_200_000L, 2_400_000L, 3_000_000L)
+    }
+
+    @Test
+    fun `cumulative sees the summed income when the hourly wage changed mid way`() {
+        // 新口径的核心场景：3 月收入 13000、4 月起 15000 ⇒ 两个月累计 28000（不是 26000 / 30000）。
+        // 旧公式「月数 × 单个月薪」在数学上无法表达它 —— 这条锁住"逐月求和"。
+        val cumulatedIncome = 1_300_000L + 1_500_000L
+        assertEquals(
+            2_800_000L,
+            FreedomMath.cumulativeSavedUpMinor(
+                cumulativeIncomeMinor = cumulatedIncome,
+                cumulativeExpenseMinor = 0L,
+                currentDepositMinor = 0L,
+            ),
+        )
+        // 对照组：若错用「2 × 13000」或「2 × 15000」，结果分别是 26000 / 30000，都不等于 28000。
+        assertEquals(2_600_000L, legacyCumulativeSavedUpMinor(2, 1_300_000L, 0L, 0L))
+        assertEquals(3_000_000L, legacyCumulativeSavedUpMinor(2, 1_500_000L, 0L, 0L))
     }
 
     @Test
     fun `cumulative equals the deposit for an empty ledger`() {
-        // 用户口径（决策 B）：账本为空 ⇒ 使用月数 0，公式**照跑** → 累计 = 0 − 0 + 存款 = 存款。
+        // 用户口径（决策 B）：账本为空 ⇒ 累计收入 0，公式**照跑** → 累计 = 0 − 0 + 存款 = 存款。
         //
-        // 刻意不写成 `if (monthsUsed <= 0) return 0L`：存款是用户明确输入的真实值，
+        // 刻意不写成 `if (累计收入 <= 0) return 0L`：存款是用户明确输入的真实值，
         // 不该因为账本还空就被抹掉 —— 刚装 App、先填了 5 万存款的用户
         // 若看到「累计已攒 ¥0」只会困惑。空账本要防的是**报错 / NaN**，不是把结果改成 0。
         assertEquals(
             5_000_000L,
             FreedomMath.cumulativeSavedUpMinor(
-                monthsUsed = 0,
-                monthlyNetSalaryMinor = 1_200_000L,
+                cumulativeIncomeMinor = 0L,
                 cumulativeExpenseMinor = 0L,
                 currentDepositMinor = 5_000_000L,
             ),
@@ -208,8 +266,7 @@ class FreedomMathTest {
         assertEquals(
             0L,
             FreedomMath.cumulativeSavedUpMinor(
-                monthsUsed = 0,
-                monthlyNetSalaryMinor = 1_200_000L,
+                cumulativeIncomeMinor = 0L,
                 cumulativeExpenseMinor = 0L,
                 currentDepositMinor = 0L,
             ),
@@ -217,52 +274,50 @@ class FreedomMathTest {
     }
 
     @Test
-    fun `cumulative goes negative when expenses exceed the salary`() {
-        // 2 个月：2 × 10000 − 累计支出 25000 + 存款 0 = −5000 元
+    fun `cumulative goes negative when expenses exceed the income`() {
+        // 2 个月每月 10000 ⇒ 累计收入 20000 − 累计支出 25000 + 存款 0 = −5000 元
         assertEquals(
             -500_000L,
             FreedomMath.cumulativeSavedUpMinor(
-                monthsUsed = 2,
-                monthlyNetSalaryMinor = 1_000_000L,
+                cumulativeIncomeMinor = 2_000_000L,
                 cumulativeExpenseMinor = 2_500_000L,
                 currentDepositMinor = 0L,
             ),
             "负累计必须原样保留，绝不能 coerceAtLeast(0)",
         )
+        assertMatchesLegacy(monthsUsed = 2, monthlyIncomeMinor = 1_000_000L, 2_500_000L, 0L)
     }
 
     @Test
     fun `cumulative accepts a negative deposit`() {
-        // 存款记成负（欠款）→ 1 × 10000 − 0 + (−3000) = 7000 元
+        // 存款记成负（欠款）→ 10000 − 0 + (−3000) = 7000 元
         assertEquals(
             700_000L,
             FreedomMath.cumulativeSavedUpMinor(
-                monthsUsed = 1,
-                monthlyNetSalaryMinor = 1_000_000L,
+                cumulativeIncomeMinor = 1_000_000L,
                 cumulativeExpenseMinor = 0L,
                 currentDepositMinor = -300_000L,
             ),
         )
+        assertMatchesLegacy(monthsUsed = 1, monthlyIncomeMinor = 1_000_000L, 0L, -300_000L)
     }
 
     @Test
-    fun `cumulative with zero salary does not crash`() {
-        // 没填月薪：2 × 0 − 支出 2000 + 存款 10000 = 8000 元
+    fun `cumulative with zero income does not crash`() {
+        // 没设时薪：累计收入 0 − 支出 2000 + 存款 10000 = 8000 元
         assertEquals(
             800_000L,
             FreedomMath.cumulativeSavedUpMinor(
-                monthsUsed = 2,
-                monthlyNetSalaryMinor = 0L,
+                cumulativeIncomeMinor = 0L,
                 cumulativeExpenseMinor = 200_000L,
                 currentDepositMinor = 1_000_000L,
             ),
         )
-        // 没填月薪也没存款：−2000 元
+        // 没设时薪也没存款：−2000 元
         assertEquals(
             -200_000L,
             FreedomMath.cumulativeSavedUpMinor(
-                monthsUsed = 2,
-                monthlyNetSalaryMinor = 0L,
+                cumulativeIncomeMinor = 0L,
                 cumulativeExpenseMinor = 200_000L,
                 currentDepositMinor = 0L,
             ),
@@ -270,12 +325,12 @@ class FreedomMathTest {
     }
 
     @Test
-    fun `cumulative grows with months and shrinks with expenses`() {
-        val base = FreedomMath.cumulativeSavedUpMinor(1, 1_000_000L, 300_000L, 500_000L)
-        val oneMoreMonth = FreedomMath.cumulativeSavedUpMinor(2, 1_000_000L, 300_000L, 500_000L)
-        val moreExpense = FreedomMath.cumulativeSavedUpMinor(1, 1_000_000L, 400_000L, 500_000L)
-        val moreDeposit = FreedomMath.cumulativeSavedUpMinor(1, 1_000_000L, 300_000L, 600_000L)
-        assertEquals(base + 1_000_000L, oneMoreMonth, "每多用一个自然月，累计多一个月薪")
+    fun `cumulative grows with income and shrinks with expenses`() {
+        val base = FreedomMath.cumulativeSavedUpMinor(1_000_000L, 300_000L, 500_000L)
+        val oneMoreMonth = FreedomMath.cumulativeSavedUpMinor(2_000_000L, 300_000L, 500_000L)
+        val moreExpense = FreedomMath.cumulativeSavedUpMinor(1_000_000L, 400_000L, 500_000L)
+        val moreDeposit = FreedomMath.cumulativeSavedUpMinor(1_000_000L, 300_000L, 600_000L)
+        assertEquals(base + 1_000_000L, oneMoreMonth, "每多一个月的收入，累计多该月收入")
         assertEquals(base - 100_000L, moreExpense, "支出每多 1000 元，累计少 1000 元")
         assertEquals(base + 100_000L, moreDeposit, "存款每多 1000 元，累计多 1000 元")
     }
@@ -285,8 +340,9 @@ class FreedomMathTest {
         // 分单位下 Long 足够；这条锁住「没有中途转 Double 导致精度丢失」
         assertEquals(
             299_999_999_997L,
-            FreedomMath.cumulativeSavedUpMinor(3, 99_999_999_999L, 1L, 1L),
+            FreedomMath.cumulativeSavedUpMinor(299_999_999_999L, 1L, -1L),
         )
+        assertMatchesLegacy(monthsUsed = 3, monthlyIncomeMinor = 99_999_999_999L, 1L, 1L)
     }
 
     // ------------------------------------------------------------------ 进度 / 还差（都基于累计已攒）
@@ -334,10 +390,14 @@ class FreedomMathTest {
 
     @Test
     fun `progress and remaining are driven by the cumulative not the monthly figure`() {
-        // 场景：起始 2025-03，现在 2025-05（3 个月），月薪 12000、累计支出 24000、存款 30000
+        // 场景：起始 2025-03，现在 2025-05（3 个月），每月收入 12000、累计支出 24000、存款 30000
         // → 累计已攒 42000、当月已攒 7500；目标 60000。
         val months = FreedomMath.monthsUsed(index(2025, 3), index(2025, 5))
-        val cumulative = FreedomMath.cumulativeSavedUpMinor(months, 1_200_000L, 2_400_000L, 3_000_000L)
+        val cumulative = FreedomMath.cumulativeSavedUpMinor(
+            cumulativeIncomeMinor = months.toLong() * 1_200_000L,
+            cumulativeExpenseMinor = 2_400_000L,
+            currentDepositMinor = 3_000_000L,
+        )
         val monthly = FreedomMath.monthlySavedUpMinor(1_200_000L, 800_000L)
         val target = 6_000_000L
         assertEquals(4_200_000L, cumulative)

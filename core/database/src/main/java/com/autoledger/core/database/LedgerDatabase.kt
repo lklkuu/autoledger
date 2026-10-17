@@ -20,6 +20,8 @@ import com.autoledger.core.model.LedgerSchema
         ResourceBalanceEntity::class,
         // v6：用户自定义消费平台（软删除，进备份管线）
         UserPlatformEntity::class,
+        // v8：时薪按月版本（收入口径的唯一真源，见 core:model 的 WageLedger）
+        WageVersionEntity::class,
     ],
     version = LedgerSchema.DATABASE_VERSION,
     exportSchema = true,
@@ -37,6 +39,7 @@ abstract class LedgerDatabase : RoomDatabase() {
     abstract fun refundDao(): RefundDao
     abstract fun resourceBalanceDao(): ResourceBalanceDao
     abstract fun userPlatformDao(): UserPlatformDao
+    abstract fun wageVersionDao(): WageVersionDao
 
     companion object {
         const val DATABASE_NAME = "autoledger.db"

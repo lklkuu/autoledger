@@ -3,7 +3,9 @@ package com.autoledger.core.database
 import com.autoledger.core.model.AiMode
 import com.autoledger.core.model.AppSettings
 import com.autoledger.core.model.FreedomGoal
+import com.autoledger.core.model.LedgerSchema
 import com.autoledger.core.model.WageProfile
+import com.autoledger.core.model.WageVersion
 
 /** 应用设置实体 <-> 领域模型的映射（app 与 core:backup 共用，故为 public）。 */
 
@@ -51,4 +53,52 @@ fun AppSettings.toEntity(): SettingsEntity = SettingsEntity(
     aiMode = aiMode.name,
     aiEndpoint = aiEndpoint,
     aiModel = aiModel,
+)
+
+// ---------------------------------------------------------------- 时薪按月版本（v8）
+
+/**
+ * `wage_versions` 行 → 领域模型。
+ *
+ * 工时参数也一并还原：历史月份的「花掉的时间」换算必须用**当时**的参数，
+ * 而不是今天 `app_settings` 里的那一套。
+ */
+fun WageVersionEntity.toWageVersion(): WageVersion = WageVersion(
+    month = month,
+    profile = WageProfile(
+        monthlyNetSalaryMinor = monthlyNetSalaryMinor,
+        payMonthsPerYear = payMonthsPerYear,
+        monthlyWorkCostMinor = monthlyWorkCostMinor,
+        workDaysPerMonth = workDaysPerMonth,
+        dailyOfficeHours = dailyOfficeHours,
+        dailyCommuteMinutes = dailyCommuteMinutes,
+        dailyOvertimeHours = dailyOvertimeHours,
+    ),
+    // ⚠️ 用落库值而不是临时重算 `profile.effectiveMonthlySalaryMinor`：
+    // 一旦将来调整年化方式或舍入策略，重算会把历史月份的收入改写掉，
+    // 而"历史月份保留当时结果"正是这张表存在的理由。
+    monthlyIncomeMinor = monthlyIncomeMinor,
+    createdAtMillis = createdAtMillis,
+    updatedAtMillis = updatedAtMillis,
+)
+
+/**
+ * 领域模型 → `wage_versions` 行。
+ *
+ * @param schemaVersion 行级结构标记，默认取 [LedgerSchema.CURRENT]
+ *   （与 transactions / user_platforms 用同一个常量；迁移播种也用同一个值）。
+ */
+fun WageVersion.toEntity(schemaVersion: Int = LedgerSchema.CURRENT): WageVersionEntity = WageVersionEntity(
+    month = month,
+    monthlyNetSalaryMinor = profile.monthlyNetSalaryMinor,
+    payMonthsPerYear = profile.payMonthsPerYear,
+    monthlyWorkCostMinor = profile.monthlyWorkCostMinor,
+    workDaysPerMonth = profile.workDaysPerMonth,
+    dailyOfficeHours = profile.dailyOfficeHours,
+    dailyCommuteMinutes = profile.dailyCommuteMinutes,
+    dailyOvertimeHours = profile.dailyOvertimeHours,
+    monthlyIncomeMinor = monthlyIncomeMinor,
+    createdAtMillis = createdAtMillis,
+    updatedAtMillis = updatedAtMillis,
+    schemaVersion = schemaVersion,
 )

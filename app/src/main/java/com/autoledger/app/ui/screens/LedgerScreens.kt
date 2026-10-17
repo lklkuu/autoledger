@@ -443,7 +443,7 @@ fun MonthlyScreen(container: AppContainer) {
     val monthTxns = state.items.filter {
         monthOf(it).let { d -> d.year == selectedMonth.year && d.monthValue == selectedMonth.monthValue }
     }
-    val monthIncome = ExpenseMath.incomeMinor(monthTxns)
+    val monthIncome = ExpenseMath.actualReceivedMinor(monthTxns)
     // 退款冲抵支出（口径见 ExpenseMath）：支出显示净额，并在提示里说明冲抵了多少
     val monthRefund = ExpenseMath.refundMinor(monthTxns)
     val monthExpense = ExpenseMath.netExpenseMinor(monthTxns).coerceAtLeast(0L)
@@ -561,7 +561,7 @@ fun MonthlyScreen(container: AppContainer) {
 
             BillMode.YEAR -> {
                 val yearTxns = state.items.filter { monthOf(it).year == selectedYear }
-                val yIncome = ExpenseMath.incomeMinor(yearTxns)
+                val yIncome = ExpenseMath.actualReceivedMinor(yearTxns)
                 val yRefund = ExpenseMath.refundMinor(yearTxns)
                 val yExpense = ExpenseMath.netExpenseMinor(yearTxns).coerceAtLeast(0L)
                 // 付款总额（毛支出）：与支出/退款同源，均走 ExpenseMath
@@ -647,7 +647,7 @@ fun MonthlyScreen(container: AppContainer) {
                         }
                         (1..12).forEach { m ->
                             val list = yearTxns.filter { monthOf(it).monthValue == m }
-                            val i = ExpenseMath.incomeMinor(list)
+                            val i = ExpenseMath.actualReceivedMinor(list)
                             val e = ExpenseMath.netExpenseMinor(list).coerceAtLeast(0L)
                             Row(Modifier.fillMaxWidth().padding(vertical = 4.dp)) {
                                 Text("${m}月", Modifier.weight(1f), style = MaterialTheme.typography.bodySmall)

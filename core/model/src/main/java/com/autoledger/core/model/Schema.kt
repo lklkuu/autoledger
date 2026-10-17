@@ -12,8 +12,15 @@ package com.autoledger.core.model
  * 三者独立演进；正式发布后需恢复「逐版本 Migration」约定，避免升级丢数据。
  */
 object LedgerSchema {
-    /** Room database version */
-    const val DATABASE_VERSION = 7
+    /**
+     * Room database version。
+     *
+     * - 7：AI 判定配置四列。
+     * - **8**：时薪按月版本表 `wage_versions`（收入口径统一，见 `WageLedger`）。
+     *   推进到 8 必须同时提供 `MIGRATION_7_8` 并登记进 `ALL_MIGRATIONS`，
+     *   否则 Room 找不到迁移路径 ⇒ `fallbackToDestructiveMigration` ⇒ 全库清空。
+     */
+    const val DATABASE_VERSION = 8
 
     /** 导出／备份信封版本 */
     const val BACKUP_VERSION = 6

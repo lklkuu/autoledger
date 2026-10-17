@@ -139,9 +139,14 @@ class PlatformShareMetric(private val topN: Int = 8) : MetricProvider {
  * 收入与结余 —— 「这个月到底存下多少」的唯一去处。
  *
  * 口径（**唯一真源**都在 [ExpenseMath]，此处不做任何加减口径的二次实现）：
- * - 收入 = `incomeMinor`（只计 INCOME，排除 MERGED / IGNORED）
+ * - 收入 = `actualReceivedMinor`（只计 INCOME，排除 MERGED / IGNORED）
  * - 净支出 = `netExpenseMinor`（= 毛支出 − 退款，**退款已被冲抵过一次**）
  * - 结余 = 收入 − 净支出
+ *
+ * ⚠️ **待 T04 收口**：v8 起收入的唯一真源是 `WageLedger`（版本化的月度应计值），
+ * 本类目前仍按「实际到账流水合计」取数（`ExpenseMath.actualReceivedMinor`），
+ * 属于 T01 改名后的**最小编译适配**，不是最终口径。T04 会把它换成
+ * `WageLedger.incomeForRange(versions, range)` 并按版本解析。
  *
  * ⚠️ 为什么不能写「收入 − 毛支出 − 退款」：那样等于把退款扣两次（净支出里已扣过一次）。
  * 这条口径的单测在 MetricsTest 里钉死（支出 1350 + 退款 200 + 收入 1000 ⇒ 结余 −150）。
@@ -164,7 +169,7 @@ class IncomeBalanceMetric : MetricProvider {
         // 而不是 −150）。`netExpenseMinor` 只认 EXPENSE 与 REFUND，混进来的 TRANSFER 会被自动忽略。
         val txns = snapshot?.takeIf { it.range == range }?.txns
             ?: repo.listRange(range.startMillis, range.endInclusiveMillis, includeTransfers = true)
-        val income = ExpenseMath.incomeMinor(txns)
+        val income = ExpenseMath.actualReceivedMinor(txns)
         val net = ExpenseMath.netExpenseMinor(txns)
         val balance = income - net
         return MetricResult.Scalar(
