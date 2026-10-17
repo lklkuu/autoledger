@@ -1,6 +1,7 @@
 package com.autoledger.core.model
 
 import java.time.Instant
+import java.time.LocalDate
 import java.time.YearMonth
 import java.time.ZoneId
 
@@ -173,10 +174,28 @@ data class TimeRange(val startMillis: Long, val endInclusiveMillis: Long) {
             return TimeRange(anchor, now)
         }
 
-        /** 统一使用 java.time 导入，避免时间窗口实现漏掉类型依赖。 */
-        private val ZONE: ZoneId get() = ZoneId.systemDefault()
+        /**
+         * **业务时区的唯一真源**（`thisMonth` / `monthOf` / `lastDays` / `today` 全部用它）。
+         *
+         * 为什么必须公开：收入口径要按「月」归属（`WageLedger.incomeForRange` 只累加月首落在
+         * 区间内的月份），如果调用方各自 `ZoneId.systemDefault()` 起一套，跨月边界上
+         * 「本月收入」与「本月流水」会归属到不同月份 —— 这是最难复现的一类账目错位。
+         */
+        val ZONE: ZoneId get() = ZoneId.systemDefault()
     }
 }
+
+/** 区间起点所在的业务日期（按 [TimeRange.ZONE] 折算）。 */
+val TimeRange.startDate: LocalDate
+    get() = Instant.ofEpochMilli(startMillis).atZone(TimeRange.ZONE).toLocalDate()
+
+/** 区间终点（含）所在的业务日期（按 [TimeRange.ZONE] 折算）。 */
+val TimeRange.endDate: LocalDate
+    get() = Instant.ofEpochMilli(endInclusiveMillis).atZone(TimeRange.ZONE).toLocalDate()
+
+/** 区间起点所在的月份键 `YYYY-MM`（按 [TimeRange.ZONE] 折算），供 `WageLedger` 取版本。 */
+val TimeRange.startMonthKey: String
+    get() = WageLedger.monthKeyOf(startDate)
 
 /**
  * 一次聚合批次内可复用的数据快照。

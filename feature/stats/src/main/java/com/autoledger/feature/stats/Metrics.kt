@@ -11,9 +11,13 @@ import com.autoledger.core.model.MetricStat
 import com.autoledger.core.model.MetricTone
 import com.autoledger.core.model.Money
 import com.autoledger.core.model.TimeRange
+import com.autoledger.core.model.WageLedger
 import com.autoledger.core.model.WageProfile
+import com.autoledger.core.model.WageVersion
+import com.autoledger.core.model.endDate
 import com.autoledger.core.model.formatYuan
 import com.autoledger.core.model.platform.PlatformCatalog
+import com.autoledger.core.model.startDate
 import java.time.YearMonth
 
 /**
@@ -138,23 +142,36 @@ class PlatformShareMetric(private val topN: Int = 8) : MetricProvider {
 /**
  * 收入与结余 —— 「这个月到底存下多少」的唯一去处。
  *
- * 口径（**唯一真源**都在 [ExpenseMath]，此处不做任何加减口径的二次实现）：
- * - 收入 = `actualReceivedMinor`（只计 INCOME，排除 MERGED / IGNORED）
- * - 净支出 = `netExpenseMinor`（= 毛支出 − 退款，**退款已被冲抵过一次**）
+ * ## 口径（v8 起）
+ * - **收入 = 时薪推算的应计收入**：`WageLedger.incomeForRange(versions, range.startDate, range.endDate)`
+ *   —— 按月版本取值，只累加「月首落在区间内」的月份（区间为整月时即该月收入）。
+ *   **不再对 INCOME 流水求和**：流水来自通知抓取，覆盖不全（没抓到工资短信那个月就是 0），
+ *   与用户填的时薪口径通常相差数倍。INCOME 流水只作「实际到账」对账用
+ *   （见 `ExpenseMath.actualReceivedMinor`，本卡片不再调用它 —— 收入汇总链上彻底移除）。
+ * - 净支出 = `ExpenseMath.netExpenseMinor`（= 毛支出 − 退款，**退款已被冲抵过一次**）
  * - 结余 = 收入 − 净支出
  *
- * ⚠️ **待 T04 收口**：v8 起收入的唯一真源是 `WageLedger`（版本化的月度应计值），
- * 本类目前仍按「实际到账流水合计」取数（`ExpenseMath.actualReceivedMinor`），
- * 属于 T01 改名后的**最小编译适配**，不是最终口径。T04 会把它换成
- * `WageLedger.incomeForRange(versions, range)` 并按版本解析。
+ * ## 时区
+ * 区间到日期的折算走 [TimeRange.startDate] / [TimeRange.endDate]，它们内部用
+ * [TimeRange.ZONE] —— 与 `TimeRange.thisMonth` / `monthOf` 同一个业务时区。
+ * **不得**在这里另起 `ZoneId.systemDefault()`：跨月边界上「本月收入」与「本月流水」
+ * 会归属到不同月份，是最难复现的一类账目错位。
+ *
+ * ## 没有版本时
+ * 收入按 `¥0` 计（[WageLedger.incomeForRange] 对空版本返回 0），结余 = −净支出，
+ * 副标题显式提示「未设置时薪」并指路 —— 绝不回落到流水求和来"凑一个数"。
  *
  * ⚠️ 为什么不能写「收入 − 毛支出 − 退款」：那样等于把退款扣两次（净支出里已扣过一次）。
- * 这条口径的单测在 MetricsTest 里钉死（支出 1350 + 退款 200 + 收入 1000 ⇒ 结余 −150）。
+ * 这条口径的单测在 MetricsTest 里钉死（支出 1350 + 退款 200 ⇒ 按版本收入扣净支出 1150）。
  *
  * 负结余用 [MetricTone.NEUTRAL] 而不是 [MetricTone.INCOME]：入不敷出不是"赚到钱了"，
  * 涂成收入色会给出错误暗示。
+ *
+ * @param versions 时薪版本提供者（生产侧注入 `AppContainer.wages.versions.value`）。
+ *   **刻意不设默认值**：给它一个"空列表"的默认值会让漏接线的调用点悄悄退化成"收入恒为 0"，
+ *   而这种错误在 UI 上看起来只是"这个月没赚钱"。
  */
-class IncomeBalanceMetric : MetricProvider {
+class IncomeBalanceMetric(private val versions: () -> List<WageVersion>) : MetricProvider {
     override val id: String = INCOME_BALANCE_ID
     // v1.1.9：原「收入 · 结余」把支出藏在 subtitle 的半句话里，用户得自己在脑子里做减法。
     // 改成「支出与结余」，并把支出 / 收入 / 结余拆成三行带标签的小指标（见 stats）。
@@ -165,18 +182,23 @@ class IncomeBalanceMetric : MetricProvider {
     override suspend fun compute(range: TimeRange, repo: LedgerRepository, snapshot: MetricSnapshot?): MetricResult {
         // 快照路径：契约已含 REFUND，直接用。
         // 自查路径：**必须显式 includeTransfers = true** —— `listRange` 的默认参数会把 REFUND
-        // 一并剔除，那样退款不参与冲抵、结余会虚低（收入 1000 / 支出 1350 / 退款 200 会算成 −350
-        // 而不是 −150）。`netExpenseMinor` 只认 EXPENSE 与 REFUND，混进来的 TRANSFER 会被自动忽略。
+        // 一并剔除，那样退款不参与冲抵、结余会虚低（支出 1350 / 退款 200 会算成 −1350
+        // 而不是 −1150）。`netExpenseMinor` 只认 EXPENSE 与 REFUND，混进来的 TRANSFER 会被自动忽略。
         val txns = snapshot?.takeIf { it.range == range }?.txns
             ?: repo.listRange(range.startMillis, range.endInclusiveMillis, includeTransfers = true)
-        val income = ExpenseMath.actualReceivedMinor(txns)
+        val versionsNow = versions()
+        val income = WageLedger.incomeForRange(versionsNow, range.startDate, range.endDate)
         val net = ExpenseMath.netExpenseMinor(txns)
         val balance = income - net
         return MetricResult.Scalar(
             providerId = INCOME_BALANCE_ID,
             title = title,
             // 口径说明留在副标题（原来这句在 secondaryText，与 subtitle 的拼串重复显示了一遍）
-            subtitle = "结余 = 收入 − 支出（退款已冲抵，不重复扣）",
+            subtitle = if (versionsNow.isEmpty()) {
+                "未设置时薪：收入按 ¥0 计，去「时薪」页填写"
+            } else {
+                "结余 = 时薪推算收入 − 支出（退款已冲抵）"
+            },
             valueMinor = balance,
             // 负结余自带负号（formatYuan 恒保留符号）
             primaryText = Money(balance).formatYuan(),
@@ -261,15 +283,19 @@ internal fun monthlyBuckets(
 /**
  * 把钱换算成时间 —— 参考仪表盘的招牌指标。
  * 「这个月花掉的钱 = 你 XXX 小时的人生」。
+ *
+ * @param profileProvider 按**查询区间**给出时薪参数：必须用区间所属月份的版本
+ *   （`WageLedger.profileForMonth`），否则切到历史月份时「花掉的时间」会用今天的工时参数换算
+ *   —— 改过工时之后，去年那笔开销显示的小时数会跟着一起变，属于同一类回溯覆盖。
  */
-class TimeCostMetric(private val profileProvider: () -> WageProfile) : MetricProvider {
+class TimeCostMetric(private val profileProvider: (TimeRange) -> WageProfile) : MetricProvider {
     override val id: String = TIME_COST_ID
     override val title: String = "花掉的时间"
     override val dimension: Dimension = Dimension.TIME
     override val order: Int = 5
 
     override suspend fun compute(range: TimeRange, repo: LedgerRepository, snapshot: MetricSnapshot?): MetricResult {
-        val profile = profileProvider()
+        val profile = profileProvider(range)
         val totalMinor = ExpenseMath.netExpenseMinor(
             resolveTxns(snapshot, range, repo),
         ).coerceAtLeast(0L)

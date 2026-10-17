@@ -21,6 +21,7 @@ import androidx.compose.runtime.collectAsState
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
+import androidx.compose.runtime.rememberCoroutineScope
 import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
@@ -40,8 +41,11 @@ import com.autoledger.app.ui.theme.ledgerTokens
 import com.autoledger.app.ui.theme.LedgerTone
 import com.autoledger.core.model.MetricResult
 import com.autoledger.core.model.Money
+import com.autoledger.core.model.TimeRange
+import com.autoledger.core.model.WageLedger
 import com.autoledger.core.model.WageProfile
 import com.autoledger.core.model.formatYuan
+import kotlinx.coroutines.launch
 
 /** 今日（驾驶舱）—— 参考仪表盘的首屏信息层级：三个指标 → 待办 → 最近流水 → 统计卡片 */
 @Composable
@@ -156,7 +160,13 @@ private fun hoursOf(container: AppContainer, amountMinor: Long): String {
 @Composable
 fun HourlyScreen(container: AppContainer) {
     var profile by remember { mutableStateOf(container.settings.wage.value) }
-    LaunchedEffect(Unit) { /* 本地编辑状态，进入时取一次快照 */ }
+    val scope = rememberCoroutineScope()
+    // 时薪版本：保存后立刻出现在「收入版本」卡片里，同时「真实时薪」显示本月生效值。
+    val versions by container.wages.versions.collectAsState()
+    val monthKey = WageLedger.monthKeyOf(System.currentTimeMillis(), TimeRange.ZONE)
+    // 本月已生效的版本（无版本时回落到编辑器里的当前输入，供首次填写时实时预览）。
+    val effectiveProfile = container.wages.profileForMonth(monthKey) ?: profile
+    val hasVersionThisMonth = versions.any { it.month == monthKey }
 
     LazyColumn(
         modifier = Modifier.fillMaxSize().padding(horizontal = 16.dp),
@@ -166,11 +176,18 @@ fun HourlyScreen(container: AppContainer) {
         item {
             AppCard {
                 Row(Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.SpaceBetween) {
-                    HeroTile("真实时薪", "¥${"%.1f".format(profile.realHourly)}", tone = LedgerTone.BRAND, hint = "每小时", modifier = Modifier.weight(1f))
-                    HeroTile("名义时薪", "¥${"%.1f".format(profile.nominalHourly)}", tone = LedgerTone.MUTED, hint = "每小时", modifier = Modifier.weight(1f))
+                    // 真实/名义时薪取自**本月生效版本**（不是编辑器里的未保存输入）：
+                    // 这两块是"当前的真相"，全站收入口径用的就是它。
+                    HeroTile(
+                        "真实时薪", "¥${"%.1f".format(effectiveProfile.realHourly)}",
+                        tone = LedgerTone.BRAND,
+                        hint = if (hasVersionThisMonth) "每小时 · 本月生效" else "每小时",
+                        modifier = Modifier.weight(1f),
+                    )
+                    HeroTile("名义时薪", "¥${"%.1f".format(effectiveProfile.nominalHourly)}", tone = LedgerTone.MUTED, hint = "每小时", modifier = Modifier.weight(1f))
                 }
                 Text(
-                    "两者差 ¥${"%.1f".format(profile.nominalHourly - profile.realHourly)}/时，就是通勤、加班和上班开销悄悄吃掉的部分。",
+                    "两者差 ¥${"%.1f".format(effectiveProfile.nominalHourly - effectiveProfile.realHourly)}/时，就是通勤、加班和上班开销悄悄吃掉的部分。",
                     Modifier.padding(top = 10.dp),
                     style = MaterialTheme.typography.bodyMedium,
                     color = MaterialTheme.colorScheme.onSurfaceVariant,
@@ -189,10 +206,22 @@ fun HourlyScreen(container: AppContainer) {
                 NumberField("每天通勤分钟", profile.dailyCommuteMinutes.toDouble()) { profile = profile.copy(dailyCommuteMinutes = it.toInt()) }
                 NumberField("每天加班小时", profile.dailyOvertimeHours) { profile = profile.copy(dailyOvertimeHours = it) }
                 Button(
-                    onClick = { container.settings.updateWage(profile) },
+                    onClick = {
+                        // 保存 = 写入**当月**版本（`WageBook.save` 结构上不接受月份参数，
+                        // 所以改时薪永远只从当月起生效，历史月份保留当时的时薪与收入）。
+                        scope.launch { container.wages.save(profile) }
+                    },
                     Modifier.padding(top = 10.dp),
                     colors = ButtonDefaults.buttonColors(containerColor = ledgerTokens().positive),
                 ) { Text("保存参数") }
+                if (hasVersionThisMonth) {
+                    Text(
+                        "本月已保存：¥${Money(effectiveProfile.effectiveMonthlySalaryMinor).formatYuan()}/月（再保存只更新本月，历史月份不变）",
+                        Modifier.padding(top = 6.dp),
+                        style = MaterialTheme.typography.bodySmall,
+                        color = MaterialTheme.colorScheme.onSurfaceVariant,
+                    )
+                }
             }
         }
 
@@ -215,6 +244,43 @@ fun HourlyScreen(container: AppContainer) {
                     "④ 真实时薪", "实际月收入 ÷ 每月工时",
                     "¥${Money(profile.realMonthlyIncomeMinor).formatYuan()} ÷ %.2f = %.2f 元/时".format(profile.monthlyWorkHours, profile.realHourly),
                 )
+            }
+        }
+
+        // 收入版本：把「收入是按月版本推算的」这件事摊开给用户看 ——
+        // 没有这张卡片，用户改完时薪去翻历史月份发现数字没变，只会以为是 bug。
+        item {
+            AppCard {
+                SectionTitle("收入版本", "每次保存时薪都会留下一个按月的版本")
+                if (versions.isEmpty()) {
+                    Text(
+                        "还没有收入版本，保存上面的时薪后从当月起生效。",
+                        Modifier.padding(top = 8.dp),
+                        style = MaterialTheme.typography.bodyMedium,
+                        color = MaterialTheme.colorScheme.onSurfaceVariant,
+                    )
+                } else {
+                    // 倒序：最近的版本在最上面（用户最关心"我这个月起是多少"）
+                    versions.sortedByDescending { it.month }.forEach { version ->
+                        Row(
+                            Modifier.fillMaxWidth().padding(vertical = 4.dp),
+                            horizontalArrangement = Arrangement.SpaceBetween,
+                        ) {
+                            Text(yyyyMmLabel(version.month), style = MaterialTheme.typography.bodyMedium)
+                            Text(
+                                "¥${Money(version.monthlyIncomeMinor).formatYuan()}",
+                                style = MaterialTheme.typography.bodyMedium,
+                                color = MaterialTheme.colorScheme.onSurface,
+                            )
+                        }
+                    }
+                    Text(
+                        "修改自当月起生效，历史月份保留当时时薪与收入。",
+                        Modifier.padding(top = 8.dp),
+                        style = MaterialTheme.typography.bodySmall,
+                        color = MaterialTheme.colorScheme.onSurfaceVariant,
+                    )
+                }
             }
         }
     }

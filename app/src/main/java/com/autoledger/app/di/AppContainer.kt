@@ -35,6 +35,7 @@ import com.autoledger.feature.capture.CaptureRegistry
 import com.autoledger.feature.capture.CaptureSource
 import com.autoledger.core.crypto.AiKeyVault
 import com.autoledger.core.model.TxnType
+import com.autoledger.core.model.startMonthKey
 import com.autoledger.feature.ai.AiConfig
 import com.autoledger.feature.ai.AiTypeRefiner
 import com.autoledger.feature.capture.IngestPipeline
@@ -414,11 +415,16 @@ class AppContainer(context: Context) {
 
     val metricRegistry: MetricRegistry by lazy {
         val providers: List<MetricProvider> = listOf(
-            TimeCostMetric { settings.wage.value },
+            // 「花掉的时间」按**区间所属月份**的时薪版本换算（切到历史月份不会用今天的工时参数）；
+            // 该月没有版本时回落到 app_settings 里的最近一次编辑快照。
+            TimeCostMetric { range ->
+                wages.profileForMonth(range.startMonthKey) ?: settings.wage.value
+            },
             CategoryShareMetric(),
             MerchantTopMetric(),
             // 收入 · 结余（order=35，插在平台分布 30 与月度趋势 40 之间）
-            IncomeBalanceMetric(),
+            // 收入 = 时薪版本推算的应计收入（不再对 INCOME 流水求和），见 IncomeBalanceMetric。
+            IncomeBalanceMetric { wages.versions.value },
             MonthlyTrendMetric(),
             PlatformShareMetric(),
         )

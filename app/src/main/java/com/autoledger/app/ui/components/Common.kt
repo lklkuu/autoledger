@@ -548,7 +548,9 @@ fun TransactionRow(
                     if (!timeOnRight) workText?.let { add("≈ $it") }
                     // 无障碍（WCAG 1.4.1：不能仅用颜色传达信息）：收支类型同时用文字标出，
                     // 否则色觉障碍用户无法区分「支出绿 / 收入红」，切换类型后也感知不到变化。
-                    if (txn.type == com.autoledger.core.model.TxnType.INCOME) add("收入")
+                    // v8 口径：INCOME 流水只代表「这笔钱到账了」，**不是**收入统计的来源
+                    // （收入由时薪版本推算）。标签写成「实际到账」以免与账单页的「收入」对不上。
+                    if (txn.type == com.autoledger.core.model.TxnType.INCOME) add("实际到账")
                     if (txn.type == com.autoledger.core.model.TxnType.REFUND) add("退款")
                     if (txn.type == com.autoledger.core.model.TxnType.TRANSFER) add("已识别为内部划转")
                     if (txn.status == com.autoledger.core.model.TxnStatus.RAW) add("待确认")

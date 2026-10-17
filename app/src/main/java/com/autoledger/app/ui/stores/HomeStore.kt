@@ -7,6 +7,7 @@ import com.autoledger.core.model.LedgerTransaction
 import com.autoledger.core.model.MetricResult
 import com.autoledger.core.model.MetricSnapshot
 import com.autoledger.core.model.TimeRange
+import com.autoledger.core.model.WageLedger
 import com.autoledger.core.model.withRangeLabel
 import com.autoledger.feature.stats.MonthlyTrendMetric
 import kotlinx.coroutines.CoroutineScope
@@ -145,7 +146,13 @@ class HomeStore(private val container: AppContainer) {
             // 付款总额（毛支出）：与净支出/退款同源，均走 ExpenseMath，避免 UI 手写 sumOf 造成口径漂移
             monthGrossMinor = ExpenseMath.grossExpenseMinor(monthTransactions),
             monthRefundMinor = ExpenseMath.refundMinor(monthTransactions),
-            realHourly = container.settings.wage.value.realHourly,
+            // 「真实时薪」取**本月生效版本**的工时参数：改了时薪之后这张卡必须跟着变，
+            // 否则与账单页 / 时段换算卡的口径不一致（设计文档 C10）。
+            // 无版本时回落到 app_settings 的最近一次编辑快照（保持"没设置过也能看换算"的体验）。
+            realHourly = (
+                container.wages.profileForMonth(WageLedger.monthKeyOf(now, TimeRange.ZONE))
+                    ?: container.settings.wage.value
+                ).realHourly,
             recent = monthTransactions.sortedByDescending { it.occurredAtMillis }.take(4),
             categories = categories.associateBy { it.id },
             metrics = metrics,

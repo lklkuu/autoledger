@@ -63,7 +63,11 @@ import com.autoledger.core.model.LedgerTransaction
 import com.autoledger.core.model.TxnType
 import com.autoledger.core.model.txnExtras
 import com.autoledger.core.model.MetricResult
+import com.autoledger.core.model.Money
 import com.autoledger.core.model.TimeRange
+import com.autoledger.core.model.WageLedger
+import com.autoledger.core.model.WageVersion
+import com.autoledger.core.model.formatYuan
 import com.autoledger.core.model.platform.PlatformCatalog
 import com.autoledger.core.model.platform.PlatformEntry
 import com.autoledger.feature.stats.BudgetCalculator
@@ -74,7 +78,7 @@ import kotlinx.coroutines.launch
 import kotlinx.coroutines.withContext
 import java.time.Instant
 import java.time.LocalDate
-import java.time.ZoneId
+import java.time.YearMonth
 import java.time.format.DateTimeFormatter
 
 /** 记账 —— 10 秒补记 + 全量流水 + 分类纠正入口 */
@@ -418,8 +422,10 @@ fun MonthlyScreen(container: AppContainer) {
     // B4：离开页面时释放订阅（实例级作用域），避免往返导航累积孤儿订阅（R1）。
     DisposableEffect(store) { onDispose { store.close() } }
     val state by store.state.collectAsState()
+    // 时薪版本：收入口径的唯一来源（v8）。改动后本屏三处收入随之刷新。
+    val versions by container.wages.versions.collectAsState()
 
-    val zone = ZoneId.systemDefault()
+    val zone = TimeRange.ZONE
     val months = remember {
         val now = LocalDate.now(zone)
         (0 until 12).map { now.minusMonths(it.toLong()) }
@@ -443,7 +449,11 @@ fun MonthlyScreen(container: AppContainer) {
     val monthTxns = state.items.filter {
         monthOf(it).let { d -> d.year == selectedMonth.year && d.monthValue == selectedMonth.monthValue }
     }
-    val monthIncome = ExpenseMath.actualReceivedMinor(monthTxns)
+    // 收入 = 时薪版本推算的应计值（**不再对 INCOME 流水求和**）：流水覆盖不全，
+    // 没抓到工资短信那个月就会被算成 0/净支出。INCOME 流水只作「实际到账」明细。
+    val monthKey = WageLedger.monthKeyOf(selectedMonth.year, selectedMonth.monthValue)
+    val monthIncome = WageLedger.incomeForMonth(versions, monthKey)
+    val monthIncomeHint = incomeHintOf(versions, monthKey)
     // 退款冲抵支出（口径见 ExpenseMath）：支出显示净额，并在提示里说明冲抵了多少
     val monthRefund = ExpenseMath.refundMinor(monthTxns)
     val monthExpense = ExpenseMath.netExpenseMinor(monthTxns).coerceAtLeast(0L)
@@ -488,15 +498,22 @@ fun MonthlyScreen(container: AppContainer) {
                         SectionTitle("本月总览", subtitle = DateTimeFormatter.ofPattern("yyyy 年 M 月").format(selectedMonth))
                         Row(Modifier.fillMaxWidth().padding(top = 8.dp), horizontalArrangement = Arrangement.SpaceBetween) {
                             // v1.1.6 收支颜色规范反转：收入红、支出绿（走 toneColor，深浅色自动切换）
-                            HeroTile("收入", "¥${monthIncome.yuan()}", tone = LedgerTone.INCOME, modifier = Modifier.weight(1f))
+                            // 金额格式化统一走 Money.formatYuan()：`Long.yuan()` 默认**吞负号**，
+                            // 结余为负时会显示成正数（把亏损读成盈利）。formatYuan 恒保留符号。
                             HeroTile(
-                                "支出", "¥${monthExpense.yuan()}",
+                                "收入", "¥${Money(monthIncome).formatYuan()}",
+                                tone = LedgerTone.INCOME,
+                                hint = monthIncomeHint,
+                                modifier = Modifier.weight(1f),
+                            )
+                            HeroTile(
+                                "支出", "¥${Money(monthExpense).formatYuan()}",
                                 tone = LedgerTone.EXPENSE,
-                                hint = if (monthRefund > 0) "已扣退款 ¥${monthRefund.yuan()}" else null,
+                                hint = if (monthRefund > 0) "已扣退款 ¥${Money(monthRefund).formatYuan()}" else null,
                                 modifier = Modifier.weight(1f),
                             )
                             // 结余是中性数值（既非收入也非支出）⇒ NEUTRAL
-                            HeroTile("结余", "¥${(monthIncome - monthExpense).yuan()}", tone = LedgerTone.NEUTRAL, modifier = Modifier.weight(1f))
+                            HeroTile("结余", "¥${Money(monthIncome - monthExpense).formatYuan()}", tone = LedgerTone.NEUTRAL, modifier = Modifier.weight(1f))
                         }
                         // 三格主行保持不变，另起一行展示「付款总额 / 退款总额」两个独立数值
                         PaymentRefundTiles(monthGross, monthRefund)
@@ -561,7 +578,13 @@ fun MonthlyScreen(container: AppContainer) {
 
             BillMode.YEAR -> {
                 val yearTxns = state.items.filter { monthOf(it).year == selectedYear }
-                val yIncome = ExpenseMath.actualReceivedMinor(yearTxns)
+                // 年度收入 = 各月版本逐月求和（往年 12 个月；当年只到当月；未来年 0）。
+                val currentMonthKey = WageLedger.monthKeyOf(System.currentTimeMillis(), TimeRange.ZONE)
+                val yIncome = WageLedger.incomeForYear(versions, selectedYear, currentMonthKey)
+                val yIncomeHint = incomeHintOf(
+                    versions,
+                    (1..12).map { WageLedger.monthKeyOf(selectedYear, it) },
+                )
                 val yRefund = ExpenseMath.refundMinor(yearTxns)
                 val yExpense = ExpenseMath.netExpenseMinor(yearTxns).coerceAtLeast(0L)
                 // 付款总额（毛支出）：与支出/退款同源，均走 ExpenseMath
@@ -571,14 +594,19 @@ fun MonthlyScreen(container: AppContainer) {
                     AppCard {
                         SectionTitle("年度总览", subtitle = "${selectedYear} 年")
                         Row(Modifier.fillMaxWidth().padding(top = 8.dp), horizontalArrangement = Arrangement.SpaceBetween) {
-                            HeroTile("收入", "¥${yIncome.yuan()}", tone = LedgerTone.INCOME, modifier = Modifier.weight(1f))
                             HeroTile(
-                                "支出", "¥${yExpense.yuan()}",
-                                tone = LedgerTone.EXPENSE,
-                                hint = if (yRefund > 0) "已扣退款 ¥${yRefund.yuan()}" else null,
+                                "收入", "¥${Money(yIncome).formatYuan()}",
+                                tone = LedgerTone.INCOME,
+                                hint = yIncomeHint,
                                 modifier = Modifier.weight(1f),
                             )
-                            HeroTile("结余", "¥${(yIncome - yExpense).yuan()}", tone = LedgerTone.NEUTRAL, modifier = Modifier.weight(1f))
+                            HeroTile(
+                                "支出", "¥${Money(yExpense).formatYuan()}",
+                                tone = LedgerTone.EXPENSE,
+                                hint = if (yRefund > 0) "已扣退款 ¥${Money(yRefund).formatYuan()}" else null,
+                                modifier = Modifier.weight(1f),
+                            )
+                            HeroTile("结余", "¥${Money(yIncome - yExpense).formatYuan()}", tone = LedgerTone.NEUTRAL, modifier = Modifier.weight(1f))
                         }
                         // 三格主行保持不变，另起一行展示「付款总额 / 退款总额」两个独立数值
                         PaymentRefundTiles(yGross, yRefund)
@@ -633,7 +661,7 @@ fun MonthlyScreen(container: AppContainer) {
                     }
                 }
 
-                // 逐月趋势表：12 个月的收入/支出/结余
+                // 逐月趋势表：收入按月版本 / 支出按流水
                 item {
                     AppCard {
                         SectionTitle("逐月趋势", subtitle = "${selectedYear} 年")
@@ -645,15 +673,20 @@ fun MonthlyScreen(container: AppContainer) {
                             Text("支出", Modifier.weight(1.2f), style = MaterialTheme.typography.labelMedium, color = toneColor(LedgerTone.EXPENSE))
                             Text("结余", Modifier.weight(1.2f), style = MaterialTheme.typography.labelMedium)
                         }
-                        (1..12).forEach { m ->
+                        // 当年只渲染到**当月**：未来月份显示 ¥0 会被读成"这个月没收入"，
+                        // 而收入其实是按版本应计的（未来月只是还没到）。往年照旧 12 行。
+                        val currentYear = YearMonth.now(zone).year
+                        val currentMonthValue = YearMonth.now(zone).monthValue
+                        val lastMonth = if (selectedYear == currentYear) currentMonthValue else 12
+                        (1..lastMonth).forEach { m ->
                             val list = yearTxns.filter { monthOf(it).monthValue == m }
-                            val i = ExpenseMath.actualReceivedMinor(list)
+                            val i = WageLedger.incomeForMonth(versions, WageLedger.monthKeyOf(selectedYear, m))
                             val e = ExpenseMath.netExpenseMinor(list).coerceAtLeast(0L)
                             Row(Modifier.fillMaxWidth().padding(vertical = 4.dp)) {
                                 Text("${m}月", Modifier.weight(1f), style = MaterialTheme.typography.bodySmall)
-                                Text("¥${i.yuan()}", Modifier.weight(1.2f), style = MaterialTheme.typography.bodySmall, color = toneColor(LedgerTone.INCOME))
-                                Text("¥${e.yuan()}", Modifier.weight(1.2f), style = MaterialTheme.typography.bodySmall, color = toneColor(LedgerTone.EXPENSE))
-                                Text("¥${(i - e).yuan()}", Modifier.weight(1.2f), style = MaterialTheme.typography.bodySmall)
+                                Text("¥${Money(i).formatYuan()}", Modifier.weight(1.2f), style = MaterialTheme.typography.bodySmall, color = toneColor(LedgerTone.INCOME))
+                                Text("¥${Money(e).formatYuan()}", Modifier.weight(1.2f), style = MaterialTheme.typography.bodySmall, color = toneColor(LedgerTone.EXPENSE))
+                                Text("¥${Money(i - e).formatYuan()}", Modifier.weight(1.2f), style = MaterialTheme.typography.bodySmall)
                             }
                         }
                     }
@@ -717,4 +750,39 @@ internal fun platformFilterChips(currentFilter: String?): List<PlatformEntry> {
     } else {
         selectable
     }
+}
+
+/**
+ * 收入 tile 的口径提示。
+ *
+ * 收入不再是「流水合计」而是「时薪版本推算的应计值」，用户必须能在屏上看到
+ * 这个数字**是哪个月的时薪**推出来的，否则「明细里有一笔收入、总览里是另一个数」
+ * 会被当成 bug（设计文档 R1 的观感风险）。
+ *
+ * @param monthKeys 本次统计覆盖的月份键（月度 1 个、年度 12 个）
+ * - 无版本 ⇒ 指路去「时薪」页（收入按 ¥0 计，绝不回落到流水求和）；
+ * - 覆盖范围内只解析出**一个**版本 ⇒ 直接标出该版本的月份；
+ * - 跨多个版本 ⇒ 说明是"各月版本"合计，避免只标一个月份造成误解。
+ */
+private fun incomeHintOf(versions: List<WageVersion>, vararg monthKeys: String): String {
+    if (versions.isEmpty()) return "未设置时薪，去「时薪」页填写"
+    val effectiveMonths = monthKeys
+        .mapNotNull { WageLedger.effectiveVersion(versions, it)?.month }
+        .distinct()
+    return if (effectiveMonths.size == 1) {
+        "按 ${yyyyMmLabel(effectiveMonths.single())} 时薪推算"
+    } else {
+        "按各月时薪版本推算"
+    }
+}
+
+/** 年度用法：一次性传入 1..12 月的月份键。 */
+private fun incomeHintOf(versions: List<WageVersion>, monthKeys: List<String>): String =
+    incomeHintOf(versions, *monthKeys.toTypedArray())
+
+/** `2026-03` → `2026年3月`。非法键原样返回（不崩、不抛）。时薪页的版本列表复用它。 */
+internal fun yyyyMmLabel(monthKey: String): String {
+    val year = monthKey.substringBefore('-').toIntOrNull() ?: return monthKey
+    val month = monthKey.substringAfter('-').toIntOrNull() ?: return monthKey
+    return "${year}年${month}月"
 }

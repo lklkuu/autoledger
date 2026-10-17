@@ -62,19 +62,15 @@ fun FreedomScreen(container: AppContainer) {
     // 两个「已攒」的口径都在 FreedomMath（纯函数、有单测），UI 不发明公式：
     //   当月已攒 = 当月收入 − 当月支出（不含存款）
     //   累计已攒 = 逐月收入之和 − 累计支出 + 存款
+    // 收入项由 FreedomStore 经 WageLedger **按月版本**算好（跨版本逐月求和，改时薪不回溯）；
+    // UI 只做减法，不重算收入。
     // 刻意不夹断：结果为负说明这个月在吃老本，是真实且需要被看见的状态。
-    //
-    // ⚠️ 待 T04 收口：v8 起「当月收入」应由 WageLedger.incomeForMonth（按月版本）给出，
-    // 这里暂时仍是「到手月薪」——T01 只做了签名收窄（收入项由调用方传入），
-    // 因此以 `月数 × 到手月薪` 喂进累计项，数值与改造前**逐分一致**（不加新逻辑）。
-    val monthlyIncomeMinor = state.monthlyNetSalaryMinor
-    val cumulativeIncomeMinor = state.monthsUsed.toLong() * state.monthlyNetSalaryMinor
     val monthlySavedUpMinor = FreedomMath.monthlySavedUpMinor(
-        monthlyIncomeMinor = monthlyIncomeMinor,
+        monthlyIncomeMinor = state.monthlyIncomeMinor,
         monthlyExpenseMinor = state.monthlyExpenseMinor,
     )
     val cumulativeSavedUpMinor = FreedomMath.cumulativeSavedUpMinor(
-        cumulativeIncomeMinor = cumulativeIncomeMinor,
+        cumulativeIncomeMinor = state.cumulativeIncomeMinor,
         cumulativeExpenseMinor = state.cumulativeExpenseMinor,
         currentDepositMinor = currentMinor,
     )
@@ -89,10 +85,11 @@ fun FreedomScreen(container: AppContainer) {
     val startLabel = state.startYearMonth?.let { FreedomMath.yearMonthLabel(it) } ?: "—"
     // 空账本时累计按 0 处理（FreedomMath 口径），这句提示要把它讲清楚，
     // 否则用户会以为「填了存款却显示 0」是 bug。
-    val cumulativeHint = if (state.monthsUsed <= 0) {
-        "账本暂无流水，累计按 0 处理"
-    } else {
-        "起始月 $startLabel 起 ${state.monthsUsed} 个月（按月薪估算）"
+    // 没设时薪时收入恒为 0（不是"这个月没赚钱"），必须明确指路，否则用户会以为数据坏了。
+    val cumulativeHint = when {
+        !state.hasWageVersion -> "未设置时薪：收入按 ¥0 计，去「时薪」页填写"
+        state.monthsUsed <= 0 -> "账本暂无流水，累计按 0 处理"
+        else -> "起始月 $startLabel 起 ${state.monthsUsed} 个月（按各月时薪版本合计）"
     }
 
     LazyColumn(
@@ -110,7 +107,7 @@ fun FreedomScreen(container: AppContainer) {
                         "当月已攒",
                         "¥${monthlySavedUpMinor.yuan(withSign = true)}",
                         tone = LedgerTone.BRAND,
-                        hint = "= 到手月薪 − 当月支出",
+                        hint = "= 时薪推算收入 − 当月支出",
                         modifier = Modifier.weight(1f),
                     )
                     HeroTile(

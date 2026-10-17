@@ -232,6 +232,28 @@ class WageLedgerTest {
     }
 
     @Test
+    fun `cumulative sums each month's own version`() {
+        // 用户场景：1 月、2 月到手 8000 元（12 薪），3 月起涨到 12000 元。
+        // 逐月求和 ⇒ 8000 + 8000 + 12000 = 28000；任何"月数 × 单个月薪"的乘法压缩
+        // 都只能给出 24000（3×8000）或 36000（3×12000），结构上无法表达"逐月不同"。
+        val versions = listOf(
+            version("2026-01", salary = 800_000L, payMonths = 12),
+            version("2026-03", salary = 1_200_000L, payMonths = 12),
+        )
+
+        assertEquals(800_000L, WageLedger.incomeForMonth(versions, "2026-01"))
+        assertEquals(800_000L, WageLedger.incomeForMonth(versions, "2026-02"))
+        assertEquals(1_200_000L, WageLedger.incomeForMonth(versions, "2026-03"))
+        assertEquals(
+            2_800_000L,
+            WageLedger.cumulativeIncomeMinor(versions, "2026-01", "2026-03"),
+            "跨版本累计 = 各月自己版本之和（8000 + 8000 + 12000）",
+        )
+        assertNotEquals(2_400_000L, WageLedger.cumulativeIncomeMinor(versions, "2026-01", "2026-03"), "不是 3×8000")
+        assertNotEquals(3_600_000L, WageLedger.cumulativeIncomeMinor(versions, "2026-01", "2026-03"), "不是 3×12000")
+    }
+
+    @Test
     fun `cumulative income equals per-month sum across versions`() {
         val versions = ladder()
 
@@ -261,8 +283,7 @@ class WageLedgerTest {
     }
 
     @Test
-    fun `profile for month falls back to the version snapshot`() {
-        // 历史月份必须拿到**当时**的工时参数（否则「花掉的时间」永远用今天的参数换算）。
+    fun `profile for month falls back to the version snapshot`() {        // 历史月份必须拿到**当时**的工时参数（否则「花掉的时间」永远用今天的参数换算）。
         val old = WageProfile(
             monthlyNetSalaryMinor = 1_200_000L,
             payMonthsPerYear = 13,

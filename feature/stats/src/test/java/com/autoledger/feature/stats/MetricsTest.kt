@@ -9,6 +9,7 @@ import com.autoledger.core.model.TimeRange
 import com.autoledger.core.model.ExpenseMath
 import com.autoledger.core.model.TxnType
 import com.autoledger.core.model.WageProfile
+import com.autoledger.core.model.WageVersion
 import kotlin.test.Test
 import kotlin.test.assertEquals
 import kotlin.test.assertTrue
@@ -482,61 +483,96 @@ class MetricsTest {
         )
     }
 
-    // ------------------------------------------------------------ 收入 · 结余（v1.1.6）
+    // ------------------------------------------------------------ 收入 · 结余（v8：时薪版本口径）
+
+    // 收入的唯一真源是时薪版本（WageLedger），**不是** INCOME 流水合计。
+    // 测试窗口固定为 2023-12 整月：`incomeForRange` 只累加「月首落在区间内」的月份，
+    // 所以必须用月对齐区间，否则收入恒为 0（那不是 bug，是"收入按月应计、不按天摊分"）。
+    private val salary12k = WageProfile(monthlyNetSalaryMinor = 1_200_000L, payMonthsPerYear = 12)
+
+    /** 2023-12 整月区间（右端 = 该月最后一毫秒，锚定在 2024-01 之后，稳定为"过去月"）。 */
+    private fun monthRange(): TimeRange =
+        TimeRange.monthOf(java.time.YearMonth.of(2023, 12), millis(2024, 1, 15, 12))
+
+    private fun versionAt(month: String = "2023-12", profile: WageProfile = salary12k): WageVersion =
+        WageVersion.of(month, profile, nowMillis = 0L)
+
+    /** 注入版本列表的卡片（生产侧签名是 `() -> List<WageVersion>`，无默认值）。 */
+    private fun cardWith(vararg versions: WageVersion): IncomeBalanceMetric =
+        IncomeBalanceMetric { versions.toList() }
 
     @Test
-    fun `balance is negative when there is no income at all`() = runBlocking {
-        val r = range(t0, t0 + day)
-        val repo = repo(Fixtures.txn("e1", -50_000, occurredAtMillis = t0))
-        val card = IncomeBalanceMetric().compute(r, repo) as MetricResult.Scalar
+    fun `balance is negative and income is zero when no wage version exists`() = runBlocking {
+        // 无版本 ⇒ 收入按 ¥0 计（绝不回落到流水求和来"凑一个数"），并显式提示未设置时薪。
+        val r = monthRange()
+        val repo = repo(Fixtures.txn("e1", -50_000, occurredAtMillis = millis(2023, 12, 5)))
+        val card = cardWith().compute(r, repo) as MetricResult.Scalar
+
         assertEquals(-50_000L, card.valueMinor, "只有支出 ⇒ 结余为负、收入 0")
+        assertEquals("0", card.stats[0].text, "收入行必须是 ¥0")
         assertEquals(MetricTone.NEUTRAL, card.tone, "入不敷出不得涂成收入色")
+        assertTrue(
+            card.subtitle!!.contains("未设置时薪"),
+            "无版本时必须显式提示去设置时薪，实得：${card.subtitle}",
+        )
     }
 
     @Test
-    fun `balance is income minus net expense`() = runBlocking {
-        val r = range(t0, t0 + day)
+    fun `balance uses the wage version and never sums income transactions`() = runBlocking {
+        // 反向钉子：账内塞一笔 999_999 分的 INCOME 流水，收入行**必须**仍等于版本值。
+        // 若有人把实现改回 `actualReceivedMinor(txns)`，这条会立刻红。
+        val r = monthRange()
         val repo = repo(
-            Fixtures.txn("i1", 100_000, type = TxnType.INCOME, occurredAtMillis = t0),
-            Fixtures.txn("e1", -135_000, occurredAtMillis = t0),
+            Fixtures.txn("i1", 999_999, type = TxnType.INCOME, occurredAtMillis = millis(2023, 12, 10)),
+            Fixtures.txn("e1", -135_000, occurredAtMillis = millis(2023, 12, 10)),
         )
-        val card = IncomeBalanceMetric().compute(r, repo) as MetricResult.Scalar
-        assertEquals(-35_000L, card.valueMinor, "收入 1000 − 支出 1350 = −350")
+        val card = cardWith(versionAt()).compute(r, repo) as MetricResult.Scalar
+
+        assertEquals("12000", card.stats[0].text, "收入 = 时薪版本值 12000 元（不是流水合计 9999.99）")
+        assertEquals(1_200_000L - 135_000L, card.valueMinor, "结余 = 版本收入 − 净支出")
+        assertEquals(MetricTone.INCOME, card.tone)
+        assertTrue(
+            card.subtitle!!.contains("时薪推算收入"),
+            "有版本时副标题必须说明口径来源，实得：${card.subtitle}",
+        )
     }
 
     @Test
     fun `refund offsets the expense once and never twice`() = runBlocking {
-        // 口径钉子：若写成「收入 − 毛支出 − 退款」会把退款扣两次 ⇒ −350；
-        // 正确口径是「收入 − 净支出(已扣退款)」⇒ −150。
-        val r = range(t0, t0 + day)
+        // 口径钉子：若写成「收入 − 毛支出 − 退款」会把退款扣两次 ⇒ 1_045_000；
+        // 正确口径是「收入 − 净支出(已扣退款)」⇒ 1_085_000。
+        val r = monthRange()
         val repo = repo(
-            Fixtures.txn("i1", 100_000, type = TxnType.INCOME, occurredAtMillis = t0),
-            Fixtures.txn("e1", -135_000, occurredAtMillis = t0),
-            Fixtures.txn("r1", 20_000, type = TxnType.REFUND, occurredAtMillis = t0),
+            Fixtures.txn("e1", -135_000, occurredAtMillis = millis(2023, 12, 10)),
+            Fixtures.txn("r1", 20_000, type = TxnType.REFUND, occurredAtMillis = millis(2023, 12, 11)),
         )
-        val card = IncomeBalanceMetric().compute(r, repo) as MetricResult.Scalar
+        val card = cardWith(versionAt()).compute(r, repo) as MetricResult.Scalar
+
         assertEquals(115_000L, ExpenseMath.netExpenseMinor(listOf(
-            Fixtures.txn("e1", -135_000, occurredAtMillis = t0),
-            Fixtures.txn("r1", 20_000, type = TxnType.REFUND, occurredAtMillis = t0),
+            Fixtures.txn("e1", -135_000, occurredAtMillis = millis(2023, 12, 10)),
+            Fixtures.txn("r1", 20_000, type = TxnType.REFUND, occurredAtMillis = millis(2023, 12, 11)),
         )), "净支出 1150（退款已冲抵一次）")
-        assertEquals(-15_000L, card.valueMinor, "结余 = 1000 − 1150 = −150（不是 −350）")
-        assertEquals(MetricTone.NEUTRAL, card.tone)
+        assertEquals(
+            1_200_000L - 115_000L,
+            card.valueMinor,
+            "结余 = 12000 − 1150 = 10850（不是 12000 − 1350 − 200 = 10450）",
+        )
+        assertEquals("1150", card.stats[1].text, "支出行是净支出 1150 元")
+        assertEquals(MetricTone.INCOME, card.tone)
     }
 
     @Test
     fun `income balance card reuses the snapshot instead of querying again`() = runBlocking {
-        val r = range(t0, t0 + day)
+        val r = monthRange()
         val snap = MetricSnapshot(
             range = r,
-            txns = listOf(
-                Fixtures.txn("i1", 50_000, type = TxnType.INCOME, occurredAtMillis = t0),
-                Fixtures.txn("e1", -20_000, occurredAtMillis = t0),
-            ),
+            txns = listOf(Fixtures.txn("e1", -20_000, occurredAtMillis = millis(2023, 12, 10))),
         )
         val repo = CountingRepo(emptyList(), emptyList())
-        val card = IncomeBalanceMetric().compute(r, repo, snap) as MetricResult.Scalar
+        val card = cardWith(versionAt()).compute(r, repo, snap) as MetricResult.Scalar
+
         assertEquals(0, repo.listRangeCalls, "带快照时不得再查库")
-        assertEquals(30_000L, card.valueMinor, "结余 = 500 − 200")
+        assertEquals(1_200_000L - 20_000L, card.valueMinor, "结余 = 12000 − 200")
         assertEquals(MetricTone.INCOME, card.tone, "有结余 ⇒ 收入语义色")
     }
 
@@ -545,13 +581,13 @@ class MetricsTest {
         // 需求钉子（v1.1.9）：卡片必须同时给出「收入 / 支出 / 结余」三项，且按因果顺序排列
         // （先进钱 → 再花钱 → 最后才是结余）。任何一项缺失、或支出行改用**毛支出**，
         // 用户读到的结余都会和账本对不上。
-        val r = range(t0, t0 + day)
+        val r = monthRange()
         val repo = repo(
-            Fixtures.txn("i1", 100_000, type = TxnType.INCOME, occurredAtMillis = t0),
-            Fixtures.txn("e1", -135_000, occurredAtMillis = t0),
-            Fixtures.txn("r1", 20_000, type = TxnType.REFUND, occurredAtMillis = t0),
+            Fixtures.txn("e1", -135_000, occurredAtMillis = millis(2023, 12, 10)),
+            Fixtures.txn("r1", 20_000, type = TxnType.REFUND, occurredAtMillis = millis(2023, 12, 11)),
         )
-        val card = IncomeBalanceMetric().compute(r, repo) as MetricResult.Scalar
+        val card = cardWith(versionAt()).compute(r, repo) as MetricResult.Scalar
+
         assertEquals(
             "支出与结余",
             card.title,
@@ -562,13 +598,33 @@ class MetricsTest {
             card.stats.map { it.label },
             "三行必须齐全，且按 收入 → 支出 → 结余 排列",
         )
-        assertEquals("1000", card.stats[0].text, "收入行 1000 分 ⇒ 1000 元")
+        assertEquals("12000", card.stats[0].text, "收入行 = 时薪版本 12000 元")
         // 支出行给的是**净支出**（毛支出 1350 − 退款 200 = 1150），不是毛支出 1350。
         assertEquals("1150", card.stats[1].text, "支出行是净支出 1150 元（退款已冲抵一次）")
-        assertEquals("-150", card.stats[2].text, "结余行 = 1000 − 1150 = −150 元")
+        assertEquals("10850", card.stats[2].text, "结余行 = 12000 − 1150 = 10850 元")
         assertEquals(MetricTone.INCOME, card.stats[0].tone, "收入行用收入色")
         assertEquals(MetricTone.EXPENSE, card.stats[1].tone, "支出行用支出色")
-        assertEquals(MetricTone.NEUTRAL, card.stats[2].tone, "负结余不得涂成收入色")
+        assertEquals(MetricTone.INCOME, card.stats[2].tone, "正结余用收入色")
+    }
+
+    @Test
+    fun `month aligned range counts exactly one month while a mid month range counts none`() = runBlocking {
+        // 收入是**月度应计值，不按天摊分**：3/15–4/14 只含 4/1 一个月首 ⇒ 一个月收入；
+        // 3/15–3/20 不含任何月首 ⇒ 0。这条锁住 incomeForRange 的边界语义不被"帮用户摊分"改坏。
+        val repo = repo()
+        val versions = { listOf(versionAt(month = "2023-03")) }
+
+        val crossing = IncomeBalanceMetric(versions).compute(
+            TimeRange(millis(2023, 3, 15), millis(2023, 4, 14, 23, 59, 59)),
+            repo,
+        ) as MetricResult.Scalar
+        val inside = IncomeBalanceMetric(versions).compute(
+            TimeRange(millis(2023, 3, 15), millis(2023, 3, 20, 23, 59, 59)),
+            repo,
+        ) as MetricResult.Scalar
+
+        assertEquals(1_200_000L, crossing.valueMinor, "3/15–4/14 只含 4/1 ⇒ 恰一个月收入")
+        assertEquals(0L, inside.valueMinor, "3/15–3/20 不含月首 ⇒ 收入 0（不按天摊分）")
     }
 
     // ------------------------------------------------------------ 时间成本
