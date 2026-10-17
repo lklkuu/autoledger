@@ -194,10 +194,15 @@ class IncomeBalanceMetric(private val versions: () -> List<WageVersion>) : Metri
             providerId = INCOME_BALANCE_ID,
             title = title,
             // 口径说明留在副标题（原来这句在 secondaryText，与 subtitle 的拼串重复显示了一遍）
-            subtitle = if (versionsNow.isEmpty()) {
-                "未设置时薪：收入按 ¥0 计，去「时薪」页填写"
-            } else {
-                "结余 = 时薪推算收入 − 支出（退款已冲抵）"
+            // 三种状态必须区分（见 WageLedger.isMigrationSeeded）：
+            //   ① 没有任何版本 ⇒ 收入按 0 计，指路去设置；
+            //   ② 全是「升级预填、未确认」的版本 ⇒ 如实说明来源，提示去确认（v8 口径变化会让数字变）；
+            //   ③ 用户已确认过 ⇒ 正常口径说明。
+            subtitle = when {
+                versionsNow.isEmpty() -> "未设置时薪：收入按 ¥0 计，去「时薪」页填写"
+                WageLedger.allMigrationSeeded(versionsNow) ->
+                    "收入按时薪推算（时薪为升级前保存的值，请到「时薪」页确认）"
+                else -> "结余 = 时薪推算收入 − 支出（退款已冲抵）"
             },
             valueMinor = balance,
             // 负结余自带负号（formatYuan 恒保留符号）

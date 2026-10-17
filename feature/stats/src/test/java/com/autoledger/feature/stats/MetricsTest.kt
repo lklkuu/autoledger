@@ -494,8 +494,15 @@ class MetricsTest {
     private fun monthRange(): TimeRange =
         TimeRange.monthOf(java.time.YearMonth.of(2023, 12), millis(2024, 1, 15, 12))
 
+    /**
+     * 一个**用户已确认**的版本。
+     *
+     * ⚠️ `nowMillis` 必须给真实时间戳：`0` 是「迁移预填、未确认」的指纹
+     * （见 `WageLedger.isMigrationSeeded`），用了它会让副标题走到"请确认"分支，
+     * 与"有版本 ⇒ 正常口径说明"的断言互相打架。
+     */
     private fun versionAt(month: String = "2023-12", profile: WageProfile = salary12k): WageVersion =
-        WageVersion.of(month, profile, nowMillis = 0L)
+        WageVersion.of(month, profile, nowMillis = 1_700_000_000_000L)
 
     /** 注入版本列表的卡片（生产侧签名是 `() -> List<WageVersion>`，无默认值）。 */
     private fun cardWith(vararg versions: WageVersion): IncomeBalanceMetric =
@@ -605,6 +612,27 @@ class MetricsTest {
         assertEquals(MetricTone.INCOME, card.stats[0].tone, "收入行用收入色")
         assertEquals(MetricTone.EXPENSE, card.stats[1].tone, "支出行用支出色")
         assertEquals(MetricTone.INCOME, card.stats[2].tone, "正结余用收入色")
+    }
+
+    @Test
+    fun `subtitle flags a migration seeded wage as pending confirmation`() = runBlocking {
+        // 迁移预填（createdAtMillis == 0）与"用户确认过"必须给不同副标题：
+        // 预填值照常参与计算（不隐藏、不清零），但要让用户知道这个时薪是升级前带过来的、
+        // 且 v8 口径变了（13 薪摊平），请他确认 —— 否则数字与升级前不同会被当成算错。
+        val seeded = WageVersion(
+            month = "2023-12",
+            profile = salary12k,
+            monthlyIncomeMinor = 1_200_000L,
+            createdAtMillis = 0L,
+            updatedAtMillis = 0L,
+        )
+        val card = cardWith(seeded).compute(monthRange(), repo(), null) as MetricResult.Scalar
+
+        assertEquals("12000", card.stats[0].text, "预填值照常参与计算，不得清零")
+        assertTrue(
+            card.subtitle!!.contains("确认"),
+            "升级预填必须提示用户确认，实得：${card.subtitle}",
+        )
     }
 
     @Test

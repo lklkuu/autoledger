@@ -761,11 +761,16 @@ internal fun platformFilterChips(currentFilter: String?): List<PlatformEntry> {
  *
  * @param monthKeys 本次统计覆盖的月份键（月度 1 个、年度 12 个）
  * - 无版本 ⇒ 指路去「时薪」页（收入按 ¥0 计，绝不回落到流水求和）；
+ * - 全是**迁移预填**（`createdAtMillis == 0`，用户升级后还没确认过）⇒ 如实说明来源并请他确认：
+ *   v8 的口径变化（13 薪摊平）会让数字与升级前不同，不说明会被当成算错；
  * - 覆盖范围内只解析出**一个**版本 ⇒ 直接标出该版本的月份；
  * - 跨多个版本 ⇒ 说明是"各月版本"合计，避免只标一个月份造成误解。
  */
 private fun incomeHintOf(versions: List<WageVersion>, vararg monthKeys: String): String {
     if (versions.isEmpty()) return "未设置时薪，去「时薪」页填写"
+    if (WageLedger.allMigrationSeeded(versions)) {
+        return "时薪为升级前保存的值，请到「时薪」页确认"
+    }
     val effectiveMonths = monthKeys
         .mapNotNull { WageLedger.effectiveVersion(versions, it)?.month }
         .distinct()

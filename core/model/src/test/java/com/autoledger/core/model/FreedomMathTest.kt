@@ -5,6 +5,7 @@ import java.time.ZoneId
 import kotlin.test.Test
 import kotlin.test.assertEquals
 import kotlin.test.assertNull
+import kotlin.test.assertTrue
 
 /**
  * 「自由」页两个「已攒」指标的纯 JVM 单测。
@@ -143,6 +144,21 @@ class FreedomMathTest {
         assertEquals("2025-03", FreedomMath.yearMonthLabel(index(2025, 3)))
         assertEquals("2025-12", FreedomMath.yearMonthLabel(index(2025, 12)))
         assertEquals("2026-01", FreedomMath.yearMonthLabel(index(2026, 1)))
+    }
+
+    @Test
+    fun `year month label is always ascii digits so WageLedger accepts it`() {
+        // 回归钉子：该串是 `WageLedger.cumulativeIncomeMinor(fromMonth = …)` 的入参，
+        // 而 `isValidMonth` 是严格 ASCII 校验。若实现退回 `String.format("%04d-%02d")`，
+        // 在阿拉伯语 / 波斯语区域会输出非 ASCII 数字 ⇒ 累计已攒的收入项静默变 0。
+        // 这里做的是"输出必须能被 isValidMonth 接受"的**契约断言**（与运行 Locale 无关）。
+        val label = FreedomMath.yearMonthLabel(index(2025, 3))
+        assertTrue(label.all { it == '-' || it in '0'..'9' }, "必须是 ASCII 数字：$label")
+        assertTrue(WageLedger.isValidMonth(label), "yyyy-MM 必须被 WageLedger 接受：$label")
+        for (m in 1..12) {
+            val key = FreedomMath.yearMonthLabel(index(2030, m))
+            assertTrue(WageLedger.isValidMonth(key), "12 个月都必须合法：$key")
+        }
     }
 
     @Test

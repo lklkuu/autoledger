@@ -303,6 +303,29 @@ class WageLedgerTest {
         assertEquals(30, WageLedger.profileForMonth(versions, "2026-07")?.dailyCommuteMinutes)
     }
 
+    // ------------------------------------------------------------------ 迁移预填标记
+
+    @Test
+    fun `migration seeded versions are recognised by their zero timestamps`() {
+        // 迁移预填写 createdAt/updatedAt = 0；真实保存（WageBook.save / 旧档案播种）是真实时间戳。
+        // 这个指纹是 UI 区分「升级前保存的时薪，待确认」与「用户已确认」的唯一依据。
+        val seeded = WageVersion(
+            month = "2026-01",
+            profile = profile(1_200_000L),
+            monthlyIncomeMinor = 1_300_000L,
+            createdAtMillis = 0L,
+            updatedAtMillis = 0L,
+        )
+        val confirmed = WageVersion.of("2026-02", profile(1_200_000L), nowMillis = 1_700_000_000_000L)
+
+        assertTrue(WageLedger.isMigrationSeeded(seeded))
+        assertTrue(!WageLedger.isMigrationSeeded(confirmed))
+        assertTrue(WageLedger.allMigrationSeeded(listOf(seeded)))
+        assertTrue(!WageLedger.allMigrationSeeded(listOf(seeded, confirmed)), "只要有一条是用户确认的就不算全预填")
+        // 空列表是「完全没设过时薪」，不是「全是预填」—— 两种提示不同，不能混
+        assertTrue(!WageLedger.allMigrationSeeded(emptyList()))
+    }
+
     // ------------------------------------------------------------------ 月份键
 
     @Test

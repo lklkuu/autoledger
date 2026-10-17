@@ -62,6 +62,14 @@ class FreedomStore(private val container: AppContainer) {
          * 「未设置时薪」并指路，而不是让用户以为"这个月没赚钱"。
          */
         val hasWageVersion: Boolean = false,
+        /**
+         * 版本表里**全是迁移预填**的行（`createdAtMillis == 0`，用户升级后还没在 v8 里保存过时薪）。
+         *
+         * 与 [hasWageVersion] 组合出三种状态：没有版本（收入 0，需去设置）/
+         * 只有预填（收入来自升级前的时薪快照，需用户确认）/ 用户已确认。
+         * 判据由 [WageLedger.allMigrationSeeded] 统一给出，UI 不自己发明规则。
+         */
+        val wageVersionSeeded: Boolean = false,
     )
 
     private val _state = MutableStateFlow(State())
@@ -135,6 +143,7 @@ class FreedomStore(private val container: AppContainer) {
                     startYearMonth = startYearMonth,
                     monthsUsed = FreedomMath.monthsUsed(startYearMonth, FreedomMath.yearMonthIndex(now, zone)),
                     hasWageVersion = versions.isNotEmpty(),
+                    wageVersionSeeded = WageLedger.allMigrationSeeded(versions),
                 )
             }
     }

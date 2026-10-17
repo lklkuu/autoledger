@@ -64,9 +64,19 @@ object FreedomMath {
         return date.year * 12 + (date.monthValue - 1)
     }
 
-    /** [yearMonthIndex] 的展示文本（`2025-03`）。用于页面上的「起始月」标签。 */
+    /**
+     * [yearMonthIndex] 的展示文本（`2025-03`）。用于页面上的「起始月」标签，
+     * **也是** `WageLedger.cumulativeIncomeMinor(fromMonth=…)` 的入参来源。
+     *
+     * ⚠️ 手工补零，**不能用** `String.format("%04d-%02d")`：后者走默认 `Locale`，
+     * 在阿拉伯语 / 波斯语等区域会输出非 ASCII 数字（`٢٠٢٥-٠٣`），
+     * 而 `WageLedger.isValidMonth` 是严格 ASCII 校验 ⇒ `fromMonth` 被判非法 ⇒
+     * `cumulativeIncomeMinor` 直接返回 0 ⇒ **累计已攒的收入项静默变 0**（当月已攒却正常）。
+     * 这类"某个区域下某个数字变 0"的 bug 极难复现，必须在源头掐掉。
+     */
     fun yearMonthLabel(yearMonthIndex: Int): String =
-        "%04d-%02d".format(yearMonthIndex / 12, yearMonthIndex % 12 + 1)
+        "${(yearMonthIndex / 12).toString().padStart(4, '0')}-" +
+            "${(yearMonthIndex % 12 + 1).toString().padStart(2, '0')}"
 
     /**
      * 账本最早一笔流水所在的月份序号；账本为空时返回 `null`。

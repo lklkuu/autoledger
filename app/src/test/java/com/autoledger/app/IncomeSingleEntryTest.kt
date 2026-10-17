@@ -26,8 +26,13 @@ import kotlin.test.assertEquals
  */
 class IncomeSingleEntryTest {
 
+    /** 用户已确认的版本（时间戳必须非 0：0 是「迁移预填」的指纹）。 */
     private fun version(month: String, salary: Long, payMonths: Int): WageVersion =
-        WageVersion.of(month, WageProfile(monthlyNetSalaryMinor = salary, payMonthsPerYear = payMonths), 0L)
+        WageVersion.of(
+            month,
+            WageProfile(monthlyNetSalaryMinor = salary, payMonthsPerYear = payMonths),
+            nowMillis = 1_700_000_000_000L,
+        )
 
     /** 该参数的折合月度收入（分）—— 与 `WageVersion.of` 锁定的值同源。 */
     private fun monthlyIncome(salary: Long, payMonths: Int): Long =

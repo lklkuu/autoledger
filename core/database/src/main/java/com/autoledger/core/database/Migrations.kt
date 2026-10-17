@@ -137,9 +137,22 @@ val MIGRATION_6_7 = object : Migration(6, 7) {
  *   「1970-01 起生效」，用户第一反应是"数据坏了"。
  * - `localtime` 修饰符与 App 业务时区（`ZoneId.systemDefault()`）一致，
  *   不会因 UTC 偏移把月份错切到上个月。
- * - **没有 `app_settings` 行 ⇒ 不播种（0 行）**：`app_settings` 只在用户**首次修改设置**
- *   时才写入（`UserSettings.init()` 只读不写），因此"全新安装 / 从未进过时薪页"的用户
- *   升级后没有版本行 —— 收入按 0 展示 + 提示「未设置时薪」，绝不凭空编造收入。
+ * - **没有 `app_settings` 行 ⇒ 不播种（0 行）**。
+ * - **有行、但整块时薪仍是出厂默认值 ⇒ 同样不播种（0 行）**。这一条是本迁移最容易写错的地方：
+ *   `app_settings` 是**单行整体 upsert**（`UserSettings.update {}` 每次写整行 `AppSettings`），
+ *   所以用户**只要动过任何一个其它设置**（自由基金目标 / 自动合并开关 / AI 配置），
+ *   库里就会有一行 `app_settings`，而它的 `wage` 只是 `WageProfile()` 的默认值
+ *   （4000 元 / 13 薪 ⇒ 月度 4333.33 元）。若只看"行在不在"，就会给这些用户
+ *   **凭空造出一笔他们从未填过的月收入**，且 `versions` 非空会让三处「未设置时薪」提示
+ *   全部静默 —— 用户看到的第一个收入数字就是编的，还无从交叉验证。
+ *   因此这里用「整块 7 个字段是否逐一等于出厂默认值」作为**未设置**的判据：
+ *   全部相等 ⇒ 视为没设过（不播种）；只要有一项不同 ⇒ 用户确实在时薪页动过手（播种）。
+ *
+ *   ⚠️ 这 7 个默认值是 **v8 时刻的 `WageProfile()` 快照，写死在这里**，刻意不从
+ *   `WageProfile()` 现取：迁移是**冻结的历史**，将来若调整出厂默认值（比如改成 5000 元），
+ *   `MIGRATION_7_8` 的行为也不能因此改变，否则同一份 v7 库在不同 App 版本上升级会得到不同结果。
+ *   REAL 列的比较是安全的：21.75 / 9.0 在 binary64 下精确可表示，0.6 两边是同一字面量
+ *   解析出的同一 double。
  *
  * ## 两处易踩点
  * 1. `MIN(occurredAtMillis)` 在**空表**上返回 `NULL`（聚合函数对空集返回一行 NULL），
@@ -171,9 +184,13 @@ val MIGRATION_7_8 = object : Migration(7, 8) {
             """.trimIndent(),
         )
 
-        // ② 播种一行（没有 app_settings 行时这条 SELECT 无结果 ⇒ 0 行，符合预期）。
+        // ② 播种一行。两种"没设过时薪"的情形都必须是 0 行（见 KDoc）：
+        //    · 没有 app_settings 行（从未改过任何设置）；
+        //    · 有行但整块时薪仍是 v8 出厂默认值（只改过目标 / 自动合并 / AI）。
         //    `schemaVersion` 用 LedgerSchema.CURRENT 而不是硬编码数字：它是**行级**结构标记，
         //    与 transactions / user_platforms 用同一个常量，避免同表出现两种取值。
+        //    `createdAtMillis` / `updatedAtMillis` 写 0 是**有意**的指纹：0 = 「升级预填、用户尚未确认」，
+        //    真实保存（WageBook.save / 旧档案播种）用的都是真实时间戳，详见 WageVersion 的 KDoc。
         db.execSQL(
             """
             INSERT INTO `wage_versions` (
@@ -193,6 +210,17 @@ val MIGRATION_7_8 = object : Migration(7, 8) {
                 0, 0, ${LedgerSchema.CURRENT}
             FROM `app_settings` s
             WHERE s.`id` = 'global'
+              -- 整块 7 个字段逐一等于 v8 出厂默认值 ⇒ 视为「从未设过时薪」，不播种。
+              -- 只要有一项不同 ⇒ 用户确实在时薪页动过手 ⇒ 播种。
+              AND NOT (
+                    s.`wageSalaryMinor` = 400000
+                AND s.`wagePayMonths` = 13
+                AND s.`wageWorkCostMinor` = 85000
+                AND s.`wageWorkDays` = 21.75
+                AND s.`wageOfficeHours` = 9.0
+                AND s.`wageCommuteMinutes` = 48
+                AND s.`wageOvertimeHours` = 0.6
+              )
             """.trimIndent(),
         )
     }

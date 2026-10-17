@@ -21,8 +21,12 @@ package com.autoledger.core.model
  * @property month 生效月，`YYYY-MM`（当月及之后生效，见 [WageLedger.effectiveVersion]）
  * @property profile 该版本的全量时薪快照（工时参数也随版本走，历史月份的工时换算才对得上）
  * @property monthlyIncomeMinor 落库的折算月度收入（分）＝ 写入时的 [WageProfile.effectiveMonthlySalaryMinor]
- * @property createdAtMillis 该月**首次**写入时间（同月二次保存必须保留，见 `WageBook.save`）
- * @property updatedAtMillis 最近一次修改时间
+ * @property createdAtMillis 该月**首次**写入时间（同月二次保存必须保留，见 `WageBook.save`）。
+ *   **特殊值 `0`** = 由 `MIGRATION_7_8` 从升级前的 `app_settings` 预填、用户**尚未在 v8 里确认**
+ *   （真实保存用的都是真实时间戳）。UI 据此提示「时薪为升级前保存的值，请确认」，
+ *   判据见 [WageLedger.isMigrationSeeded]。选 `0` 而不是用一个额外列：迁移里本来就写 0，
+ *   不需要为一条纯展示语义改 schema。
+ * @property updatedAtMillis 最近一次修改时间（迁移预填时同样为 `0`）
  */
 data class WageVersion(
     /** 生效月，`YYYY-MM`（当月及之后生效）。 */

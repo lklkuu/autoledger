@@ -266,12 +266,49 @@ class WageVersionMigrationTest {
     }
 
     @Test
+    fun `settings row with untouched factory wage seeds nothing`() {
+        // ★ 回归钉子（QA-income-review P1）：`app_settings` 是**单行整体 upsert**，
+        //   用户只要动过**任何一个其它设置**（自由基金目标 / 自动合并 / AI），库里就有一行，
+        //   而它的 wage 只是 WageProfile() 的出厂默认值（4000 元 / 13 薪 ⇒ 月度 4333.33 元）。
+        //   若迁移只看"行在不在"，这些用户会凭空得到一笔从未填过的月收入，
+        //   且 versions 非空会让三处「未设置时薪」提示全部静默 —— 编数且不给线索。
+        seedV7(emptyList(), salary = 400_000L, payMonths = 13)
+
+        val db = openMigrated()
+        val rows = rawVersions(db)
+        val settings = runBlocking { db.settingsDao().global() }
+        db.close()
+
+        assertEquals(0, rows.size, "整块时薪仍是出厂默认值 ⇒ 视为『从未设过时薪』，不得播种")
+        // 反向确认：该行确实存在（不是为了别的理由才 0 行）
+        assertEquals(400_000L, settings?.wageSalaryMinor, "设置行本身必须还在、且未被改动")
+    }
+
+    @Test
+    fun `a single edited wage field is enough to count as configured`() {
+        // 「只有一项与默认值不同」也算用户动过时薪页 ⇒ 必须播种。
+        // 这条防止把默认值判据写成"必须是完全不同的 profile"这类过严条件，
+        // 否则真设过时薪的用户升级后收入会变成 0（比编数更糟）。
+        seedV7(emptyList(), salary = 400_000L, payMonths = 12) // 只把 13 薪改成 12 薪
+
+        val db = openMigrated()
+        val rows = rawVersions(db)
+        db.close()
+
+        assertEquals(1, rows.size, "任一项偏离默认值 ⇒ 用户确实设过时薪 ⇒ 播种")
+        assertEquals("400000", rows.single()["monthlyNetSalaryMinor"])
+        assertEquals("400000", rows.single()["monthlyIncomeMinor"], "4000 元 × 12 / 12 = 4000 元")
+    }
+
+    @Test
     fun `seeded monthly income matches effective monthly salary`() {
         // 三组双向断言：迁移 SQL 的 CAST(ROUND(...)) 必须与 Kotlin 的 roundToLong() 逐分相等。
-        // ① 13 薪整除；② 非整除（.33…）；③ .5 边界（SQLite ROUND 与 Kotlin roundToLong 都远离零）。
+        // ① 13 薪整除；② 非整除（.66…）；③ .5 边界（SQLite ROUND 与 Kotlin roundToLong 都远离零）。
+        // ⚠️ 数值必须**偏离出厂默认值**（默认 = 400_000 分 / 13 薪）：那份组合按设计不播种
+        // （见 `settings row with untouched factory wage seeds nothing`），拿它当夹具会得到 0 行。
         val cases = listOf(
             1_200_000L to 13, // 1 300 000
-            400_000L to 13, // 433 333.33… → 433 333
+            410_000L to 13, // 5_330_000 / 12 = 444_166.66… → 444 167
             1_200_006L to 13, // 1 300 006.5 → 1 300 007
         )
 

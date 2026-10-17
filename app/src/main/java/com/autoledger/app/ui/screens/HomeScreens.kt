@@ -148,8 +148,18 @@ fun DashboardScreen(container: AppContainer) {
     }
 }
 
+/**
+ * 金额 → 工时文本（今日页「换算 X 工作小时」与最近流水行右侧的工时）。
+ *
+ * ⚠️ 时薪必须与同屏「真实时薪」tile 同源：那里读的是**当月生效版本**
+ * （`profileForMonth`），这里若读 `settings.wage`，一旦两者分叉（例如**备份导入只写版本表**，
+ * `settings.wage` 还是旧的），同一屏会出现两个时薪 → 同一笔钱换算出两组工时。
+ * 无版本时回落到 `settings.wage`（保持"没设置过也能看换算"的既有体验）。
+ */
 private fun hoursOf(container: AppContainer, amountMinor: Long): String {
-    val minutes = container.settings.wage.value.minutesOfWork(amountMinor)
+    val monthKey = WageLedger.monthKeyOf(System.currentTimeMillis(), TimeRange.ZONE)
+    val profile = container.wages.profileForMonth(monthKey) ?: container.settings.wage.value
+    val minutes = profile.minutesOfWork(amountMinor)
     return if (minutes >= 60) "%.1f".format(minutes / 60.0) else "%.0f".format(minutes) + "分"
 }
 

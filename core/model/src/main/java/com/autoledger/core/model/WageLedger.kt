@@ -113,6 +113,28 @@ object WageLedger {
     fun profileForMonth(versions: List<WageVersion>, month: String): WageProfile? =
         effectiveVersion(versions, month)?.profile
 
+    // ------------------------------------------------------------------ 迁移预填标记
+
+    /**
+     * 该版本是否由 `MIGRATION_7_8` 从升级前的 `app_settings` **预填**、用户尚未在 v8 里确认。
+     *
+     * 判据是 `createdAtMillis == 0L`：迁移是唯一会写 0 的地方，真实保存
+     * （`WageBook.save` / 旧备份档案播种）用的都是真实时间戳。
+     *
+     * 为什么需要它：预填值来自用户在 v7 里存的时薪（可能只是"进过时薪页随手留下"的值），
+     * 而 v8 改了口径（13 薪摊平后数字会变）。把"预填"与"用户确认过"区分开，
+     * UI 才能提示「这是升级前保存的时薪，请确认」，而不是让用户以为哪儿算错了。
+     */
+    fun isMigrationSeeded(version: WageVersion): Boolean = version.createdAtMillis == 0L
+
+    /**
+     * 所有版本都还是迁移预填的（= 用户升级后从未保存过时薪）。
+     *
+     * 空列表返回 `false`：那是「完全没设过时薪」，与「有预填值待确认」是两种不同的提示。
+     */
+    fun allMigrationSeeded(versions: List<WageVersion>): Boolean =
+        versions.isNotEmpty() && versions.all { isMigrationSeeded(it) }
+
     // ------------------------------------------------------------------ 区间 / 年度 / 累计
 
     /**
@@ -135,9 +157,15 @@ object WageLedger {
         if (cursor.isBefore(from)) cursor = cursor.plusMonths(1)
 
         var sum = 0L
-        while (!cursor.isAfter(to)) {
+        // 循环守卫与 cumulativeIncomeMinor 同源：本方法是 public（`WageBook.incomeForRange` 直出），
+        // 一个退化入参（如 from = LocalDate.MIN、to = now）会让这个 while 在主线程上跑上百万轮，
+        // 每轮都要 filter + sort 一遍版本列表。超出 100 年就停 —— 真实账本不可能跨这么久，
+        // 而"停"比"卡死"安全。
+        var guard = 0
+        while (!cursor.isAfter(to) && guard < MAX_MONTHS_SPAN) {
             sum += incomeForMonth(versions, monthKeyOf(cursor))
             cursor = cursor.plusMonths(1)
+            guard += 1
         }
         return sum
     }
