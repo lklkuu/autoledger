@@ -3,6 +3,8 @@ package com.autoledger.core.database
 import android.content.Context
 import android.database.sqlite.SQLiteDatabase
 import android.database.sqlite.SQLiteOpenHelper
+import androidx.room.Room
+import androidx.sqlite.db.SupportSQLiteDatabase
 import com.autoledger.core.model.LedgerSchema
 import com.autoledger.core.model.WageLedger
 import com.autoledger.core.model.WageProfile
@@ -194,6 +196,9 @@ class WageVersionMigrationTest {
         val db = openMigrated()
         val rows = rawVersions(db)
         val settings = runBlocking { db.settingsDao().global() }
+        // 约束：迁移**只许加表**，一个字都不许改既有 app_settings（只读 SELECT 播种）。
+        val settingsRows = db.openHelper.readableDatabase
+            .query("SELECT COUNT(*) FROM app_settings").use { c -> c.moveToNext(); c.getInt(0) }
         db.close()
 
         assertEquals(1, rows.size, "播种必须恰好一行（多行说明 SQL 写成了循环/缺 WHERE）")
@@ -211,6 +216,8 @@ class WageVersionMigrationTest {
         // 既有设置行不得被迁移改动
         assertEquals(1_200_000L, settings?.wageSalaryMinor, "迁移只读 app_settings，绝不改它")
         assertEquals(13, settings?.wagePayMonths)
+        assertEquals(3_000_000L, settings?.goalCurrentMinor, "其它列同样不得被迁移触碰")
+        assertEquals(1, settingsRows, "迁移不得插入/删除 app_settings 行")
     }
 
     @Test
@@ -328,7 +335,102 @@ class WageVersionMigrationTest {
     /** `find` + 映射的小工具，避免在断言里写两行。 */
     private suspend fun WageVersionDao.toModelOf(month: String) = find(month)?.toWageVersion()
 
-    // ------------------------------------------------------------------ 辅助断言
+    // ------------------------------------------------------------------ TableInfo 级断言（清库保险丝）
+
+    /**
+     * `PRAGMA table_info` 的一行。**这就是 Room 打开库时逐项比对的东西**
+     * （`TableInfo.Column`: name / type / notNull / defaultValue / primaryKeyPosition）。
+     */
+    private data class ColumnInfo(
+        val name: String,
+        val type: String,
+        val notNull: Boolean,
+        val defaultValue: String?,
+        val primaryKeyPosition: Int,
+    )
+
+    private fun tableInfoOf(db: SupportSQLiteDatabase, table: String): List<ColumnInfo> =
+        db.query("PRAGMA table_info(`$table`)").use { c ->
+            buildList {
+                while (c.moveToNext()) {
+                    add(
+                        ColumnInfo(
+                            name = c.getString(c.getColumnIndexOrThrow("name")),
+                            type = c.getString(c.getColumnIndexOrThrow("type")),
+                            notNull = c.getInt(c.getColumnIndexOrThrow("notnull")) != 0,
+                            defaultValue = c.getString(c.getColumnIndexOrThrow("dflt_value")),
+                            primaryKeyPosition = c.getInt(c.getColumnIndexOrThrow("pk")),
+                        ),
+                    )
+                }
+            }
+        }
+
+    private fun indexNamesOf(db: SupportSQLiteDatabase, table: String): List<String> =
+        db.query("PRAGMA index_list(`$table`)").use { c ->
+            buildList {
+                while (c.moveToNext()) add(c.getString(c.getColumnIndexOrThrow("name")))
+            }
+        }
+
+    /**
+     * **迁移出来的表结构必须与 Room 生成的完全一致**（清库级保险丝）。
+     *
+     * 为什么不能只比 `schemas/8.json` 的 `createSql` 字符串：
+     * Room 打开库时比的是 **TableInfo**（列名/类型/NOT NULL/默认值/主键位置 + 索引名），
+     * 不是 SQL 文本 —— 空白差异无害，而一个列名大小写错误就是致命。所以这里做两件事：
+     * 1. 把「迁移出来的表」与「Room 全新安装建出来的表」逐列比对（生成器无关、无 JSON 依赖）；
+     * 2. 再钉住一份**硬编码**的期望结构 —— 否则上面那条在"两边一起错"时会静默通过。
+     */
+    @Test
+    fun `wage_versions table info matches what Room generates`() {
+        seedV7(listOf("txn-a" to noonMillis(2025, 3)))
+
+        // ① 迁移出来的 v8 库
+        val migrated = openMigrated()
+        val migratedTable = migrated.openHelper.readableDatabase
+        val migratedColumns = tableInfoOf(migratedTable, "wage_versions")
+        val migratedIndexes = indexNamesOf(migratedTable, "wage_versions")
+        migrated.close()
+
+        // ② Room 全新安装（v8 直接建表，不跑任何 Migration）
+        val fresh = Room.inMemoryDatabaseBuilder(context, LedgerDatabase::class.java)
+            .addMigrations(*LedgerDatabaseFactory.ALL_MIGRATIONS.toTypedArray())
+            .allowMainThreadQueries()
+            .build()
+        val freshTable = fresh.openHelper.writableDatabase
+        val freshColumns = tableInfoOf(freshTable, "wage_versions")
+        val freshIndexes = indexNamesOf(freshTable, "wage_versions")
+        fresh.close()
+
+        assertEquals(
+            freshColumns,
+            migratedColumns,
+            "迁移出来的 wage_versions 必须与 Room 生成的逐列一致（不一致 ⇒ TableInfo 校验失败 ⇒ 清库）",
+        )
+        // 主键索引（sqlite_autoindex）与任何显式索引都必须一致
+        assertEquals(freshIndexes.filterNot { it.startsWith("sqlite_autoindex") },
+            migratedIndexes.filterNot { it.startsWith("sqlite_autoindex") },
+            "wage_versions 不得有 Room 未声明的索引",
+        )
+
+        // ③ 硬编码期望：列顺序 = WageVersionEntity 的声明顺序，主键位置 = 1（month）
+        val expected = listOf(
+            ColumnInfo("month", "TEXT", true, null, 1),
+            ColumnInfo("monthlyNetSalaryMinor", "INTEGER", true, null, 0),
+            ColumnInfo("payMonthsPerYear", "INTEGER", true, null, 0),
+            ColumnInfo("monthlyWorkCostMinor", "INTEGER", true, null, 0),
+            ColumnInfo("workDaysPerMonth", "REAL", true, null, 0),
+            ColumnInfo("dailyOfficeHours", "REAL", true, null, 0),
+            ColumnInfo("dailyCommuteMinutes", "INTEGER", true, null, 0),
+            ColumnInfo("dailyOvertimeHours", "REAL", true, null, 0),
+            ColumnInfo("monthlyIncomeMinor", "INTEGER", true, null, 0),
+            ColumnInfo("createdAtMillis", "INTEGER", true, null, 0),
+            ColumnInfo("updatedAtMillis", "INTEGER", true, null, 0),
+            ColumnInfo("schemaVersion", "INTEGER", true, null, 0),
+        )
+        assertEquals(expected, migratedColumns, "wage_versions 的列名/类型/顺序/主键与实体声明不符")
+    }
 
     /** 让 `WageLedger` 在迁移后的库上也能正常工作（真实读路径的最小冒烟）。 */
     @Test

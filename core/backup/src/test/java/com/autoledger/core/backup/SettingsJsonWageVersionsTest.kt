@@ -143,4 +143,33 @@ class SettingsJsonWageVersionsTest {
 
         assertEquals(1_300_000L, restored.monthlyIncomeMinor)
     }
+
+    @Test
+    fun `version json keys never carry secret-like substrings`() {
+        // 与 SettingsJsonAiTest 同一道护栏，但覆盖**本次新增**的版本数组：
+        // 那里只递归检查 `toSettingsJson()` 的输出，管不到 `toWageVersionsJson()`。
+        // 键名里出现 key / token / secret / password / sk- 就会被既有安全用例判失败，
+        // 所以本数组的字段一律用 month / profile 语义命名（不得用 monthKey / versionKey）。
+        val json = listOf(version("2026-01")).toWageVersionsJson().getJSONObject(0)
+
+        val keys = mutableListOf<String>()
+        val it = json.keys()
+        while (it.hasNext()) keys += it.next()
+
+        assertEquals(
+            listOf(
+                "month", "monthlyNetSalaryMinor", "payMonthsPerYear", "monthlyWorkCostMinor",
+                "workDaysPerMonth", "dailyOfficeHours", "dailyCommuteMinutes", "dailyOvertimeHours",
+                "monthlyIncomeMinor", "createdAtMillis", "updatedAtMillis",
+            ).sorted(),
+            keys.sorted(),
+            "版本行的字段名集合变了就必须同步核对安全护栏用例",
+        )
+        for (forbidden in listOf("key", "token", "secret", "password", "sk-")) {
+            assertTrue(
+                keys.none { it.contains(forbidden, ignoreCase = true) },
+                "版本行的键名里出现了敏感词：$forbidden（实得 $keys）",
+            )
+        }
+    }
 }
