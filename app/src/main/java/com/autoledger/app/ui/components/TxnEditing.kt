@@ -29,6 +29,7 @@ import androidx.compose.ui.unit.dp
 import com.autoledger.app.ui.stores.LedgerStore
 import com.autoledger.app.ui.stores.TxnEditRules
 import com.autoledger.app.ui.stores.canSwitchType
+import com.autoledger.app.ui.stores.editedOccurredAtOrNull
 import com.autoledger.app.ui.stores.isoDateOf
 import com.autoledger.app.ui.stores.typeSwitchBlockReason
 import com.autoledger.app.ui.theme.LedgerIcons
@@ -168,9 +169,8 @@ fun TxnEditDialog(
         else kotlin.math.abs(txn.amountMinor)
         mutableStateOf(String.format(java.util.Locale.US, "%.2f", absMinor / 100.0))
     }
-    // 日期文本有两个用途：① 展示/编辑；② 判断「用户是否改过日期」（决定保存时是否写回）。
-    // 两者必须来自**同一次**计算 —— 各算一遍的话，改动其中一处就会让「改没改」的判据
-    // 与输入框里的值悄悄漂移，把「没改」误判成「改了」。
+    // 日期文本只负责「展示 / 编辑」这一件事。「用户到底改没改日期」不再比文本
+    // （比文本会被空格 / 补零等写法绕过），改由 [editedOccurredAtOrNull] 按**日历日**判定。
     //
     // ⚠️ 转换失败时的兜底**不能是「今天」**（v1.1.14 用户报障的元凶）：
     //  1. 这里的时间戳可能是脏数据（备份导入 / 解析异常）。把「读不出来」当成
@@ -184,11 +184,9 @@ fun TxnEditDialog(
     // `NoSuchMethodError`（继承自 `Error`，`runCatching` 照样吞掉）。旧写法正是这样
     // 在低版本设备上**每次**都降级到「今天」。统一走 [isoDateOf]（Java 8 API），
     // 且与单测共用同一份实现。
-    val (initialDateText, dateTextState) = remember(txn.id) {
-        val initial = isoDateOf(txn.occurredAtMillis, ZoneId.systemDefault()).orEmpty()
-        initial to mutableStateOf(initial)
+    var dateText by remember(txn.id) {
+        mutableStateOf(isoDateOf(txn.occurredAtMillis, ZoneId.systemDefault()).orEmpty())
     }
-    var dateText by dateTextState
 
     // 自动识别且置信度不足 ⇒ 提示用户确认（用户手选后即变 USER 源，不再提示）
     // 与列表副标题复用同一判定，避免"列表不显示「?」但弹窗还在提示"的不一致。
@@ -375,9 +373,14 @@ fun TxnEditDialog(
                         // 在账单页的时间轴上被挪到当天最前面。这是 v1.1.14 的第二层缺陷，
                         // 在 API 34 设备上（第一层 ofInstant 没崩）同样会复现。
                         //
-                        // 边界：用户主动把日期改成**同一天** ⇒ 文本相同 ⇒ 传 null ⇒ 保持原时刻。
-                        // 这是期望行为：同日改期等于没改，没有理由把时刻抹平。
-                        occurredAtMillis = if (dateText == initialDateText) null else parsedDate,
+                        // ⚠️ 判据必须是**日历日**，不能比输入框文本：parseLocalDate 会 trim，
+                        // 用户多敲一个空格时文本已变、日期没变，比文本照样会把时刻抹平。
+                        // 同日改期等于没改 —— 没有理由把时刻抹平，故返回 null。
+                        occurredAtMillis = editedOccurredAtOrNull(
+                            parsedDate = parsedDate,
+                            originalMillis = txn.occurredAtMillis,
+                            zone = ZoneId.systemDefault(),
+                        ),
                         type = if (typeSwitchable) typeSelection else txn.type,
                         // 合并链主记录不得改类型：Store 侧也要用同一判据（不能只靠 UI 禁用 chips）
                         absorbedCount = mergedInto.size,

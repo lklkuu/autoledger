@@ -75,4 +75,93 @@ class TxnDateTextTest {
             assertEquals(true, text!!.matches(Regex("""\d{4}-\d{2}-\d{2}""")), "millis=$millis 输出=$text 形状不对")
         }
     }
+
+    // ------------------------------------------------------------ 保存判据（editedOccurredAtOrNull）
+
+    /** 2026-10-17 23:59:59.999 +08:00 —— 一天最末尾，被抹成 0 点或顺延一天都藏不住。 */
+    private val lateNight = 1_792_252_799_999L
+
+    @Test
+    fun `picking the same calendar day yields null so the original instant survives`() {
+        // 原记录 13:45，用户在日期框里重新选了同一天（parseLocalDate 得到当天 00:00）。
+        assertNull(
+            editedOccurredAtOrNull(parsedDate = startOfDay, originalMillis = thirteenFortyFive, zone = shanghai),
+            "同一天 ⇒ null（不改），否则 13:45 会被 atStartOfDay 抹成 00:00",
+        )
+    }
+
+    @Test
+    fun `a trailing space in the date field must not count as a change`() {
+        // 用户把 `2026-10-17` 敲成 `2026-10-17 `：`parseLocalDate` 会 trim，
+        // 两串解析结果**完全相同**（都是 startOfDay）。比文本会误判成「改了」，
+        // 于是把 23:59:59.999 抹成 00:00 —— 这条用例钉的就是这句话。
+        val fromTrimmed = startOfDay // "2026-10-17" 解析结果
+        val fromTrailingSpace = startOfDay // "2026-10-17 " 解析结果（trim 后同上）
+        assertEquals(fromTrimmed, fromTrailingSpace, "前提：两种写法解析结果必须相同")
+
+        assertNull(
+            editedOccurredAtOrNull(fromTrailingSpace, lateNight, shanghai),
+            "同一天只是多了一个空格 ⇒ 必须判为「没改」",
+        )
+    }
+
+    @Test
+    fun `a genuinely different day is written back`() {
+        val nextDay = startOfDay + 86_400_000L
+        assertEquals(
+            nextDay,
+            editedOccurredAtOrNull(parsedDate = nextDay, originalMillis = thirteenFortyFive, zone = shanghai),
+            "换了一天就必须写回（值等于那天的 00:00）",
+        )
+        assertEquals(
+            nextDay,
+            editedOccurredAtOrNull(parsedDate = nextDay, originalMillis = lateNight, zone = shanghai),
+            "从当天最末尾改到次日也必须写回",
+        )
+    }
+
+    @Test
+    fun `an unparseable date field never writes anything`() {
+        assertNull(
+            editedOccurredAtOrNull(parsedDate = null, originalMillis = thirteenFortyFive, zone = shanghai),
+            "解析失败 ⇒ null（纵深防御：即使将来放宽了保存按钮，也不得把非法输入写进库）",
+        )
+    }
+
+    @Test
+    fun `a dirty original timestamp falls back to what the user typed`() {
+        // 原值读不出日历日（备份导入的越界时间戳）⇒ 没有「原来那天」可比，
+        // 用户既然在空框里填了日期，就用用户的。
+        assertEquals(
+            startOfDay,
+            editedOccurredAtOrNull(parsedDate = startOfDay, originalMillis = Long.MIN_VALUE, zone = shanghai),
+            "原值脏 ⇒ 采用用户填的日期",
+        )
+        assertEquals(
+            startOfDay,
+            editedOccurredAtOrNull(parsedDate = startOfDay, originalMillis = Long.MAX_VALUE, zone = shanghai),
+            "原值脏 ⇒ 采用用户填的日期（MAX 侧同样）",
+        )
+    }
+
+    @Test
+    fun `the day comparison uses the given zone`() {
+        // 2026-10-17 07:00 +08:00 == 2026-10-16 23:00 UTC
+        val morningShanghai = 1_792_191_600_000L
+        // 2026-10-17 08:00 +08:00 == 2026-10-17 00:00 UTC
+        val eightShanghai = 1_792_195_200_000L
+
+        // 上海时区：两者都是 10-17 ⇒ 同一天 ⇒ null
+        assertNull(
+            editedOccurredAtOrNull(eightShanghai, morningShanghai, shanghai),
+            "上海时区下 07:00 与 08:00 是同一天",
+        )
+        // UTC：分别是 10-16 与 10-17 ⇒ 不同天 ⇒ 写回
+        // （换成 UTC 结论就变，说明判据确实按传入时区折算，而不是写死某个时区）
+        assertEquals(
+            eightShanghai,
+            editedOccurredAtOrNull(eightShanghai, morningShanghai, ZoneId.of("UTC")),
+            "UTC 下跨了零点 ⇒ 应判为不同天",
+        )
+    }
 }

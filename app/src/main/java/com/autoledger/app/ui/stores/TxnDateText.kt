@@ -39,3 +39,31 @@ internal fun isoDateOf(millis: Long, zone: ZoneId): String? = runCatching {
     // 0..9999 是 `yyyy-MM-dd` 这种 4 位年份写法的表示范围，也是本函数对外的契约。
     if (date.year !in 0..9999) null else date.format(DateTimeFormatter.ISO_LOCAL_DATE)
 }.getOrNull()
+
+/**
+ * 编辑弹窗保存时该写什么日期。
+ *
+ * 返回 `null` = **不改**（解析失败，或用户选的就是同一天）；否则返回新的 epoch 毫秒。
+ *
+ * ⚠️ 必须按**日历日**比较，不能比输入框文本：`TxnEditing.parseLocalDate` 会 `trim()`，
+ * 用户多敲一个空格（`"2026-10-17 "`）时文本已变、日期没变，比文本会把原记录的
+ * 13:45 抹成 00:00（`parseLocalDate` 走 `atStartOfDay`）—— 与「编辑日期被改成今天」
+ * 同型的静默改写，只是幅度更小、更难被发现。
+ *
+ * 三种边界：
+ *  - `parsedDate == null`（输入框为空 / 格式非法）⇒ null。UI 侧此时保存按钮本就是禁用的，
+ *    这里返回 null 是纵深防御：即使将来有人放宽了按钮，也绝不会把非法输入写进库里；
+ *  - **原值脏**（[isoDateOf] 返回 null，例如备份导入的时间戳越界）⇒ 直接采用用户填的日期。
+ *    没有「原来的日历日」可比，而用户既然在空框里填了日期，意图就是「用这一天」；
+ *  - 两个日历日相同、只有时刻不同 ⇒ null，保留原时刻（同日改期等于没改）。
+ *
+ * @param parsedDate 输入框解析出的「当天 00:00」毫秒；null = 无法解析
+ * @param originalMillis 这条流水**当前**的 `occurredAtMillis`
+ * @param zone 判定日历日用的时区（UI 传 `ZoneId.systemDefault()`，单测固定传具体时区）
+ */
+internal fun editedOccurredAtOrNull(parsedDate: Long?, originalMillis: Long, zone: ZoneId): Long? {
+    if (parsedDate == null) return null
+    val originalDay = isoDateOf(originalMillis, zone) ?: return parsedDate
+    val pickedDay = isoDateOf(parsedDate, zone) ?: return parsedDate
+    return if (originalDay == pickedDay) null else parsedDate
+}
