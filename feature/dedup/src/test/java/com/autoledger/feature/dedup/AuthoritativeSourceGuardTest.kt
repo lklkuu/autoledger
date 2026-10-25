@@ -111,7 +111,7 @@ class AuthoritativeSourceGuardTest {
     fun `a manual cash entry is surfaced as a candidate but never auto merged`() = runBlocking<Unit> {
         // QA 的反例：手工「菜市场」现金 25 元 vs 12:01 美团外卖 25 元（商户不同 ⇒ Tier-2）。
         val manualRow = txn("manual", none, manual, counterparty = "菜市场")
-        val incoming = txn("mt", meituan, notify, occurredAt = anchor + 60_000L, counterparty = "美团外卖")
+        val incoming = txn("mt", meituan, notify, occurredAt = anchor + 20_000L, counterparty = "美团外卖")
         val r = resolver(manualRow)
 
         val dups = r.findDuplicates(incoming)
@@ -126,7 +126,7 @@ class AuthoritativeSourceGuardTest {
     @Test
     fun `a bill-imported unknown row is surfaced as a candidate but never auto merged`() = runBlocking<Unit> {
         val billRow = txn("bill", none, billImport, counterparty = "楼下超市")
-        val incoming = txn("mt", meituan, notify, occurredAt = anchor + 30_000L, counterparty = "美团外卖")
+        val incoming = txn("mt", meituan, notify, occurredAt = anchor + 20_000L, counterparty = "美团外卖")
         val r = resolver(billRow)
 
         val dups = r.findDuplicates(incoming)
@@ -141,7 +141,7 @@ class AuthoritativeSourceGuardTest {
     fun `a manual order row is blocked no matter which side is incoming`() = runBlocking<Unit> {
         // 对称性：权威来源是 incoming 时，同样必须被挡住。
         val orderRow = txn("mt", meituan, notify, counterparty = "美团外卖")
-        val manualRow = txn("manual", none, manual, occurredAt = anchor + 60_000L, counterparty = "菜市场")
+        val manualRow = txn("manual", none, manual, occurredAt = anchor + 20_000L, counterparty = "菜市场")
         val r = resolver(orderRow)
 
         val dups = r.findDuplicates(manualRow)
@@ -153,7 +153,7 @@ class AuthoritativeSourceGuardTest {
     fun `an automatically captured bank-side unknown still auto merges with an order`() = runBlocking<Unit> {
         // 对照：不得因为这道护栏把「ORDER↔自动采集的 unknown 银行侧」也一起拒掉（否则功能倒退）。
         val bankSide = txn("sms-1", none, sms, counterparty = "尾号1234")
-        val incoming = txn("mt", meituan, notify, occurredAt = anchor + 60_000L, counterparty = "美团外卖")
+        val incoming = txn("mt", meituan, notify, occurredAt = anchor + 20_000L, counterparty = "美团外卖")
         val r = resolver(bankSide)
 
         val dups = r.findDuplicates(incoming)

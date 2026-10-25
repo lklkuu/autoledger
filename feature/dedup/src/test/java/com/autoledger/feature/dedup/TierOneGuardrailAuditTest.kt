@@ -135,7 +135,7 @@ class TierOneGuardrailAuditTest {
         // Bug 2 的原始场景：工行短信(sourceId=sms) + 工行 App 动账通知(sourceId=notify)，
         // 同金额、同商户（归一化后同为「工商银行」）、相差几十秒 ⇒ 必须仍能自动合并。
         val sms = txn("sms", bank, "sms", amountMinor = 505_500L, counterparty = "工商银行", fingerprint = "fp-same-bank")
-        val app = txn("app", bank, "notify", occurredAt = anchor + 30_000L, amountMinor = 505_500L, counterparty = "工商银行", fingerprint = "fp-same-bank")
+        val app = txn("app", bank, "notify", occurredAt = anchor + 20_000L, amountMinor = 505_500L, counterparty = "工商银行", fingerprint = "fp-same-bank")
         val r = resolver(sms)
 
         val dups = r.findDuplicates(app)
@@ -174,7 +174,7 @@ class TierOneGuardrailAuditTest {
     @Test
     fun `same brand different storefronts with different tiers must not be merged`() = runBlocking<Unit> {
         val wechat = txn("a", pay1, "notify_wechat", amountMinor = -30_000L, counterparty = "中石化(朝阳站)", fingerprint = "fp-same-brand")
-        val bankSms = txn("b", bank, "sms", occurredAt = anchor + 60_000L, amountMinor = -30_000L, counterparty = "中石化(海淀站)", fingerprint = "fp-same-brand")
+        val bankSms = txn("b", bank, "sms", occurredAt = anchor + 20_000L, amountMinor = -30_000L, counterparty = "中石化(海淀站)", fingerprint = "fp-same-brand")
         val r = resolver(wechat)
 
         val dups = r.findDuplicates(bankSms)

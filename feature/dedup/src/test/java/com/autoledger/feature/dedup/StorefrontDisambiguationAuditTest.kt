@@ -101,7 +101,7 @@ class StorefrontDisambiguationAuditTest {
     @Test
     fun `shape 2 - both sides with different storefronts must not auto merge`() = runBlocking<Unit> {
         val wechat = txn("wx", payment, "notify_wechat", counterparty = "中石化(朝阳站)", fingerprint = "fp-sinopec")
-        val bankSms = txn("bs", bank, "sms", counterparty = "中石化(望京站)", occurredAt = anchor + 40_000L, fingerprint = "fp-sinopec")
+        val bankSms = txn("bs", bank, "sms", counterparty = "中石化(望京站)", occurredAt = anchor + 20_000L, fingerprint = "fp-sinopec")
         val r = resolver(wechat)
 
         assertSomeCandidateSurfaces(bankSms, r)
@@ -144,7 +144,7 @@ class StorefrontDisambiguationAuditTest {
     @Test
     fun `shape 4b - full-width vs half-width brackets with different content must not merge`() = runBlocking<Unit> {
         val wechat = txn("wx", payment, "notify_wechat", counterparty = "中石化(朝阳站)", fingerprint = "fp-sinopec2")
-        val bankSms = txn("bs", bank, "sms", counterparty = "中石化（望京站）", occurredAt = anchor + 50_000L, fingerprint = "fp-sinopec2")
+        val bankSms = txn("bs", bank, "sms", counterparty = "中石化（望京站）", occurredAt = anchor + 25_000L, fingerprint = "fp-sinopec2")
         val r = resolver(wechat)
 
         assertSomeCandidateSurfaces(bankSms, r)

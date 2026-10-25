@@ -109,7 +109,7 @@ class DifferentStorefrontGuardTest {
     fun `different storefronts across tiers must not be silently merged`() = runBlocking<Unit> {
         // QA 的反例：微信支付通知「中石化(朝阳站)」(PAYMENT) + 银行 POS 短信「中石化(海淀站)」(BANK)。
         val incoming = txn("a", wechat, "notify_wechat", counterparty = "中石化(朝阳站)")
-        val existing = txn("b", bank, "sms", occurredAt = anchor + 60_000L, counterparty = "中石化(海淀站)")
+        val existing = txn("b", bank, "sms", occurredAt = anchor + 20_000L, counterparty = "中石化(海淀站)")
         val fp = fpOf(-30_000L, "中石化(朝阳站)")
         assertEquals(fp, fpOf(-30_000L, "中石化(海淀站)"), "抹括号 ⇒ 两门店指纹必然相同（前置）")
 
@@ -129,7 +129,7 @@ class DifferentStorefrontGuardTest {
     fun `the same storefront across tiers still auto merges`() = runBlocking<Unit> {
         // 反向护栏：门店也相同（都「中石化(朝阳站)」）⇒ 不冲突 ⇒ 层级互补仍应自动合并。
         val incoming = txn("a", wechat, "notify_wechat", counterparty = "中石化(朝阳站)")
-        val existing = txn("b", bank, "sms", occurredAt = anchor + 60_000L, counterparty = "中石化(朝阳站)")
+        val existing = txn("b", bank, "sms", occurredAt = anchor + 20_000L, counterparty = "中石化(朝阳站)")
         val fp = fpOf(-30_000L, "中石化(朝阳站)")
 
         val incomingFp = incoming.copy(fingerprint = fp)
@@ -147,7 +147,7 @@ class DifferentStorefrontGuardTest {
     fun `storefront on only one side still auto merges so normalize keeps its value`() = runBlocking<Unit> {
         // 证明抹括号的核心价值未被护栏破坏：银行短信带门店、微信通知不带 ⇒ 归一化后指纹相同 ⇒ 仍合并。
         val incoming = txn("a", wechat, "notify_wechat", counterparty = "星巴克(国贸店)")
-        val existing = txn("b", bank, "sms", occurredAt = anchor + 60_000L, counterparty = "星巴克")
+        val existing = txn("b", bank, "sms", occurredAt = anchor + 20_000L, counterparty = "星巴克")
         val fp = fpOf(-30_000L, "星巴克")
         assertEquals(fp, fpOf(-30_000L, "星巴克(国贸店)"), "抹括号让一带一不带仍同指纹（Tier-1 的核心能力）")
 
@@ -166,7 +166,7 @@ class DifferentStorefrontGuardTest {
     fun `different storefronts on the same tier are still surfaced as a candidate`() = runBlocking<Unit> {
         // 微信通知 + 支付宝通知（同层级不同通道）本就由层级护栏拒绝；这里确认门店护栏不会把候选也吞掉。
         val incoming = txn("a", wechat, "notify_wechat", counterparty = "中石化(朝阳站)")
-        val existing = txn("b", alipay, "notify_alipay", occurredAt = anchor + 30_000L, counterparty = "中石化(海淀站)")
+        val existing = txn("b", alipay, "notify_alipay", occurredAt = anchor + 25_000L, counterparty = "中石化(海淀站)")
         val fp = fpOf(-30_000L, "中石化(朝阳站)")
 
         val incomingFp = incoming.copy(fingerprint = fp)

@@ -6,6 +6,7 @@ import com.autoledger.core.model.LedgerRepository
 import com.autoledger.core.model.LedgerTransaction
 import com.autoledger.core.model.MatchTier
 import com.autoledger.core.model.TxnStatus
+import com.autoledger.core.model.countsInLedger
 import com.autoledger.core.model.platform.priorityOf
 import java.security.MessageDigest
 
@@ -30,6 +31,9 @@ import java.security.MessageDigest
  *   **只在 Tier-1 未命中时才执行** ⇒ 不增加既有热路径成本，也不构成 O(n²)。
  *
  * 边界与取舍：
+ * - **两个窗口，语义不同**：*发现*候选用 [DEFAULT_WINDOW]（180 秒，容忍通知与银行短信的天然时差）；
+ *   *静默自动合并*只允许 [FAST_MERGE_WINDOW]（30 秒）。超过 30 秒的同额候选不算"同一笔被抓两次"，
+ *   降级为「待确认」（`TxnStatus.DUPLICATE`：不进账单、只进采集箱）。详见 [canAutoMerge]。
  * - 同一家店、同金额、3 分钟内的**两笔真实消费**指纹相同，无法从指纹本身区分；
  *   Tier-1 因此只对**跨渠道**候选自动合并，同渠道候选降级为待确认（宁可多一步确认，也不静默吞掉真实消费）。
  * - Tier-2 靠**平台层级**而非来源区分：同一家店 3 分钟内两笔真实消费在 Tier-2 里是
@@ -76,7 +80,9 @@ class LedgerDuplicateResolver(
 
     /** Tier-1 候选：指纹精确命中，且时间漂移在窗口内。 */
     private fun tierOneCandidate(txn: LedgerTransaction, other: LedgerTransaction): DuplicateCandidate? {
-        if (other.status == TxnStatus.MERGED) return null
+        // 只把**计入账本**的记录当候选：MERGED 已被吸收、IGNORED 是用户判定不算账、
+        // DUPLICATE 本身还在等用户拍板 —— 三者都不该再被当作合并目标。
+        if (!other.status.countsInLedger) return null
         val drift = kotlin.math.abs(other.occurredAtMillis - txn.occurredAtMillis)
         if (drift > windowMillis) return null
         return DuplicateCandidate(
@@ -91,6 +97,8 @@ class LedgerDuplicateResolver(
             // 后者供 Tier-2 的「权威来源」护栏用（Tier-1 也会填，保持一致）。
             sourceId = other.sourceId,
             counterparty = other.counterparty,
+            // 「30 秒自动合并窗口」要判候选自己的时间戳，故必须带出来（见 canAutoMerge）。
+            occurredAtMillis = other.occurredAtMillis,
         )
     }
 
@@ -115,9 +123,9 @@ class LedgerDuplicateResolver(
         )
 
         return others.mapNotNull { other ->
-            // 仓储契约已排除 MERGED / IGNORED 与自身；这里再核一遍，
-            // 因为「被吸收的记录不得再当候选」是不能只靠一层的硬约束（见设计 §4.6）。
-            if (other.status == TxnStatus.MERGED || other.status == TxnStatus.IGNORED) return@mapNotNull null
+            // 仓储契约已只返回计入账本的记录；这里再核一遍，
+            // 因为「被吸收 / 被忽略 / 尚在待确认的疑似重复」不得再当候选是不能只靠一层的硬约束（见设计 §4.6）。
+            if (!other.status.countsInLedger) return@mapNotNull null
             // 护栏：层级不互补的**连候选都不是**（这是防误合并的关键，见 ComplementaryMatch）。
             // ⚠️ 这里**刻意不再要求「必须跨渠道」**（设计文档 §10-⑨）：同一笔支付的多条通知常常来自
             // 同一条 `notify` 渠道（数币 App + 云闪付 App + 银行 App），旧约束会把它们挡在候选之外
@@ -139,6 +147,8 @@ class LedgerDuplicateResolver(
                 // 权威来源护栏要用候选的 sourceId（unknown 一侧若是手工录入 / 账单导入 ⇒ 不得静默吸收）。
                 sourceId = other.sourceId,
                 counterparty = other.counterparty,
+                // 同上：快窗口判据要候选自己的时间戳。
+                occurredAtMillis = other.occurredAtMillis,
             )
         }.sortedByDescending { it.score }
     }
@@ -154,11 +164,17 @@ class LedgerDuplicateResolver(
      * Tier-2 **不依赖指纹**，依据是「层级互补 + 同金额 + 3 分钟内 + 跨渠道」，
      * 这比"商户名恰好相同"更强。反而银行短信本来就常常抽不出商户名（见设计 §4.5：
      * Tier-2 的主要价值就是让主记录补上真实商户），要求非空会让需求场景整条失效。
+     *
+     * ⚠️ **两个分支都先过「30 秒快窗口」**（[withinFastWindow]）：发现候选用 180 秒，
+     * 但**静默合并**只允许 30 秒内的同额记录。超过 30 秒的同额候选不是「同一笔被抓两次」，
+     * 更可能是两笔独立消费（同一家店半小时内两次同额很常见）⇒ 一律降级为待确认，
+     * 绝不静默吞掉。判据放在 `when` 的最前面是因为它是**成本最低、最不该被绕过**的一条。
      */
     override fun canAutoMerge(txn: LedgerTransaction, candidate: DuplicateCandidate): Boolean =
         when (candidate.tier) {
             MatchTier.FINGERPRINT ->
-                candidate.crossSource &&
+                withinFastWindow(txn, candidate) &&
+                    candidate.crossSource &&
                     isAutoMergeSafe(txn) &&
                     // ⚠️ 层级护栏（P0-1）：Tier-1 曾经**完全不看层级**，
                     // 使「微信通知 + 支付宝通知」（同店同金额）被静默合并 —— 那是两笔真实消费。
@@ -171,7 +187,8 @@ class LedgerDuplicateResolver(
                     // 都带门店信息且不同**时才拒绝（降级待确认，候选仍浮出）。
                     !branchSuffixesConflict(txn.counterparty, candidate.counterparty)
             MatchTier.COMPLEMENTARY ->
-                txn.amountMinor != 0L &&
+                withinFastWindow(txn, candidate) &&
+                    txn.amountMinor != 0L &&
                     // ⚠️ 不再要求 `candidate.crossSource`（设计文档 §10-⑨）：同渠道的多条通知
                     // （数币 App / 云闪付 App / 银行 App）也是同一笔。误合并由下面的层级护栏兜住：
                     // 同层级同通道的候选只会是 REVIEW（不是 AUTO_MERGE），因此到不了这里。
@@ -186,6 +203,16 @@ class LedgerDuplicateResolver(
                         candidate.sourceId,
                     )
         }
+
+    /**
+     * 「30 秒自动合并窗口」判据：候选与待入账流水的时间差必须 ≤ [FAST_MERGE_WINDOW]。
+     *
+     * `candidate.occurredAtMillis == 0L`（调用方未提供）按**不满足**处理 —— 保守：
+     * 时间未知不等于"同一时刻"，不能拿它当静默合并的依据。
+     */
+    private fun withinFastWindow(txn: LedgerTransaction, candidate: DuplicateCandidate): Boolean =
+        candidate.occurredAtMillis != 0L &&
+            kotlin.math.abs(candidate.occurredAtMillis - txn.occurredAtMillis) <= FAST_MERGE_WINDOW
 
     /**
      * 合并：把 [duplicateIds] 吸收进 [primaryId]。
@@ -243,6 +270,20 @@ class LedgerDuplicateResolver(
     companion object {
         const val RESOLVER_ID = "ledger_dup"
         const val DEFAULT_WINDOW = 3L * 60 * 1000L
+
+        /**
+         * **自动合并**的时间上限：时间差超过它的同额候选一律降级为「待确认」，不再静默合并。
+         *
+         * ## 为什么不直接把 [DEFAULT_WINDOW] 改成 30 秒（勿改，会倒退）
+         * [DEFAULT_WINDOW] 是「**发现候选**」的窗口，30 秒是「**自动合并**」的上限，两者语义不同：
+         * - 发现要宽（180 秒）：通知与银行短信是两条完全独立的链路，时差几十秒是常态；
+         *   窗口缩到 30 秒，同一笔在这两条链路上会**连候选都不是** ⇒ 直接记成两笔，
+         *   比"合并不了、留在待确认"糟糕得多（用户根本不知道有两条）。
+         * - 合并要严（30 秒）：能静默合并的前提是"几乎同时被两个渠道抓到"。
+         *   超过 30 秒的同额记录更可能是两笔独立消费（同一家便利店半小时内买两次同价）
+         *   ⇒ 一律降级给用户确认，宁可多一步确认，也不静默吞掉真实消费。
+         */
+        const val FAST_MERGE_WINDOW = 30L * 1000L
 
         /**
          * Tier-2 候选的固定分。

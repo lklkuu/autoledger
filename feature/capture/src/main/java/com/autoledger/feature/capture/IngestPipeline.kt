@@ -170,26 +170,32 @@ class IngestPipeline(
             confidence >= autoConfirmThreshold &&
             duplicates.isEmpty()
 
-        val final = typed.copy(
-            categoryId = categoryId,
-            confidence = confidence,
-            status = when {
-                duplicates.isNotEmpty() && !autoMergeDuplicates -> TxnStatus.RAW
-                shouldConfirm -> TxnStatus.CONFIRMED
-                else -> TxnStatus.RAW
-            },
-        )
-        repository.upsert(final)
-
         // P2-3：多候选时**按护栏结论择一**，而不是盲目取 `duplicates.first()`。
         // Tier-2 的候选分都是固定 50，排序对「能不能自动合并」是无关的 ——
         // 若一个 REVIEW 候选恰好排在前面，就会把本可 AUTO_MERGE 的候选挡掉，
         // 白白退化成「待确认」。这里直接挑出第一个**通过护栏**的候选来合并。
+        //
+        // ⚠️ 必须在算 `final` **之前**求值：状态判定要知道"有候选但合并不了"这件事
+        // （那种情况要落 DUPLICATE）。本段只读 `typed` / `duplicates`，不写库，前移是安全的。
         val mergeable = if (autoMergeDuplicates) {
             duplicates.firstOrNull { duplicateResolver.canAutoMerge(typed, it) }
         } else {
             null
         }
+
+        val final = typed.copy(
+            categoryId = categoryId,
+            confidence = confidence,
+            status = when {
+                // 有候选却合并不了（超过 30 秒快窗口 / 护栏判 REVIEW / 用户关了自动合并）
+                // ⇒ 疑似重复，默认不成立：不进账单与统计，只进采集箱待确认。
+                // 不能落 RAW —— RAW 是"默认成立"，会同时出现在账单列表里（这正是用户报的根因）。
+                duplicates.isNotEmpty() && mergeable == null -> TxnStatus.DUPLICATE
+                shouldConfirm -> TxnStatus.CONFIRMED
+                else -> TxnStatus.RAW
+            },
+        )
+        repository.upsert(final)
 
         return when {
             unresolvedAmount -> Outcome.NeedsReview(final.id, "未解析出金额，请在待确认里补全")
@@ -215,8 +221,16 @@ class IngestPipeline(
                 // ⚠️ 文案不得承诺**当前不存在**的动作：待确认页只有「确认入账 / 忽略」两个按钮，
                 // 没有「合并」入口（三个 NeedsReview 调用点也都丢弃了 reason）。
                 // 原先写「待你确认合并」会让用户去找一个不存在的功能 ⇒ 改为请用户核对。
-                if (duplicates.first().crossSource) "发现 ${duplicates.size} 笔可能的重复，请核对"
-                else "同渠道 ${duplicates.size} 笔同金额流水，疑似重复，请核对该笔是否为独立消费",
+                //
+                // 两种措辞都补上「已暂存为疑似重复，未计入账单」：该行的状态是 DUPLICATE，
+                // 默认不成立，用户看不到它出现在账单里是**预期行为**，必须在这里说清楚，
+                // 否则他会以为这笔账丢了。承诺的动作仍然只有采集箱里真实存在的两个。
+                if (duplicates.first().crossSource) {
+                    "发现 ${duplicates.size} 笔可能的重复，已暂存为疑似重复、未计入账单，请核对"
+                } else {
+                    "同渠道 ${duplicates.size} 笔同金额流水，已暂存为疑似重复、未计入账单，" +
+                        "请核对该笔是否为独立消费"
+                },
             )
             shouldConfirm -> Outcome.Accepted(final.id, true, reason)
             else -> Outcome.NeedsReview(final.id, "分类置信度 ${"%.2f".format(confidence)} 偏低，待确认")

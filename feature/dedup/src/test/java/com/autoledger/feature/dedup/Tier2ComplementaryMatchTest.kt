@@ -233,7 +233,7 @@ class Tier2ComplementaryMatchTest {
         // 若护栏写松（只判"同金额 + 同时间"），用户的两笔消费会被静默吞成一笔。
         // 同一家店、同金额、同商户 ⇒ **指纹相同**（这才是这条反例的真实形态）
         val first = txn("first", platformId = "meituan", sourceId = "notify", occurredAt = anchor, counterparty = "美团外卖", fingerprint = "fp-same-shop")
-        val second = txn("second", platformId = "meituan", sourceId = "notify", occurredAt = anchor + 60_000L, counterparty = "美团外卖", fingerprint = "fp-same-shop")
+        val second = txn("second", platformId = "meituan", sourceId = "notify", occurredAt = anchor + 20_000L, counterparty = "美团外卖", fingerprint = "fp-same-shop")
         val (resolver, _) = resolver(first)
 
         // 同渠道（sourceId 相同）⇒ 即便指纹一致也不能自动合并（既有保守语义）
@@ -245,7 +245,7 @@ class Tier2ComplementaryMatchTest {
         )
 
         // 换一个渠道、但都是 ORDER（美团通知 vs 淘宝通知）⇒ 两个消费场所 = 两笔消费，连候选都不是
-        val taobao = txn("tb", platformId = "taobao", sourceId = "notify_taobao", occurredAt = anchor + 30_000L, counterparty = "淘宝")
+        val taobao = txn("tb", platformId = "taobao", sourceId = "notify_taobao", occurredAt = anchor + 20_000L, counterparty = "淘宝")
         assertTrue(resolver.findDuplicates(taobao).isEmpty(), "ORDER ↔ ORDER 不得作为候选")
     }
 

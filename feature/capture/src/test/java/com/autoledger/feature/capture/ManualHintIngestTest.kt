@@ -16,6 +16,7 @@ import com.autoledger.core.model.TransferDetector
 import com.autoledger.core.model.TransferVerdict
 import com.autoledger.core.model.TxnStatus
 import com.autoledger.core.model.TxnType
+import com.autoledger.core.model.countsInLedger
 import com.autoledger.core.model.UserPlatform
 import com.autoledger.core.model.platform.PlatformCatalog
 import com.autoledger.core.model.platform.PlatformContext
@@ -292,7 +293,7 @@ class ManualHintIngestTest {
         ): List<LedgerTransaction> = store.values.filter { txn ->
             txn.fingerprint == fingerprint &&
                 txn.id != excludeId &&
-                txn.status != TxnStatus.MERGED &&
+                txn.status.countsInLedger &&
                 kotlin.math.abs(txn.occurredAtMillis - anchor) <= windowMillis
         }
 
@@ -304,8 +305,7 @@ class ManualHintIngestTest {
         ): List<LedgerTransaction> = store.values.filter { txn ->
             txn.amountMinor == amountMinor &&
                 txn.id != excludeId &&
-                txn.status != TxnStatus.MERGED &&
-                txn.status != TxnStatus.IGNORED &&
+                txn.status.countsInLedger &&
                 txn.occurredAtMillis in fromMillis..toMillis
         }.sortedByDescending { it.occurredAtMillis }
 

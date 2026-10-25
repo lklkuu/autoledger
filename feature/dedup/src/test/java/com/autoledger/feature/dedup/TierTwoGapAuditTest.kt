@@ -65,7 +65,7 @@ class TierTwoGapAuditTest {
     @Test
     fun `a manual cash entry must not be silently absorbed by an unrelated same-amount order`() = runBlocking<Unit> {
         val manual = txn("manual", none, CaptureSourceIds.MANUAL, counterparty = "菜市场")
-        val meituan = txn("mt", "meituan", "notify", occurredAt = anchor + 60_000L, counterparty = "美团外卖")
+        val meituan = txn("mt", "meituan", "notify", occurredAt = anchor + 20_000L, counterparty = "美团外卖")
         val r = resolver(manual)
 
         val dups = r.findDuplicates(meituan)
@@ -84,7 +84,7 @@ class TierTwoGapAuditTest {
     @Test
     fun `a bill-imported unknown row must not be silently absorbed by an unrelated order`() = runBlocking<Unit> {
         val bill = txn("bill", none, CaptureSourceIds.BILL_IMPORT, counterparty = "楼下超市")
-        val meituan = txn("mt", "meituan", "notify", occurredAt = anchor + 30_000L, counterparty = "美团外卖")
+        val meituan = txn("mt", "meituan", "notify", occurredAt = anchor + 20_000L, counterparty = "美团外卖")
         val r = resolver(bill)
 
         val dups = r.findDuplicates(meituan)
@@ -103,7 +103,7 @@ class TierTwoGapAuditTest {
             // 设计**明知且接受**的取舍：美团下单 30 元 + 微信在同店/异店 30 元，可能是同一笔、也可能是两笔。
             // 本用例只把「当前行为」钉住（防止无声漂移），真正的风险已在报告里单独说明。
             val meituan = txn("mt", "meituan", "notify", counterparty = "美团外卖")
-            val wechat = txn("wx", "wechat", "notify_wechat", occurredAt = anchor + 90_000L, counterparty = "星巴克")
+            val wechat = txn("wx", "wechat", "notify_wechat", occurredAt = anchor + 20_000L, counterparty = "星巴克")
             val r = resolver(meituan)
 
             val dups = r.findDuplicates(wechat)
@@ -137,11 +137,11 @@ class TierTwoGapAuditTest {
         // P2-3 之所以必要：同一笔 incoming 可能同时匹配到「REVIEW 候选」和「AUTO_MERGE 候选」。
         // 若取 duplicates.first()（按时间倒序），可能先撞上 REVIEW 而白白退化为待确认。
         // 本用例独立证明「两个候选确实并存」，从而证明 IngestPipeline 的 firstOrNull{canAutoMerge} 有意义。
-        val wechatLater = txn("wx", "wechat", "notify_wechat", occurredAt = anchor + 120_000L, counterparty = "星巴克")
+        val wechatLater = txn("wx", "wechat", "notify_wechat", occurredAt = anchor + 40_000L, counterparty = "星巴克")
         val meituanEarlier = txn("mt", "meituan", "notify", occurredAt = anchor, counterparty = "美团外卖")
         val r = resolver(wechatLater, meituanEarlier)
 
-        val incoming = txn("bank", bank, "sms", occurredAt = anchor + 60_000L, counterparty = "财付通")
+        val incoming = txn("bank", bank, "sms", occurredAt = anchor + 20_000L, counterparty = "财付通")
         val dups = r.findDuplicates(incoming)
 
         assertEquals(2, dups.size, "同金额窗口内同时存在 PAYMENT 与 ORDER 两个候选")

@@ -15,6 +15,7 @@ import com.autoledger.core.model.TransactionClassifier
 import com.autoledger.core.model.TxnStatus
 import com.autoledger.core.model.TxnType
 import com.autoledger.core.model.UserPlatform
+import com.autoledger.core.model.countsInLedger
 import com.autoledger.core.model.platform.PlatformCatalog
 import com.autoledger.core.model.platform.PlatformContext
 import com.autoledger.core.model.platform.PlatformKind
@@ -79,6 +80,8 @@ class DigitalRmbNotificationReproTest {
     /** 逐条复现结果（一行 = 一条通知）。 */
     private data class Row(
         val label: String,
+        /** 落库后的流水 ID —— 断言"最终落成什么状态"时用它反查。 */
+        val txnId: String,
         val sourceId: String,
         val sourceRef: String,
         val ruleId: String?,
@@ -169,6 +172,7 @@ class DigitalRmbNotificationReproTest {
             val stored = runBlocking { repo.findById(outcome.txnId) }
             rows += Row(
                 label = n.label,
+                txnId = outcome.txnId,
                 sourceId = n.sourceId,
                 sourceRef = env.sourceRef,
                 ruleId = parsed?.ruleId,
@@ -317,11 +321,12 @@ class DigitalRmbNotificationReproTest {
     /**
      * 场景 B：2 条通知 + 2 条银行短信（**商户名一致** ⇒ 4 条指纹相同 ⇒ 走 Tier-1）。
      *
-     * 用来钉住**设计刻意保留的保守分支**：指纹一致但**同渠道**的候选 `crossSource=false` ⇒ 不自动合并
-     * （团队判定为"保守但安全"）。跨渠道的银行短信可并入。仅打印 `[REPRO]` 供人核对。
+     * v1.1.14 起钉住**新的状态分流**（不再只是"打印供人核对"）：
+     * 同渠道的同指纹记录**不静默合并**，而是落 `DUPLICATE`（疑似重复、未计入账单）；
+     * 跨渠道的银行短信在 30 秒内并入主记录。断言见函数内注释。
      */
     @Test
-    fun `scenario B - four records sharing one fingerprint stay for user review`() {
+    fun `scenario B - four records sharing one fingerprint stay for user review`() = runBlocking<Unit> {
         val scenario = listOf(
             Notif(
                 "n1", "notify", "cn.gov.pboc.dcep",
@@ -342,7 +347,31 @@ class DigitalRmbNotificationReproTest {
         )
         val (rows, repo) = runScenario("B：2 通知 + 2 短信", scenario)
         assertEquals(4, rows.size)
-        // 同 A：存活条数由 `[REPRO]` 打印；硬断言交给纯函数矩阵用例，避免与判定表耦合。
+
+        // ── 按 v1.1.14 的新语义重写断言 ────────────────────────────────────────
+        // 时间戳刻意全部落在 30 秒内（0 / 5 / 10 / 12 秒），让"谁合并、谁降级"完全确定：
+        //  ① n1（数币通知，最先到）⇒ 入账 CONFIRMED，是这笔的主记录；
+        //  ② n2（云闪付通知，+5s）⇒ 同渠道（sourceId 都是 "notify"）⇒ **绝不静默合并**
+        //     （同渠道同额可能真是两笔）⇒ 落 DUPLICATE：疑似重复、**未计入账单**，
+        //     只进采集箱等用户拍板。这正是本需求「多余记录不直接出现在账单」的落点；
+        //  ③ s1 / s2（两条银行短信，+10s / +12s）⇒ 跨渠道 + 同指纹 + 30 秒内 ⇒ 自动合并进 n1。
+        // 于是账本里**只有 1 条**计入，另有 1 条待确认、2 条已合并 —— 与用户期望「记成 1 条」一致。
+        val byLabel = rows.associateBy { it.label }
+        suspend fun status(label: String) = repo.findById(byLabel.getValue(label).txnId)?.status
+
+        assertEquals(TxnStatus.CONFIRMED, status("n1"), "① 第一条正常入账，并作为主记录")
+        assertEquals(
+            TxnStatus.DUPLICATE,
+            status("n2"),
+            "② 同渠道同指纹 ⇒ 不静默合并 ⇒ 疑似重复（未计入账单，只进采集箱）",
+        )
+        assertEquals(TxnStatus.MERGED, status("s1"), "③ 跨渠道 + 30 秒内 ⇒ 并入主记录")
+        assertEquals(TxnStatus.MERGED, status("s2"), "③ 同上")
+        assertEquals(
+            1,
+            repo.all().count { it.status.countsInLedger },
+            "整笔消费在账本口径里只能算 1 条（这正是用户报的「记成 2 条」的反面）",
+        )
     }
 
     // ------------------------------------------------------------------ 真实原文（team-lead 从截图誊录，见 docs/repro/digital-rmb-4-notifications.md）
@@ -483,6 +512,9 @@ class DigitalRmbNotificationReproTest {
 
         fun alive(): List<LedgerTransaction> = store.values.filter { it.status != TxnStatus.MERGED }
 
+        /** 全部行（含被合并的）：断言「到底有几条计入账本」用。 */
+        fun all(): List<LedgerTransaction> = store.values.toList()
+
         override suspend fun upsert(txn: LedgerTransaction) {
             store[txn.id] = txn
         }
@@ -501,7 +533,7 @@ class DigitalRmbNotificationReproTest {
         ): List<LedgerTransaction> = store.values.filter { txn ->
             txn.fingerprint == fingerprint &&
                 txn.id != excludeId &&
-                txn.status != TxnStatus.MERGED &&
+                txn.status.countsInLedger &&
                 kotlin.math.abs(txn.occurredAtMillis - anchor) <= windowMillis
         }
 
@@ -513,8 +545,7 @@ class DigitalRmbNotificationReproTest {
         ): List<LedgerTransaction> = store.values.filter { txn ->
             txn.amountMinor == amountMinor &&
                 txn.id != excludeId &&
-                txn.status != TxnStatus.MERGED &&
-                txn.status != TxnStatus.IGNORED &&
+                txn.status.countsInLedger &&
                 txn.occurredAtMillis in fromMillis..toMillis
         }.sortedByDescending { it.occurredAtMillis }
 

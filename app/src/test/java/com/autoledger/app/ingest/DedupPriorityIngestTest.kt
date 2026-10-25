@@ -14,6 +14,7 @@ import com.autoledger.core.model.TransferVerdict
 import com.autoledger.core.model.TransactionClassifier
 import com.autoledger.core.model.TxnStatus
 import com.autoledger.core.model.TxnType
+import com.autoledger.core.model.countsInLedger
 import com.autoledger.core.model.UserPlatform
 import com.autoledger.core.model.platform.PlatformCatalog
 import com.autoledger.core.model.platform.PlatformContext
@@ -83,6 +84,11 @@ class DedupPriorityIngestTest {
     /**
      * 银行短信：只有「尾号 / 储蓄卡」这类**银行弱线索**，商户「肯德基」。
      *
+     * ⚠️ 时间差默认 **25 秒**（v1.1.14 起）：**静默自动合并**上限是 30 秒
+     * （`LedgerDuplicateResolver.FAST_MERGE_WINDOW`）。原先默认 35 秒 —— 那时只要落在
+     * 180 秒「发现候选」窗口内就允许合并；现在 35 秒会降级为待确认，
+     * 与本文件要证明的「自动合并后的主记录裁决」不是同一件事，故收进 30 秒内。
+     *
      * ⚠️ 商户刻意**不**用「财付通」：它虽是微信的持牌主体、也常出现在银行短信对手方，
      * 但「财付通」的 wechat 弱词(0.35) 与「尾号 / 储蓄卡」的 bank 弱词(0.35) **同分**，
      * 同分时按 `sortOrder` tie-break（wechat=10 < bank=70）⇒ 这条会被判成 **wechat(支付通道)**，
@@ -90,7 +96,7 @@ class DedupPriorityIngestTest {
      * 换成一个不含任何通道关键词的 POS 商户名后，它才**真的**落 `bank`（测试数据必须让
      * 被验证的路径成为唯一解释）。
      */
-    private fun bankSmsEnvelope(at: Long = anchor + 35_000L, amount: Long = -8_800L) = RawEnvelope(
+    private fun bankSmsEnvelope(at: Long = anchor + 25_000L, amount: Long = -8_800L) = RawEnvelope(
         envelopeId = "e-bank",
         sourceId = "sms",
         sourceRef = "sms:9527",
@@ -241,7 +247,10 @@ class DedupPriorityIngestTest {
             "证据不足的组合必须交给用户，不能静默合并，实际=$bank",
         )
         assertEquals(2, repo.alive().size, "两条都必须留着，等用户判断")
-        assertEquals(TxnStatus.RAW, repo.findById(bank.txnId)?.status)
+        // 旧语义钉子（v1.1.14 翻转）：这里此前断言 RAW。现在「有候选但合并不了」
+        // 一律落 DUPLICATE —— 与 RAW 的差别是**默认不成立**（不进账单与统计，
+        // 只进采集箱待确认）。断言 RAW 会让「重复记录不直接进账单」这条需求失效。
+        assertEquals(TxnStatus.DUPLICATE, repo.findById(bank.txnId)?.status)
         assertTrue(
             repo.mergeGroupOf(wechat.txnId).isEmpty(),
             "未合并 ⇒ 不得留下任何合并溯源",
@@ -333,7 +342,7 @@ private class InMemoryLedgerRepository : LedgerRepository {
     ): List<LedgerTransaction> = store.values.filter { txn ->
         txn.fingerprint == fingerprint &&
             txn.id != excludeId &&
-            txn.status != TxnStatus.MERGED &&
+            txn.status.countsInLedger &&
             kotlin.math.abs(txn.occurredAtMillis - anchor) <= windowMillis
     }
 
@@ -345,7 +354,7 @@ private class InMemoryLedgerRepository : LedgerRepository {
     ): List<LedgerTransaction> = store.values.filter { txn ->
         txn.amountMinor == amountMinor &&
             txn.id != excludeId &&
-            txn.status != TxnStatus.MERGED &&
+            txn.status.countsInLedger &&
             txn.status != TxnStatus.IGNORED &&
             txn.occurredAtMillis in fromMillis..toMillis
     }

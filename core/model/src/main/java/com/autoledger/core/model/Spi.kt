@@ -131,6 +131,19 @@ data class DuplicateCandidate(
      * 空串 = 未提供商户名，按「无门店信息」保守处理。
      */
     val counterparty: String = "",
+    /**
+     * 候选记录的**发生时间**（毫秒）。用于「30 秒自动合并窗口」的判定
+     * （见 `LedgerDuplicateResolver.FAST_MERGE_WINDOW`）。
+     *
+     * 为什么必须带进候选：「能不能被发现」用 180 秒窗口（通知与银行短信天然有几十秒时差，
+     * 缩短会让真实同笔连候选都不是 ⇒ 直接记成两笔，比现状更糟）；
+     * 而「能不能静默合并」只允许 30 秒（更远的同额记录更像两笔独立消费）。
+     * 两个判据语义不同，第二个必须看**候选自己的**时间戳，不能只看本条的时间窗口。
+     *
+     * `0` = 调用方未提供（默认值，兼容既有构造点）。此时按**不满足**快窗口处理（保守）：
+     * 宁可降级成待确认，也不拿"时间未知"当"同一时刻"去静默合并。
+     */
+    val occurredAtMillis: Long = 0L,
 )
 
 interface DuplicateResolver {
@@ -240,7 +253,9 @@ interface LedgerRepository {
      * 只负责「同金额 + 时间窗口」，**不做层级判定** —— 护栏（是否互补、能否自动合并）
      * 属于领域规则，放在 `LedgerDuplicateResolver` 里，便于纯 JVM 单测。
      *
-     * 实现约定：必须排除 `MERGED` / `IGNORED`，且排除 [excludeId] 自身。
+     * 实现约定：只返回**计入账本**的状态（[TxnStatus.countsInLedger]：`RAW` / `CONFIRMED`），
+     * 即排除 `MERGED` / `IGNORED` / `DUPLICATE`，且排除 [excludeId] 自身。
+     * 排除 `DUPLICATE` 的理由：那一条本身还在等用户拍板，不该再被当作另一笔的合并目标。
      */
     suspend fun findByAmountWithin(
         amountMinor: Long,
@@ -275,16 +290,21 @@ interface LedgerRepository {
     fun observeSince(fromMillis: Long): Flow<List<LedgerTransaction>>
 
     /**
-     * 实时订阅：全表「待确认(RAW)」流水数量。
+     * 实时订阅：全表「待确认」流水数量 —— **含疑似重复**（`RAW` + `DUPLICATE`）。
      *
-     * 之所以与 [observeSince] 分开订阅：待确认卡片统计的是**全表** RAW，
+     * 之所以与 [observeSince] 分开订阅：待确认卡片统计的是**全表**待确认流水，
      * 而 [observeSince] 只覆盖某个时间窗口。补录一笔更早日期的流水时窗口内集合不变，
      * 若两者合并在同一 Flow 上，卡片就永远不会刷新。
+     *
+     * `DUPLICATE` 计入的理由：它虽然默认不计入账单，但同样需要用户拍板（确认入账 / 忽略），
+     * 漏掉它会让「待确认 0 条」与采集箱里躺着一批记录互相矛盾。
      */
     fun observeRawCount(): Flow<Int>
 
     /**
-     * 实时订阅：全表「待确认(RAW)」流水（按时间倒序）。用于采集箱待确认队列（B4）。
+     * 实时订阅：全表「待确认」流水（按时间倒序）—— `RAW` + `DUPLICATE`。
+     * 用于采集箱待确认队列（B4）。两者的差别见 [TxnStatus]：
+     * `RAW` 默认成立（已计入账单），`DUPLICATE` 默认不成立（疑似重复，未计入账单）。
      */
     fun observeRaw(): Flow<List<LedgerTransaction>>
 

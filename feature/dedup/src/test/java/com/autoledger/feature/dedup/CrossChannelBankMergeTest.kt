@@ -125,7 +125,12 @@ class CrossChannelBankMergeTest {
             it.copy(fingerprint = probe.fingerprintOf(it))
         }
         // ② 几十秒后工行 App 动账通知到达（不同 sourceId、不同 sourceRef）
-        val second = txn("notify-1", sourceId = "notify", occurredAt = anchor + 35_000L).let {
+        //
+        // ⚠️ 时间差取 25 秒：**静默自动合并**上限是 30 秒（`LedgerDuplicateResolver.FAST_MERGE_WINDOW`）。
+        // 原先写 35 秒（当时只看"是否在 180 秒发现窗口内"），v1.1.14 起那种情形改为
+        // 降级为待确认（`TxnStatus.DUPLICATE`），因此本用例的时间差必须落进 30 秒内，
+        // 才测得到「同一条 bank 通道被重复抓取 ⇒ 自动合并」这条能力本身。
+        val second = txn("notify-1", sourceId = "notify", occurredAt = anchor + 25_000L).let {
             it.copy(fingerprint = probe.fingerprintOf(it))
         }
 

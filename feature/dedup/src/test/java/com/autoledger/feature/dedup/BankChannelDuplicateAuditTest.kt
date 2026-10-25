@@ -80,7 +80,7 @@ class BankChannelDuplicateAuditTest {
     fun `blank-merchant bank twin across channels must surface as a REVIEW candidate`() = runBlocking<Unit> {
         val probe = LedgerDuplicateResolver(FakeLedgerRepository())
         val sms = txn("sms", "sms", counterparty = "").let { it.copy(fingerprint = probe.fingerprintOf(it)) }
-        val app = txn("app", "notify", counterparty = "", occurredAt = anchor + 30_000L)
+        val app = txn("app", "notify", counterparty = "", occurredAt = anchor + 20_000L)
             .let { it.copy(fingerprint = probe.fingerprintOf(it)) }
 
         val r = resolver(sms)

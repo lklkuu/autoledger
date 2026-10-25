@@ -1,5 +1,6 @@
 package com.autoledger.feature.dedup
 
+import com.autoledger.core.model.DuplicateCandidate
 import com.autoledger.core.model.LedgerTransaction
 import com.autoledger.core.model.TxnStatus
 import com.autoledger.core.model.TxnType
@@ -277,6 +278,58 @@ class LedgerDuplicateResolverTest {
         assertFalse(
             r.canAutoMerge(b.copy(fingerprint = fp), dups.first()),
             "NONE↔NONE（不同门店都没识别出平台）不得静默合并",
+        )
+    }
+
+    // ------------------------------------------------------------ 30 秒自动合并窗口
+
+    /**
+     * 两个窗口的分工（勿把它们混成一个）：
+     * - **发现**候选：`DEFAULT_WINDOW` = 180 秒（通知与银行短信天然有几十秒时差，缩窄会漏掉真实同笔）；
+     * - **静默合并**：`FAST_MERGE_WINDOW` = 30 秒（更远的同额记录更像两笔独立消费）。
+     *
+     * 三条用例刻意避开正好 30000ms 的边界（30 秒两侧各留 1 秒余量）：
+     * 卡在边界上时，浮点/`<=` 实现细节会让断言变成"测实现"而不是"测语义"。
+     */
+    private suspend fun crossChannelPair(
+        offsetMillis: Long,
+    ): Pair<LedgerDuplicateResolver, Pair<LedgerTransaction, List<DuplicateCandidate>>> {
+        // 微信支付通知 + 银行扣款短信：层级互补（PAYMENT↔BANK）、跨渠道 ⇒ 护栏全部通过，
+        // 于是"能不能自动合并"只由时间窗口决定，测的正是本需求要的那一条。
+        val fp = fpOf(-1800, "星巴克")
+        val wechat = txn("wx", -1800, "星巴克", sourceId = "notify_wechat", platformId = "wechat").copy(fingerprint = fp)
+        val bank = txn("bk", -1800, "星巴克", occurredAt = anchor + offsetMillis, sourceId = "sms", platformId = "bank")
+            .copy(fingerprint = fp)
+        val r = resolver(wechat).first
+        return r to (bank to r.findDuplicates(bank))
+    }
+
+    @Test
+    fun `29 seconds apart still auto merges, and is still a candidate`() = runBlocking<Unit> {
+        val (r, pair) = crossChannelPair(29_000L)
+        val (bank, dups) = pair
+        assertEquals(1, dups.size, "29 秒 < 30 秒 ⇒ 既是候选")
+        assertTrue(r.canAutoMerge(bank, dups.single()), "29 秒 < 30 秒 ⇒ 允许静默合并")
+    }
+
+    @Test
+    fun `31 seconds apart is still a candidate but must NOT auto merge`() = runBlocking<Unit> {
+        val (r, pair) = crossChannelPair(31_000L)
+        val (bank, dups) = pair
+        assertEquals(1, dups.size, "31 秒仍在 180 秒发现窗口内 ⇒ 必须浮出为候选（提示用户核对）")
+        assertFalse(
+            r.canAutoMerge(bank, dups.single()),
+            "31 秒 > 30 秒 ⇒ 不得静默合并：超过半分钟的同额记录更可能是两笔独立消费",
+        )
+    }
+
+    @Test
+    fun `181 seconds apart is not even a candidate`() = runBlocking<Unit> {
+        val (_, pair) = crossChannelPair(181_000L)
+        val (_, dups) = pair
+        assertTrue(
+            dups.isEmpty(),
+            "181 秒 > 180 秒发现窗口 ⇒ 连候选都不是（两条各自入账，符合既有口径）",
         )
     }
 

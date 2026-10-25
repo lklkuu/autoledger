@@ -14,6 +14,7 @@ import com.autoledger.core.model.TransferVerdict
 import com.autoledger.core.model.TransactionClassifier
 import com.autoledger.core.model.TxnStatus
 import com.autoledger.core.model.UserPlatform
+import com.autoledger.core.model.countsInLedger
 import com.autoledger.core.model.platform.PlatformCatalog
 import com.autoledger.core.model.platform.PlatformContext
 import com.autoledger.core.model.platform.PlatformResolution
@@ -41,6 +42,11 @@ import kotlinx.coroutines.runBlocking
  *
  * 用固定平台识别器（按包名映射）替代 `KeywordPlatformResolver`：本用例验证的是**去重护栏**，
  * 不是识别引擎，固定输入能让"被验证的那条路径成为唯一解释"。
+ *
+ * ⚠️ 时间差统一取 20 秒（v1.1.14 起）：**静默自动合并**上限是 30 秒
+ * （`LedgerDuplicateResolver.FAST_MERGE_WINDOW`）。原先多处写 30/60 秒 ——
+ * 60 秒那种情形现在会因为超窗口而落 NeedsReview，于是用例会**因为错误的原因**变绿
+ * （测不到它本来要测的护栏）。收进 30 秒内，才能保证"护栏"是被验证的唯一解释。
  */
 class IngestPipelineTierOneGuardrailAuditTest {
 
@@ -84,7 +90,7 @@ class IngestPipelineTierOneGuardrailAuditTest {
         assertTrue(sms is IngestPipeline.Outcome.Accepted, "第一条无重复 ⇒ 直接入账，实际=$sms")
 
         val notify = pipeline.ingest(
-            envelope("app", "notify", "com.icbc.mobile", "工商银行", at = anchor + 30_000L),
+            envelope("app", "notify", "com.icbc.mobile", "工商银行", at = anchor + 20_000L),
         )
         assertTrue(
             notify is IngestPipeline.Outcome.MergedInto,
@@ -108,7 +114,7 @@ class IngestPipelineTierOneGuardrailAuditTest {
         assertTrue(wechat is IngestPipeline.Outcome.Accepted)
 
         val alipay = pipeline.ingest(
-            envelope("ali", "notify_alipay", "com.eg.android.AlipayGphone", "星巴克", at = anchor + 30_000L, amount = -1_800L),
+            envelope("ali", "notify_alipay", "com.eg.android.AlipayGphone", "星巴克", at = anchor + 20_000L, amount = -1_800L),
         )
         assertTrue(
             alipay is IngestPipeline.Outcome.NeedsReview,
@@ -132,7 +138,7 @@ class IngestPipelineTierOneGuardrailAuditTest {
         assertTrue(wechat is IngestPipeline.Outcome.Accepted, "第一条无重复 ⇒ 直接入账，实际=$wechat")
 
         val bank = pipeline.ingest(
-            envelope("bs", "sms", "sms:inbox", "中石化(望京站)", at = anchor + 30_000L),
+            envelope("bs", "sms", "sms:inbox", "中石化(望京站)", at = anchor + 20_000L),
         )
         assertTrue(
             bank is IngestPipeline.Outcome.NeedsReview,
@@ -152,7 +158,7 @@ class IngestPipelineTierOneGuardrailAuditTest {
         assertTrue(manual is IngestPipeline.Outcome.Accepted, "手工记录无重复 ⇒ 直接入账，实际=$manual")
 
         val meituan = pipeline.ingest(
-            envelope("mt", "notify", "com.sankuai.meituan", "美团外卖", at = anchor + 60_000L),
+            envelope("mt", "notify", "com.sankuai.meituan", "美团外卖", at = anchor + 20_000L),
         )
         assertTrue(
             meituan is IngestPipeline.Outcome.NeedsReview,
@@ -175,7 +181,7 @@ class IngestPipelineTierOneGuardrailAuditTest {
         assertTrue(sms is IngestPipeline.Outcome.Accepted, "第一条无重复 ⇒ 直接入账，实际=$sms")
 
         val notify = pipeline.ingest(
-            envelope("app", "notify", "com.icbc.mobile", counterparty = "", at = anchor + 30_000L),
+            envelope("app", "notify", "com.icbc.mobile", counterparty = "", at = anchor + 20_000L),
         )
         assertTrue(
             notify is IngestPipeline.Outcome.NeedsReview,
@@ -248,7 +254,7 @@ private class FakeRepo : LedgerRepository {
     ): List<LedgerTransaction> = store.values.filter { txn ->
         txn.fingerprint == fingerprint &&
             txn.id != excludeId &&
-            txn.status != TxnStatus.MERGED &&
+            txn.status.countsInLedger &&
             kotlin.math.abs(txn.occurredAtMillis - anchor) <= windowMillis
     }
 
@@ -260,7 +266,7 @@ private class FakeRepo : LedgerRepository {
     ): List<LedgerTransaction> = store.values.filter { txn ->
         txn.amountMinor == amountMinor &&
             txn.id != excludeId &&
-            txn.status != TxnStatus.MERGED &&
+            txn.status.countsInLedger &&
             txn.status != TxnStatus.IGNORED &&
             txn.occurredAtMillis in fromMillis..toMillis
     }.sortedByDescending { it.occurredAtMillis }

@@ -8,6 +8,7 @@ import com.autoledger.core.model.LedgerTransaction
 import com.autoledger.core.model.TxnStatus
 import com.autoledger.core.model.TxnType
 import com.autoledger.core.model.UserPlatform
+import com.autoledger.core.model.countsInLedger
 import kotlinx.coroutines.flow.Flow
 import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.flow.map
@@ -88,33 +89,37 @@ class FakeLedgerRepository(
     ): List<LedgerTransaction> = store.values.filter { txn ->
         txn.fingerprint == fingerprint &&
             txn.id != excludeId &&
-            txn.status != TxnStatus.MERGED &&
+            txn.status.countsInLedger &&
             kotlin.math.abs(txn.occurredAtMillis - anchor) <= windowMillis
     }
 
-    /** 语义对齐 Room.observeSince：occurredAtMillis >= from，排除 MERGED，且**没有右边界**。 */
+    /** 语义对齐 Room.observeSince：occurredAtMillis >= from，只取计入账本的状态，且**没有右边界**。 */
     override fun observeSince(fromMillis: Long): Flow<List<LedgerTransaction>> =
         revision.map {
-            store.values.filter { it.occurredAtMillis >= fromMillis && it.status != TxnStatus.MERGED }
+            store.values.filter { it.occurredAtMillis >= fromMillis && it.status.countsInLedger }
         }
 
-    /** 语义对齐 Room.observeRawCount：全表 RAW 计数，与时间窗口无关。 */
+    /** 语义对齐 Room.observeRawCount：全表待确认计数（RAW + DUPLICATE），与时间窗口无关。 */
     override fun observeRawCount(): Flow<Int> =
-        revision.map { store.values.count { it.status == TxnStatus.RAW } }
+        revision.map { store.values.count { it.status == TxnStatus.RAW || it.status == TxnStatus.DUPLICATE } }
 
-    /** 语义对齐 Room.observeRaw：全表 RAW 流水（按时间倒序）。 */
+    /** 语义对齐 Room.observeRaw：全表待确认流水（RAW + DUPLICATE，按时间倒序）。 */
     override fun observeRaw(): Flow<List<LedgerTransaction>> =
-        revision.map { store.values.filter { it.status == TxnStatus.RAW }.sortedByDescending { it.occurredAtMillis } }
+        revision.map {
+            store.values
+                .filter { it.status == TxnStatus.RAW || it.status == TxnStatus.DUPLICATE }
+                .sortedByDescending { it.occurredAtMillis }
+        }
 
-    /** 语义对齐 Room.observeAll：全量流水（排除 MERGED），按 includeTransfers 过滤。 */
+    /** 语义对齐 Room.observeAll：全量流水（只取计入账本的状态），按 includeTransfers 过滤。 */
     override fun observeAll(includeTransfers: Boolean): Flow<List<LedgerTransaction>> =
-        revision.map { store.values.filter { it.status != TxnStatus.MERGED }.filterTypes(includeTransfers) }
+        revision.map { store.values.filter { it.status.countsInLedger }.filterTypes(includeTransfers) }
 
-    /** 语义对齐 Room.observeRange：闭区间窗口流水（排除 MERGED）。 */
+    /** 语义对齐 Room.observeRange：闭区间窗口流水（只取计入账本的状态）。 */
     override fun observeRange(fromMillis: Long, toMillis: Long, includeTransfers: Boolean): Flow<List<LedgerTransaction>> =
         revision.map {
             store.values
-                .filter { it.occurredAtMillis in fromMillis..toMillis && it.status != TxnStatus.MERGED }
+                .filter { it.occurredAtMillis in fromMillis..toMillis && it.status.countsInLedger }
                 .filterTypes(includeTransfers)
         }
 
@@ -184,7 +189,7 @@ class FakeLedgerRepository(
 
     // ------------------------------------------------------------------ 去重：层级互补匹配与合并溯源
 
-    /** 语义对齐 Room.findByAmountWithin：金额带符号相等 + 闭区间窗口 + 排除自身/已合并/已忽略。 */
+    /** 语义对齐 Room.findByAmountWithin：金额带符号相等 + 闭区间窗口 + 排除自身 + 只取计入账本的状态。 */
     override suspend fun findByAmountWithin(
         amountMinor: Long,
         fromMillis: Long,
@@ -193,8 +198,7 @@ class FakeLedgerRepository(
     ): List<LedgerTransaction> = store.values.filter { txn ->
         txn.amountMinor == amountMinor &&
             txn.id != excludeId &&
-            txn.status != TxnStatus.MERGED &&
-            txn.status != TxnStatus.IGNORED &&
+            txn.status.countsInLedger &&
             txn.occurredAtMillis in fromMillis..toMillis
     }.sortedByDescending { it.occurredAtMillis }
 
