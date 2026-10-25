@@ -174,27 +174,43 @@ fun CaptureScreen(container: AppContainer) {
                     EmptyHint("没有待确认的流水，全都很确定")
                 } else {
                     state.rawQueue.forEach { txn ->
-                        Row(Modifier.fillMaxWidth(), verticalAlignment = Alignment.CenterVertically) {
-                            TransactionRow(
-                                txn = txn,
-                                category = null,
-                                modifier = Modifier.weight(1f),
-                                trailing = {
-                                    Row(verticalAlignment = Alignment.CenterVertically) {
-                                        IconButton(onClick = {
-                                            scope.launch {
-                                                container.repository.markStatus(txn.id, TxnStatus.CONFIRMED)
-                                            }
-                                        }) { Icon(LedgerIcons.Check, "确认入账") }
-                                        // 与账单页保持一致：待确认的流水也能直接丢弃（标记为忽略）。
-                                        IconButton(onClick = {
-                                            scope.launch {
-                                                container.repository.markStatus(txn.id, TxnStatus.IGNORED)
-                                            }
-                                        }) { Icon(LedgerIcons.Delete, "忽略这笔") }
-                                    }
-                                },
-                            )
+                        // 两种待确认要区分开（口径见 TxnStatus）：
+                        //  RAW       = 待确认但**默认成立**，已计入账单；
+                        //  DUPLICATE = 疑似重复、**默认不成立**，未计入账单 —— 用户看不到它在账单里
+                        //              是预期行为，必须在行内说清楚，否则他会以为这笔账丢了。
+                        Column(Modifier.fillMaxWidth()) {
+                            Row(Modifier.fillMaxWidth(), verticalAlignment = Alignment.CenterVertically) {
+                                TransactionRow(
+                                    txn = txn,
+                                    category = null,
+                                    modifier = Modifier.weight(1f),
+                                    trailing = {
+                                        Row(verticalAlignment = Alignment.CenterVertically) {
+                                            IconButton(onClick = {
+                                                scope.launch {
+                                                    // DUPLICATE 走这条路径是**期望路径**：确认后转 CONFIRMED，
+                                                    // 随即出现在账单列表里（不需要另建状态机）。
+                                                    container.repository.markStatus(txn.id, TxnStatus.CONFIRMED)
+                                                }
+                                            }) { Icon(LedgerIcons.Check, "确认入账") }
+                                            // 与账单页保持一致：待确认的流水也能直接丢弃（标记为忽略）。
+                                            IconButton(onClick = {
+                                                scope.launch {
+                                                    container.repository.markStatus(txn.id, TxnStatus.IGNORED)
+                                                }
+                                            }) { Icon(LedgerIcons.Delete, "忽略这笔") }
+                                        }
+                                    },
+                                )
+                            }
+                            if (txn.status == TxnStatus.DUPLICATE) {
+                                Text(
+                                    "疑似与已有流水重复，未计入账单 —— 点「确认入账」后才会进入账单",
+                                    style = MaterialTheme.typography.bodySmall,
+                                    color = ledgerTokens().warning,
+                                    modifier = Modifier.padding(start = 52.dp, bottom = 4.dp),
+                                )
+                            }
                         }
                     }
                 }
