@@ -4,6 +4,7 @@ import com.autoledger.core.model.Direction
 import kotlin.test.Test
 import kotlin.test.assertEquals
 import kotlin.test.assertNotNull
+import kotlin.test.assertNull
 import kotlin.test.assertTrue
 
 /**
@@ -200,13 +201,98 @@ class BankExpenseRegressionGuardTest {
         )
     }
 
+    /**
+     * ⚠️ **v1.1.14 修正的错误契约**：本用例原先叫
+     * `D2 - plain credit card repayment reminder still works`，断言
+     * 「信用卡还款提醒 = 支出 −5,000」。那是把 bug 写成了期望行为：
+     * 「本期应还款5,000元」是**账单口径的应付金额**，不是任何一笔已发生的交易。
+     * 记成 −5,000 会让净支出凭空虚增，用户当月真实消费被**再算一遍**。
+     *
+     * 修法：`BANK_BILL_NOTICE_REJECT` 按上下文（账单关键词 + 金额 + 无流出动词）
+     * 剔掉账单汇总；`bodyMustContainAny` 里的「还款」保持不动 ——
+     * 真实还款交易（见 D5）仍要靠它命中，再由 `TransferRules.REPAYMENT` 改判内部划转。
+     */
     @Test
-    fun `D2 - plain credit card repayment reminder still works`() {
-        assertExpense(
-            "D2 控制组（信用卡还款）",
-            "您尾号1234信用卡本期应还款5,000元，到期还款日10月25日，请及时还款。",
-            -500_000L,
+    fun `D2 - 信用卡账单提醒不入账（v1_1_14 修正的错误契约）`() {
+        assertNull(
+            parser.parse("sms:inbox", "95588", "您尾号1234信用卡本期应还款5,000元，到期还款日10月25日，请及时还款。"),
+            "账单提醒不是交易，不得入账（原先被记成 -500000 分）",
         )
+    }
+
+    /**
+     * v1.1.14 用户报障的**逐字**样本（工行 95588，尾号 6602）。
+     *
+     * 原行为：`bank_generic_out` 命中裸词「还款」（应**还款**额 / 到期**还款**日），
+     * 首条金额正则取走左起第一处「1,451.50元」⇒ 记成 −145150 分。
+     *
+     * 两个包名都断言：`sms:inbox`（短信通道）与 `com.icbc`（App 通知）走的是**同一批**
+     * 通用规则 —— `NotificationParser` 对非微信 / 支付宝包名只认 `packageNames == null`。
+     * 这也是**不能**给 `com.icbc` 加专属规则的原因：一旦加了，该包名下的通用规则会
+     * 集体退出候选集，工行真实消费 / 收入通知被整片丢弃。
+     */
+    @Test
+    fun `D3 - ICBC 信用卡账单提醒（应还款额）不入账`() {
+        val body = "短信账单：您尾号6602的信用卡本期账单（9月24日—10月23日）：人民币账户应还款额1,451.50元，" +
+            "到期还款日为11月11日。其他币种账户余额均为0。登录工银e生活App查询账单明细。【工商银行】"
+
+        assertNull(parser.parse("sms:inbox", "95588", body), "短信通道：账单提醒不得入账（原 −145150 分）")
+        assertNull(parser.parse("com.icbc", "动账通知", body), "com.icbc 共用通用规则，同样不得入账")
+    }
+
+    /**
+     * 反向样本 ①：真实消费 + 还款日尾缀，**必须仍是支出**。
+     *
+     * 这条是 `BANK_BILL_NOTICE_REJECT` 的负向边界。若把「到期还款日」做成裸拒绝词，
+     * 这条真支出会被整条丢掉（漏记）；若拒绝正则漏了 `\A` 锚定，`containsMatchIn` 会从
+     * 「消费」之后重新起匹配，负向断言 `(?!.*消费)` 失效，这条同样会被误杀（见 D6）。
+     */
+    @Test
+    fun `D4 - 消费短信带「到期还款日」尾缀仍是支出（账单拒绝不得过宽）`() {
+        assertExpense(
+            "D4 还款日尾缀",
+            "您尾号1234卡消费500元，到期还款日为10月25日。",
+            -50_000L,
+        )
+    }
+
+    /**
+     * 反向样本 ②：**真实还款交易**必须仍被解析（不能因账单拒绝而误杀）。
+     *
+     * 它不含任何账单汇总关键词（应还款额 / 到期还款日 / 最低还款额 / 本期账单应还），
+     * 所以拒绝不触发；「还款」这个触发词仍在 `bodyMustContainAny` 里。
+     * 方向按 `bank_generic_out` 是 OUT；随后由 `TransferRules.REPAYMENT` 改判内部划转，
+     * 那是流水线另一层的事，不在本文件的断言范围。
+     */
+    @Test
+    fun `D5 - 真实信用卡还款交易仍解析（账单拒绝不得吃掉还款）`() {
+        val r = parser.parse("sms:inbox", "95588", "您尾号1234信用卡还款1,000元，感谢使用。")
+        assertNotNull(r, "真实还款交易不得因新增的账单拒绝被丢弃\n  实际=${describe(r)}")
+        assertEquals("bank_generic_out", r.ruleId, "实际=${describe(r)}")
+        assertEquals(Direction.OUT, r.direction, "实际=${describe(r)}")
+        assertEquals(-100_000L, r.amountMinor, "实际=${describe(r)}")
+    }
+
+    /**
+     * 证伪：`BANK_BILL_NOTICE_REJECT` 的 `\A` 锚定**不是装饰**，去掉就会误杀 D4。
+     *
+     * `NotificationParser` 用 `Regex.containsMatchIn`；无锚定时引擎会在第 0 位失败后
+     * 逐个起始位置重试，而负向断言只看**该位置之后**的文本 —— 前文的「消费」不再可见
+     * ⇒ 真实消费被判成账单短信。这条用例把「必须有 `\A`」变成可执行的约束，
+     * 防止后来者「顺手简化正则」时静默引入漏记。
+     */
+    @Test
+    fun `D6 - 账单拒绝正则必须锚定串首（去掉锚定会误杀真实消费）`() {
+        // 与生产常量唯一的差别：开头没有 (?s)\A 里的 \A
+        val unanchored = """(?s)(?=.*(?:应还款额|应还金额|到期还款日|最低还款额|本期账单应还))(?=.*\d[\d.,]*\s?元)(?!.*(?:消费|支出|扣款|取款|支付成功|交易成功|已消费))"""
+        val body = "您尾号1234卡消费500元，到期还款日为10月25日。"
+        assertTrue(
+            Regex(unanchored).containsMatchIn(body),
+            "前提不成立：去掉串首锚定后本应误命中「消费500元，到期还款日…」，实际没命中 —— " +
+                "说明正则已改，请重新审视本用例",
+        )
+        // 生产规则必须不命中它
+        assertExpense("D6 锚定必要性", body, -50_000L)
     }
 
     // ==================================================================
