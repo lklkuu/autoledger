@@ -136,6 +136,34 @@ class RoomDatabaseIntegrationTest {
     }
 
     @Test
+    fun `duplicate rows stay out of every ledger view but show up in the review queue (real db)`() = runBlocking {
+        // 需求：30 秒内的同额重复要被合并，多余的记录**不能直接出现在账单**，
+        // 而要归入待确认条目。落点是新状态 DUPLICATE：
+        //  - 账单列表 / 时间窗口 / 订阅集合一律看不见它（白名单只放 RAW + CONFIRMED）；
+        //  - 但采集箱必须看得见（observeRaw / observeRawCount 取 RAW + DUPLICATE），
+        //    否则它从账单消失后又不在采集箱里出现，用户彻底看不到这条疑似重复。
+        val db = open()
+        try {
+            val dao = db.transactionDao()
+            val t0 = 1_700_000_000_000L
+            dao.upsert(txn("keep", t0, TxnStatus.CONFIRMED))
+            dao.upsert(txn("dup", t0 + 1, TxnStatus.DUPLICATE))
+
+            assertEquals(listOf("keep"), dao.listAll().map { it.id }, "疑似重复不得出现在账单列表")
+            assertEquals(listOf("keep"), dao.listSince(t0).map { it.id })
+            assertEquals(listOf("keep"), dao.listRange(t0, t0 + 100).map { it.id })
+            assertEquals(listOf("keep"), dao.observeAll().first().map { it.id })
+            assertEquals(listOf("keep"), dao.observeSince(t0).first().map { it.id })
+            assertEquals(listOf("keep"), dao.observeRange(t0, t0 + 100).first().map { it.id })
+
+            assertEquals(listOf("dup"), dao.observeRaw().first().map { it.id }, "疑似重复必须留在采集箱待确认队列")
+            assertEquals(1, dao.observeRawCount().first(), "待确认计数必须含疑似重复")
+        } finally {
+            db.close()
+        }
+    }
+
+    @Test
     fun `raw count flow emits again after a write on a real database`() = runBlocking {
         val db = open()
         try {

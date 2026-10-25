@@ -71,6 +71,20 @@ class ExpenseMathTest {
     }
 
     @Test
+    fun `duplicate records are excluded from expense refund and income`() {
+        // 「疑似重复、默认不成立」：DUPLICATE 的流水既不计支出、也不计退款冲抵、更不计实际到账。
+        // 它只是采集箱里等用户拍板的一条**提案**，一旦进统计就会和主记录重复计账 ——
+        // 这正是用户报的「30 秒内的重复通知要合并、多余记录不要直接进账单」在统计口径上的落点。
+        val expenseDup = expense("e-dup", 99_000).copy(status = TxnStatus.DUPLICATE)
+        val refundDup = refund("r-dup", 88_000).copy(status = TxnStatus.DUPLICATE)
+        val incomeDup = txn("i-dup", 77_000, TxnType.INCOME, status = TxnStatus.DUPLICATE)
+
+        assertEquals(0L, ExpenseMath.grossExpenseMinor(listOf(expenseDup)), "疑似重复的支出不得计入毛支出")
+        assertEquals(0L, ExpenseMath.refundMinor(listOf(refundDup)), "疑似重复的退款不得冲抵支出")
+        assertEquals(0L, ExpenseMath.actualReceivedMinor(listOf(incomeDup)), "疑似重复的收入不得计入实际到账")
+    }
+
+    @Test
     fun `net can go negative when refunds exceed expenses`() {
         val list = listOf(expense("e1", 1_000), refund("r1", 3_000))
         assertEquals(-2_000L, ExpenseMath.netExpenseMinor(list), "异常数据应暴露为负数，而不是被夹成 0")

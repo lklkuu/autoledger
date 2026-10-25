@@ -17,6 +17,10 @@ import org.junit.Test
  * `RoomDatabaseIntegrationTest#ignored rows disappear from every ledger view (real db)`
  * 共同锁住这条约定。
  *
+ * v1.1.14：口径从「排除 MERGED / IGNORED」改为**白名单** `TxnStatus.countsInLedger`
+ * （`RAW` / `CONFIRMED`），新增的 `DUPLICATE`（疑似重复、默认不成立）因此天然不进账。
+ * 白名单的意义是「新状态默认不可见」，黑名单则会让新状态默认泄漏进报表。
+ *
  * 注：`isConsumption` 目前是供 finance 层复用的扩展，**当前尚无调用方**（dead code 风险）。
  * 一旦后续接线，本测试就是它的第一道防线；若最终确认不再需要，删除本类时应一并删除该扩展。
  */
@@ -49,6 +53,14 @@ class MappersTest {
     }
 
     @Test
+    fun `a duplicate expense is not consumption`() {
+        // DUPLICATE = 疑似重复、**默认不成立**：未计入账单，只进采集箱待确认。
+        // 与 RAW 的差别必须体现在这里 —— RAW 仍然计入（见上一条断言），
+        // 否则「重复记录不出现在账单」这条需求会在统计口径上被绕过（列表不显示、汇总却算进去）。
+        assertFalse(txn(status = TxnStatus.DUPLICATE).isConsumption(), "疑似重复默认不计入账本")
+    }
+
+    @Test
     fun `non expense types are never consumption`() {
         for (type in listOf(TxnType.INCOME, TxnType.TRANSFER, TxnType.REFUND)) {
             assertFalse(txn(type = type).isConsumption(), "$type 不是消费")
@@ -65,9 +77,12 @@ class MappersTest {
         // 否则「忽略」只在其中一条链路上生效，账本与统计会打架。
         val cases = listOf(
             txn(status = TxnStatus.CONFIRMED),
+            txn(status = TxnStatus.RAW),
             txn(status = TxnStatus.IGNORED),
             txn(status = TxnStatus.MERGED),
+            txn(status = TxnStatus.DUPLICATE),
             txn(type = TxnType.INCOME, status = TxnStatus.IGNORED),
+            txn(type = TxnType.INCOME, status = TxnStatus.DUPLICATE),
         )
         for (t in cases) {
             assertEquals(

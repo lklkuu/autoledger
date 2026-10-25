@@ -13,8 +13,10 @@ import kotlin.math.abs
  * - 净支出 `netExpenseMinor`   = 毛支出 − 退款
  *
  * 约定：
- * - 只统计 `status` 既不是 MERGED（被合并的不重复计）也不是 IGNORED（用户主动「忽略这笔」= 不算账）的记录。
- *   被忽略的流水必须从**所有**账本视图与统计中消失，而不只是移出待确认队列。
+ * - 只统计 [TxnStatus.countsInLedger] 为真的记录（`RAW` / `CONFIRMED`）。这是**白名单**：
+ *   `MERGED`（被合并的不重复计）、`IGNORED`（用户主动「忽略这笔」= 不算账）、
+ *   `DUPLICATE`（疑似重复、默认不成立）都必须从**所有**账本视图与统计中消失，
+ *   而不只是移出待确认队列。
  * - `TRANSFER` / `INCOME` 一律不参与（内部划转不是消费、收入不是冲抵）。
  * - 净额**不下限为 0**（负数代表"退款多于支出"，属数据异常，应当暴露出来；展示层再决定是否夹取）。
  * - 退款按其 `categoryId` 冲抵**同一分类**；无分类的退款落在 `null` 桶里，只冲抵总额。
@@ -24,10 +26,10 @@ import kotlin.math.abs
 object ExpenseMath {
 
     fun countsAsExpense(txn: LedgerTransaction): Boolean =
-        txn.type == TxnType.EXPENSE && txn.status != TxnStatus.MERGED && txn.status != TxnStatus.IGNORED
+        txn.type == TxnType.EXPENSE && txn.status.countsInLedger
 
     fun countsAsRefund(txn: LedgerTransaction): Boolean =
-        txn.type == TxnType.REFUND && txn.status != TxnStatus.MERGED && txn.status != TxnStatus.IGNORED
+        txn.type == TxnType.REFUND && txn.status.countsInLedger
 
     /** 毛支出（未扣退款的支出合计）。 */
     fun grossExpenseMinor(txns: List<LedgerTransaction>): Long =
@@ -55,13 +57,14 @@ object ExpenseMath {
      * 与「推算收入」区分（明细行标签为「实际到账」）。
      *
      * ## 口径
-     * 只计 `INCOME` 且排除 MERGED / IGNORED；**INCOME 不参与支出冲抵**
-     * （见文件头 KDoc：退款才是冲抵项，内部划转与收入都不是），故不复用 netExpenseMinor 的减法。
+     * 只计 `INCOME` 且 [TxnStatus.countsInLedger] 为真（排除 MERGED / IGNORED / DUPLICATE）；
+     * **INCOME 不参与支出冲抵**（见文件头 KDoc：退款才是冲抵项，内部划转与收入都不是），
+     * 故不复用 netExpenseMinor 的减法。
      * 金额取绝对值：收入的正负号是采集侧的历史约定（银行卡入账短信识别为正），
      * 这里只要金额大小，不让符号影响合计。
      */
     fun actualReceivedMinor(txns: List<LedgerTransaction>): Long =
-        txns.filter { it.type == TxnType.INCOME && it.status != TxnStatus.MERGED && it.status != TxnStatus.IGNORED }
+        txns.filter { it.type == TxnType.INCOME && it.status.countsInLedger }
             .sumOf { abs(it.amountMinor) }
 
     /**

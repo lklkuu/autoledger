@@ -6,8 +6,40 @@ import com.autoledger.core.model.platform.PlatformSource
 /** 一条（已经入账的）资金流水。 */
 enum class TxnType { EXPENSE, INCOME, TRANSFER, REFUND }
 
-/** 流水的处理状态：自动采集进来的默认是 RAW，需人工确认或规则自动放行后转为 CONFIRMED。 */
-enum class TxnStatus { RAW, CONFIRMED, MERGED, IGNORED }
+/**
+ * 流水的处理状态。
+ *
+ * ## 五态语义（`RAW` 与 `DUPLICATE` 的差别是本类的重点，勿混用）
+ * - [RAW]：自动采集进来、**还没被确认但默认成立** —— 计入账单与统计，
+ *   同时出现在采集箱的待确认队列（等用户确认或规则放行）。
+ * - [CONFIRMED]：已确认（用户确认 / 规则自动放行 / 合并后的主记录）。计入账单与统计。
+ * - [DUPLICATE]：**疑似重复、默认不成立**。触发条件：找到了重复候选，但没能自动合并
+ *   （超出 30 秒自动合并窗口 / 护栏判定为需人工复核 / 用户关闭了自动合并）。
+ *   与 [RAW] 的唯一但关键的差别：**不计入账单与统计**，只进采集箱待确认；
+ *   用户点「确认入账」后才转 [CONFIRMED] 并进入账单。
+ * - [MERGED]：已被吸收进主记录（见 [LedgerTransaction.mergedIntoId]）。隐藏、不可确认 ——
+ *   这笔金额已由主记录承担，再显示一次就是重复计账。
+ * - [IGNORED]：用户主动「忽略这笔」= 这笔不算账，从**所有**账本视图与统计里消失。
+ *
+ * ⚠️ [DUPLICATE] **必须追加在末尾**：`Converters` 落盘用的是 `.name`，但任何按 `ordinal`
+ * 存取的旧代码 / 旧备份都不该因为新增状态而整体错位。
+ */
+enum class TxnStatus { RAW, CONFIRMED, MERGED, IGNORED, DUPLICATE }
+
+/**
+ * 是否计入账单与统计 —— **白名单**口径，全仓唯一真源。
+ *
+ * 只有「待确认但默认成立」的 [TxnStatus.RAW] 与「已确认」的 [TxnStatus.CONFIRMED] 进账；
+ * 其余一律不进：`MERGED`（金额已由主记录承担）、`IGNORED`（用户判定不算账）、
+ * `DUPLICATE`（疑似重复，默认不成立）。
+ *
+ * 为什么刻意做成白名单而不是「排除 MERGED / IGNORED」的黑名单：黑名单的默认值是**进账**，
+ * 于是每新增一个状态都会被静默算进报表。`DUPLICATE` 若走黑名单，
+ * 「疑似重复不显示在账单」这条需求会在统计口径上直接失效（列表不显示、汇总却把它算进去）。
+ * 新状态必须**显式**声明才进账。
+ */
+val TxnStatus.countsInLedger: Boolean
+    get() = this == TxnStatus.RAW || this == TxnStatus.CONFIRMED
 
 enum class Direction { OUT, IN }
 

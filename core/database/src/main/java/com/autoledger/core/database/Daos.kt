@@ -14,12 +14,19 @@ import kotlinx.coroutines.flow.Flow
 /**
  * 流水表访问。
  *
- * **状态过滤约定**：所有「流水集合」查询都排除 `MERGED`（已被合并，不重复计）
- * 与 `IGNORED`（用户在待确认队列里点了「忽略这笔」= 这笔不算账）。
- * 只排除 MERGED 是不够的 —— 被忽略的流水会从账单列表与支出统计里消失，
- * 否则「忽略」就只是把它移出待确认队列，账单与汇总仍会把它算进去。
+ * **状态过滤约定（白名单）**：所有「流水集合」查询一律只取 `status IN ('RAW', 'CONFIRMED')`。
  *
- * 例外：`observeRaw` / `observeRawCount` 只看 `RAW`，天然不包含 IGNORED。
+ * 为什么是白名单而不是「排除 MERGED / IGNORED」的黑名单：黑名单的默认值是**进账**，
+ * 任何新增状态都会被静默算进账单与报表。白名单让新状态默认不可见，必须显式加进来才会出现。
+ * 当前被白名单挡在外面的三态各有明确语义：
+ * - `MERGED`：已被合并进主记录，金额由主记录承担，再显示就是重复计账；
+ * - `IGNORED`：用户在待确认队列里点了「忽略这笔」= 这笔不算账；
+ * - `DUPLICATE`：**疑似重复、默认不成立**（找到候选但没能自动合并，见 `IngestPipeline`），
+ *   不进账单与统计，只出现在采集箱待确认队列里等用户拍板。
+ *
+ * 例外：`observeRaw` / `observeRawCount` 取 `RAW` + `DUPLICATE` —— 采集箱要把
+ * 「待确认但默认成立」与「待确认且默认不成立」两种**都**列出来，否则疑似重复的记录
+ * 会从账单里消失又不在采集箱里出现（用户彻底看不到它）。
  */
 @Dao
 interface TransactionDao {
@@ -36,7 +43,7 @@ interface TransactionDao {
     @Query(
         """
         SELECT * FROM transactions
-        WHERE occurredAtMillis >= :fromMillis AND status <> 'MERGED' AND status <> 'IGNORED'
+        WHERE occurredAtMillis >= :fromMillis AND status IN ('RAW', 'CONFIRMED')
         ORDER BY occurredAtMillis DESC
         """
     )
@@ -45,13 +52,13 @@ interface TransactionDao {
     @Query(
         """
         SELECT * FROM transactions
-        WHERE occurredAtMillis >= :fromMillis AND status <> 'MERGED' AND status <> 'IGNORED'
+        WHERE occurredAtMillis >= :fromMillis AND status IN ('RAW', 'CONFIRMED')
         ORDER BY occurredAtMillis DESC
         """
     )
     suspend fun listSince(fromMillis: Long): List<TransactionEntity>
 
-    @Query("SELECT * FROM transactions WHERE status <> 'MERGED' AND status <> 'IGNORED' ORDER BY occurredAtMillis DESC")
+    @Query("SELECT * FROM transactions WHERE status IN ('RAW', 'CONFIRMED') ORDER BY occurredAtMillis DESC")
     suspend fun listAll(): List<TransactionEntity>
 
     /**
@@ -68,13 +75,13 @@ interface TransactionDao {
     suspend fun listAllIncludingHidden(): List<TransactionEntity>
 
     /** B4：全量流水的实时订阅（账单页）。 */
-    @Query("SELECT * FROM transactions WHERE status <> 'MERGED' AND status <> 'IGNORED' ORDER BY occurredAtMillis DESC")
+    @Query("SELECT * FROM transactions WHERE status IN ('RAW', 'CONFIRMED') ORDER BY occurredAtMillis DESC")
     fun observeAll(): Flow<List<TransactionEntity>>
 
     @Query(
         """
         SELECT * FROM transactions
-        WHERE occurredAtMillis BETWEEN :fromMillis AND :toMillis AND status <> 'MERGED' AND status <> 'IGNORED'
+        WHERE occurredAtMillis BETWEEN :fromMillis AND :toMillis AND status IN ('RAW', 'CONFIRMED')
         ORDER BY occurredAtMillis DESC
         """
     )
@@ -84,24 +91,30 @@ interface TransactionDao {
     @Query(
         """
         SELECT * FROM transactions
-        WHERE occurredAtMillis BETWEEN :fromMillis AND :toMillis AND status <> 'MERGED' AND status <> 'IGNORED'
+        WHERE occurredAtMillis BETWEEN :fromMillis AND :toMillis AND status IN ('RAW', 'CONFIRMED')
         ORDER BY occurredAtMillis DESC
         """
     )
     fun observeRange(fromMillis: Long, toMillis: Long): Flow<List<TransactionEntity>>
 
-    @Query("SELECT * FROM transactions WHERE status = 'RAW' ORDER BY occurredAtMillis DESC")
+    /**
+     * 采集箱待确认队列：`RAW` + `DUPLICATE` 两种待确认**都**列出来。
+     *
+     * `RAW` = 待确认但默认成立（已计入账单）；`DUPLICATE` = 疑似重复、默认不成立（未计入账单）。
+     * 两者都不能漏：前者是「分类/金额没把握」，后者是「可能就是已有那笔」，
+     * 但用户都必须在同一个队列里看到并拍板（确认入账 / 忽略）。
+     */
+    @Query("SELECT * FROM transactions WHERE status IN ('RAW', 'DUPLICATE') ORDER BY occurredAtMillis DESC")
     fun observeRaw(): Flow<List<TransactionEntity>>
 
-    /** 去重查询：相同指纹、时间窗口内的其它记录 */
+    /** 去重查询：相同指纹、时间窗口内的其它记录（只取计入账本的状态，见文件头白名单约定）。 */
     @Query(
         """
         SELECT * FROM transactions
         WHERE fingerprint = :fingerprint
           AND abs(occurredAtMillis - :anchor) <= :windowMillis
           AND id <> :excludeId
-          AND status <> 'MERGED'
-          AND status <> 'IGNORED'
+          AND status IN ('RAW', 'CONFIRMED')
         """
     )
     suspend fun findByFingerprintNear(fingerprint: String, anchor: Long, windowMillis: Long, excludeId: String): List<TransactionEntity>
@@ -120,14 +133,16 @@ interface TransactionDao {
      *
      * 性能：3 分钟窗口下，SQLite 先用 `occurredAtMillis` 索引把范围缩到个位数量级，
      * 再过滤金额 ⇒ 无需为它新增索引；且只在 Tier-1 未命中时才执行。
+     *
+     * 状态：只取 `status IN ('RAW', 'CONFIRMED')` —— 一条**已经在待确认的疑似重复**（`DUPLICATE`）
+     * 不该再被当作合并目标（否则会形成「疑似重复 → 又被合并成另一条」的链式噪音）。
      */
     @Query(
         """
         SELECT * FROM transactions
         WHERE amountMinor = :amountMinor
           AND occurredAtMillis BETWEEN :fromMillis AND :toMillis
-          AND status <> 'MERGED'
-          AND status <> 'IGNORED'
+          AND status IN ('RAW', 'CONFIRMED')
           AND id <> :excludeId
         ORDER BY occurredAtMillis DESC
         """
@@ -185,7 +200,14 @@ interface TransactionDao {
     @Query("DELETE FROM transactions")
     suspend fun clearAll()
 
-    @Query("SELECT COUNT(*) FROM transactions WHERE status = 'RAW'")
+    /**
+     * 待确认条数：`RAW` + `DUPLICATE`。
+     *
+     * 计数**含疑似重复**（`DUPLICATE`）：它虽然不计入账单，但同样需要用户拍板，
+     * 若不计入这个数字，采集箱会出现「没有待确认流水」却躺着一批未处理记录的自相矛盾。
+     * 与 [observeRaw] 的集合必须严格一致（同一个判据），否则数字与列表对不上。
+     */
+    @Query("SELECT COUNT(*) FROM transactions WHERE status IN ('RAW', 'DUPLICATE')")
     fun observeRawCount(): Flow<Int>
 }
 

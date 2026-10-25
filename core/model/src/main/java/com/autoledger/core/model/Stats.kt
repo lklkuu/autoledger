@@ -207,7 +207,7 @@ val TimeRange.startMonthKey: String
  * **快照口径契约**（构造方负责遵守，卡片实现侧也应防御性校验）：
  * - [txns] **含退款（REFUND）**——退款冲抵是统计口径的一部分；
  * - [txns] **不含内部划转（TRANSFER）**；
- * - 不含 MERGED / IGNORED 状态的流水；
+ * - 不含 MERGED / IGNORED / DUPLICATE 状态的流水（只保留 `TxnStatus.countsInLedger` 为真的行）；
  * - [range] 必须等于本次 `compute` 收到的 range —— 不一致时实现侧必须回退自查；
  * - [categories] 可为空：不涉及分类维度的调用方不必为此多查一次字典。
  */

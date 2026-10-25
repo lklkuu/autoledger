@@ -9,6 +9,7 @@ import com.autoledger.core.model.Category
 import com.autoledger.core.model.LedgerTransaction
 import com.autoledger.core.model.TxnType
 import com.autoledger.core.model.UserPlatform
+import com.autoledger.core.model.countsInLedger
 import com.autoledger.core.model.platform.PlatformKind
 import com.autoledger.core.model.platform.PlatformSource
 
@@ -147,8 +148,12 @@ internal fun Account.toEntity(): AccountEntity = AccountEntity(
     archived = archived,
 )
 
-/** 供 finance 层复用的类型判定：被合并的、或被用户「忽略」的流水都不算消费。 */
+/**
+ * 供 finance 层复用的类型判定：只有「待确认但默认成立（RAW）」与「已确认（CONFIRMED）」的支出算消费。
+ *
+ * 口径统一走 [countsInLedger] 白名单 —— 被合并（MERGED）、被忽略（IGNORED）、
+ * 疑似重复未确认（DUPLICATE）的流水都不算消费。与 [com.autoledger.core.model.ExpenseMath]
+ * 必须逐格一致（见 MappersTest 的交叉断言）。
+ */
 internal fun LedgerTransaction.isConsumption(): Boolean =
-    type == TxnType.EXPENSE &&
-        status != com.autoledger.core.model.TxnStatus.MERGED &&
-        status != com.autoledger.core.model.TxnStatus.IGNORED
+    type == TxnType.EXPENSE && status.countsInLedger
