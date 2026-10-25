@@ -29,6 +29,7 @@ import androidx.compose.ui.unit.dp
 import com.autoledger.app.ui.stores.LedgerStore
 import com.autoledger.app.ui.stores.TxnEditRules
 import com.autoledger.app.ui.stores.canSwitchType
+import com.autoledger.app.ui.stores.isoDateOf
 import com.autoledger.app.ui.stores.typeSwitchBlockReason
 import com.autoledger.app.ui.theme.LedgerIcons
 import com.autoledger.app.ui.theme.ledgerTokens
@@ -39,7 +40,6 @@ import com.autoledger.core.model.platform.PlatformCatalog
 import com.autoledger.core.model.platform.PlatformResolver
 import com.autoledger.core.model.platform.PlatformSource
 import com.autoledger.core.model.txnExtras
-import java.time.Instant
 import java.time.LocalDate
 import java.time.ZoneId
 import java.time.format.DateTimeFormatter
@@ -168,16 +168,27 @@ fun TxnEditDialog(
         else kotlin.math.abs(txn.amountMinor)
         mutableStateOf(String.format(java.util.Locale.US, "%.2f", absMinor / 100.0))
     }
-    var dateText by remember(txn.id) {
-        // 时间戳可能来自脏数据（备份导入/解析异常），转换失败时回退到今天，
-        // 而不是让 DateTimeException 冒泡把整个弹窗渲染打崩。
-        mutableStateOf(
-            runCatching {
-                LocalDate.ofInstant(Instant.ofEpochMilli(txn.occurredAtMillis), ZoneId.systemDefault())
-                    .format(DateTimeFormatter.ISO_LOCAL_DATE)
-            }.getOrDefault(LocalDate.now(ZoneId.systemDefault()).format(DateTimeFormatter.ISO_LOCAL_DATE)),
-        )
+    // 日期文本有两个用途：① 展示/编辑；② 判断「用户是否改过日期」（决定保存时是否写回）。
+    // 两者必须来自**同一次**计算 —— 各算一遍的话，改动其中一处就会让「改没改」的判据
+    // 与输入框里的值悄悄漂移，把「没改」误判成「改了」。
+    //
+    // ⚠️ 转换失败时的兜底**不能是「今天」**（v1.1.14 用户报障的元凶）：
+    //  1. 这里的时间戳可能是脏数据（备份导入 / 解析异常）。把「读不出来」当成
+    //     「用户想改成今天」，会让用户在只改备注、点保存时把一笔历史账单静默挪到今天；
+    //  2. 兜底成今天还会让输入框显示一个**看似合法**的日期，用户无从察觉改错了。
+    // 故失败时留空串：`parseLocalDate("") == null` ⇒ `dateInvalid == true` ⇒
+    // 保存按钮禁用，并在日期输入框下方给出提示 —— 绝不带着错误日期写库。
+    //
+    // ⚠️ 也**不要**用 `LocalDate.ofInstant(Instant, ZoneId)`：那是 **API 34** 才新增的方法，
+    // 本项目 `minSdk = 26` 且未开 core library desugaring，在 Android 13 及以下会抛
+    // `NoSuchMethodError`（继承自 `Error`，`runCatching` 照样吞掉）。旧写法正是这样
+    // 在低版本设备上**每次**都降级到「今天」。统一走 [isoDateOf]（Java 8 API），
+    // 且与单测共用同一份实现。
+    val (initialDateText, dateTextState) = remember(txn.id) {
+        val initial = isoDateOf(txn.occurredAtMillis, ZoneId.systemDefault()).orEmpty()
+        initial to mutableStateOf(initial)
     }
+    var dateText by dateTextState
 
     // 自动识别且置信度不足 ⇒ 提示用户确认（用户手选后即变 USER 源，不再提示）
     // 与列表副标题复用同一判定，避免"列表不显示「?」但弹窗还在提示"的不一致。
@@ -260,6 +271,16 @@ fun TxnEditDialog(
                         enabled = amountDateEditable,
                         isError = dateInvalid,
                         modifier = Modifier.weight(1f),
+                    )
+                }
+                if (dateInvalid) {
+                    // 只说「格式不对」会让用户不知道该填成什么样；把期望格式写进提示里。
+                    // 初值转换失败（脏时间戳）时走的也是这一条 —— 用户必须显式选一个日期才能保存。
+                    Text(
+                        "日期无法识别，请按 YYYY-MM-DD 重新选择",
+                        Modifier.padding(top = 6.dp),
+                        style = MaterialTheme.typography.bodySmall,
+                        color = ledgerTokens().warning,
                     )
                 }
                 if (!amountDateEditable) {
@@ -347,7 +368,16 @@ fun TxnEditDialog(
                         note = noteText,
                         platformId = platformId,
                         amountMinor = parsedAmount,
-                        occurredAtMillis = parsedDate,
+                        // 日期**没改动就传 null**（下层语义：null = 保持原 occurredAtMillis）。
+                        //
+                        // 无条件传 parsedDate 会把原时刻抹成「当天 00:00」（parseLocalDate 走
+                        // atStartOfDay）：用户只改备注，这笔账单就从「13:45」变成「00:00」，
+                        // 在账单页的时间轴上被挪到当天最前面。这是 v1.1.14 的第二层缺陷，
+                        // 在 API 34 设备上（第一层 ofInstant 没崩）同样会复现。
+                        //
+                        // 边界：用户主动把日期改成**同一天** ⇒ 文本相同 ⇒ 传 null ⇒ 保持原时刻。
+                        // 这是期望行为：同日改期等于没改，没有理由把时刻抹平。
+                        occurredAtMillis = if (dateText == initialDateText) null else parsedDate,
                         type = if (typeSwitchable) typeSelection else txn.type,
                         // 合并链主记录不得改类型：Store 侧也要用同一判据（不能只靠 UI 禁用 chips）
                         absorbedCount = mergedInto.size,

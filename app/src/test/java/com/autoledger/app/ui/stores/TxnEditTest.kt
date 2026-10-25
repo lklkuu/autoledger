@@ -130,6 +130,52 @@ class TxnEditTest {
     }
 
     @Test
+    fun `full edit with null date keeps the original instant instead of truncating to midnight`() {
+        // v1.1.14 缺陷回归护栏（第二层）：UI 此前无条件传 `parsedDate`，
+        // 而 parsedDate 走 atStartOfDay ⇒ 用户只改备注，这笔 13:45 的账单也会被
+        // 抹成「当天 00:00」，在账单页的时间轴上被挪到当天最前面。
+        // 修法：日期未改动时 UI 传 null，由这里（既有语义）保持原 occurredAtMillis。
+        val thirteenFortyFive = 1_792_215_900_000L // 2026-10-17 13:45 +08:00
+        val midnight = 1_792_166_400_000L // 2026-10-17 00:00 +08:00
+        val original = txn().copy(occurredAtMillis = thirteenFortyFive, bookedAtMillis = 1_700_000_000_000L)
+
+        val edited = applyFullEdit(
+            txn = original,
+            counterparty = "星巴克",
+            note = "只改了备注",
+            platformId = original.platformId,
+            amountMinor = null,
+            occurredAtMillis = null,
+            fingerprintOf = { "fp" },
+        )
+
+        assertEquals(
+            thirteenFortyFive, edited.occurredAtMillis,
+            "日期未改动（传 null）时不得改写 occurredAtMillis",
+        )
+        assertTrue(
+            edited.occurredAtMillis != midnight,
+            "时刻不得被抹成当天 00:00（实际 ${edited.occurredAtMillis}）",
+        )
+        assertEquals(1_700_000_000_000L, edited.bookedAtMillis, "入账时间同样不动")
+    }
+
+    @Test
+    fun `full edit with a new date applies it`() {
+        val original = txn().copy(occurredAtMillis = 1_792_215_900_000L)
+        val edited = applyFullEdit(
+            txn = original,
+            counterparty = "星巴克",
+            note = null,
+            platformId = original.platformId,
+            amountMinor = null,
+            occurredAtMillis = 1_792_166_400_000L,
+            fingerprintOf = { "fp" },
+        )
+        assertEquals(1_792_166_400_000L, edited.occurredAtMillis, "用户真改了日期就必须写回")
+    }
+
+    @Test
     fun `full edit survives Long MIN_VALUE amount instead of flipping the sign`() {
         // abs(Long.MIN_VALUE) 会溢出成负数，不兜住的话支出会被写成收入。
         val extreme = txn().copy(amountMinor = Long.MIN_VALUE)
