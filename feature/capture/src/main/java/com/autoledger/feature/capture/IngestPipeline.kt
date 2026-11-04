@@ -190,12 +190,34 @@ class IngestPipeline(
                 // 有候选却合并不了（超过 30 秒快窗口 / 护栏判 REVIEW / 用户关了自动合并）
                 // ⇒ 疑似重复，默认不成立：不进账单与统计，只进采集箱待确认。
                 // 不能落 RAW —— RAW 是"默认成立"，会同时出现在账单列表里（这正是用户报的根因）。
+                // 注意：本条落 DUPLICATE 之后，簇里会有一条被提升为 CONFIRMED（见下方 upsert 之后的段落），
+                // 保证「N 条重复 ⇒ 1 条进账单 + (N-1) 条待确认」，而不是整簇都在待确认里。
                 duplicates.isNotEmpty() && mergeable == null -> TxnStatus.DUPLICATE
                 shouldConfirm -> TxnStatus.CONFIRMED
                 else -> TxnStatus.RAW
             },
         )
         repository.upsert(final)
+
+        // 重复簇里必须有一条真正进账：有候选却合并不了时，把最可信的候选从 RAW 提升为 CONFIRMED。
+        // 于是 N 条重复 ⇒ 1 条进账单 + (N-1) 条待确认，而不是整簇都堆在待确认里
+        // （用户 2026-11-04 报障：「3 条重复应该 2 条待确认 + 1 条直接进账单」）。
+        //
+        // 候选集已排除 MERGED / IGNORED / DUPLICATE（见 LedgerDuplicateResolver 的 `!countsInLedger`），
+        // 因此这里只会命中 RAW 或 CONFIRMED。`RAW → CONFIRMED` **不改变账本金额**（RAW 本就计入），
+        // 只把它移出待确认队列 —— 这也正是本次需求要的效果：账单里看得见，队列里不重复出现。
+        //
+        // ⚠️ 只在 `autoMergeDuplicates` 打开时做：该开关的契约是「关掉则全部进入人工确认」
+        // （见构造参数 KDoc）。关掉时若还悄悄把一条提升为 CONFIRMED，就违背了用户"我要逐条看"的意图。
+        // ⚠️ 先落库再改别人的状态（顺序刻意保持），失败时便于定位是哪一步中断的。
+        if (autoMergeDuplicates && final.status == TxnStatus.DUPLICATE) {
+            duplicates.firstOrNull()?.let { best ->
+                // 已是 CONFIRMED 就不写：避免每次重复入库都触发一次无意义的 Room 失效通知。
+                if (repository.findById(best.txnId)?.status == TxnStatus.RAW) {
+                    repository.markStatus(best.txnId, TxnStatus.CONFIRMED)
+                }
+            }
+        }
 
         return when {
             unresolvedAmount -> Outcome.NeedsReview(final.id, "未解析出金额，请在待确认里补全")
@@ -225,11 +247,18 @@ class IngestPipeline(
                 // 两种措辞都补上「已暂存为疑似重复，未计入账单」：该行的状态是 DUPLICATE，
                 // 默认不成立，用户看不到它出现在账单里是**预期行为**，必须在这里说清楚，
                 // 否则他会以为这笔账丢了。承诺的动作仍然只有采集箱里真实存在的两个。
+                //
+                // 同时说明「已保留其中 1 条入账」：重复簇不是整簇进待确认，
+                // 否则用户会以为"这笔钱记都没记"（2026-11-04 报障）。
+                // 刻意**不写**"其余 N 条待确认"：reason 是**逐行**的，duplicates.size 是
+                // 本条看到的候选数，不等于整个簇里待确认的条数（簇里第 3 条入库时只能看到第 1 条，
+                // 第 2 条已是 DUPLICATE、不再当候选）。写个不对的数字比不写更糟。
                 if (duplicates.first().crossSource) {
-                    "发现 ${duplicates.size} 笔可能的重复，已暂存为疑似重复、未计入账单，请核对"
+                    "发现 ${duplicates.size} 笔可能的重复，已保留其中 1 条入账，" +
+                        "本条暂存为待确认（未计入账单），请核对"
                 } else {
-                    "同渠道 ${duplicates.size} 笔同金额流水，已暂存为疑似重复、未计入账单，" +
-                        "请核对该笔是否为独立消费"
+                    "同渠道 ${duplicates.size} 笔同金额流水，已保留其中 1 条入账，" +
+                        "本条暂存为待确认（未计入账单），请核对该笔是否为独立消费"
                 },
             )
             shouldConfirm -> Outcome.Accepted(final.id, true, reason)
