@@ -14,7 +14,6 @@ import com.autoledger.app.NotifyOnRecordDefault
 import com.autoledger.app.UserSettings
 import com.autoledger.app.WageBook
 import com.autoledger.app.ui.MainActivity
-import com.autoledger.app.ui.nav.Destination
 import com.autoledger.core.backup.BackupManager
 import com.autoledger.core.crypto.CryptoBox
 import com.autoledger.core.crypto.KeystoreKeyProvider
@@ -28,6 +27,7 @@ import com.autoledger.core.database.DefaultSeed
 import com.autoledger.core.database.sync.CloudSyncClient
 import com.autoledger.core.database.sync.NoopCloudSyncClient
 import com.autoledger.core.model.LedgerRepository
+import com.autoledger.core.model.LedgerTransaction
 import com.autoledger.core.model.MetricProvider
 import com.autoledger.core.model.RawEnvelope
 import com.autoledger.feature.capture.CaptureDispatcher
@@ -67,6 +67,7 @@ import com.autoledger.app.notif.NotificationAccessGate
 import com.autoledger.app.notif.NotificationPermissionGate
 import com.autoledger.app.notif.PermissionIntroGate
 import com.autoledger.app.notif.SmsAccessGate
+import com.autoledger.app.notify.planRecordNotify
 import kotlinx.coroutines.CoroutineExceptionHandler
 import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.Dispatchers
@@ -496,35 +497,68 @@ class AppContainer(context: Context) {
             CaptureDispatcher.subscribe { envelope ->
                 val outcome = runCatching { ingestPipeline.ingest(envelope) }.getOrNull()
                 // 有结果 = 确实写入了流水（自动入账 / 待确认 / 合并），按开关决定是否提醒。
-                if (outcome != null) notifyRecorded(envelope)
+                if (outcome != null) {
+                    // 必须回查**落库后**的那一条：信封上的 amountHint / counterpartyHint 只是"解析线索"，
+                    // 真正进账单的值可能来自候选提升 / 合并继承（金额与商户都可能与信封不同），
+                    // 状态更是只有库里才有（DUPLICATE / MERGED 直接决定这条该不该弹）。
+                    //
+                    // 提醒关掉时不必多读一次库（后台路径的每一条读都按"会影响用户可见行为"来花）。
+                    val stored = if (_notifyOnRecord.value) {
+                        runCatching { repository.findById(outcome.txnId) }.getOrNull()
+                    } else {
+                        null
+                    }
+                    notifyRecorded(envelope, outcome, stored)
+                }
             }
         }
     }
 
-    /** 通知 id 自增序号，避免后一条覆盖前一条。 */
-    private val recordNotifySeq = java.util.concurrent.atomic.AtomicInteger(0)
-
     /**
-     * 「记账时弹通知」：开启后每自动记录一笔账发一条系统通知。
+     * 「记账时弹通知」：开启后对**真正入账**的流水发一条系统通知。
+     *
+     * 两条铁律：
+     * 1. **单槽覆盖**（见 [RECORD_NOTIFY_ID]）：同一时刻通知栏里最多一条记账提醒。
+     *    以前用自增 id 每条占一个槽位，一次消费（银行短信 + 银行 App + 数币 App 多来源）
+     *    会把通知栏堆满 N 条一模一样的提醒 —— 用户 2026 报障的「小账本(6)」。
+     * 2. **文案不撒谎**：弹不弹、标题、金额、商户全部由 [planRecordNotify] 逐条判定；
+     *    `DUPLICATE` / `MERGED` / `IGNORED` 直接不发，待确认的说「待你确认」而不是「已自动记账」。
      *
      * 采集是后台路径：无通知权限 / 渠道创建失败一律**静默跳过**，绝不因此崩溃。
+     *
+     * @param envelope 原始信封，仅在落库值缺失时作为兜底（向后兼容）
+     * @param outcome 流水线结论，用来补 [planRecordNotify] 的 `needsReview` 信号
+     * @param stored 落库后回查到的流水；查不到时为 null（此时退回信封线索）
      */
-    private fun notifyRecorded(envelope: RawEnvelope) {
+    private fun notifyRecorded(
+        envelope: RawEnvelope,
+        outcome: IngestPipeline.Outcome,
+        stored: LedgerTransaction?,
+    ) {
         if (!_notifyOnRecord.value) return
         val ctx = applicationContext
         val manager = NotificationManagerCompat.from(ctx)
         if (!manager.areNotificationsEnabled()) return
         runCatching {
-            ensureRecordChannel(ctx)
-            val amountText = envelope.amountHint
-                ?.let { "¥${"%.2f".format(kotlin.math.abs(it) / 100.0)}" }
-                ?: "金额待确认"
-            val who = envelope.counterpartyHint?.takeIf { it.isNotBlank() } ?: "一笔新流水"
+            // 「流水线自己要人看」的两种表达都算待确认：
+            // 明确的 NeedsReview；以及 Accepted 但没敢自动确认（autoConfirmed = false）。
+            val needsReview = outcome is IngestPipeline.Outcome.NeedsReview ||
+                (outcome is IngestPipeline.Outcome.Accepted && !outcome.autoConfirmed)
 
-            // 点击通知 → 打开 App 并落到「账单」页：流水可点开修正（商户/平台/金额/日期），
-            // 形成「自动记账 → 核对 → 修正」的闭环，而不是点开只停在首页。
+            // 优先落库值，拿不到再退回信封线索（信封可能压根没解析出金额/商户）。
+            val plan = planRecordNotify(
+                amountMinor = stored?.amountMinor ?: envelope.amountHint,
+                counterparty = stored?.counterparty ?: envelope.counterpartyHint,
+                storedStatus = stored?.status,
+                needsReview = needsReview,
+            ) ?: return
+
+            ensureRecordChannel(ctx)
+
+            // 点击通知 → 打开 App 并落到 plan 指定的页面：待确认去「采集箱」补全，
+            // 已入账去「账单」核对，形成「自动记账 → 核对 → 修正」的闭环。
             val openIntent = Intent(ctx, MainActivity::class.java).apply {
-                putExtra(MainActivity.EXTRA_OPEN_DESTINATION, Destination.MONTHLY.name)
+                putExtra(MainActivity.EXTRA_OPEN_DESTINATION, plan.openDestination.name)
                 addFlags(
                     Intent.FLAG_ACTIVITY_NEW_TASK or
                         Intent.FLAG_ACTIVITY_CLEAR_TOP or
@@ -541,13 +575,14 @@ class AppContainer(context: Context) {
             val notification = NotificationCompat.Builder(ctx, RECORD_CHANNEL_ID)
                 .setSmallIcon(R.drawable.notify_small_icon)
                 .setLargeIcon(BitmapFactory.decodeResource(ctx.resources, R.drawable.notify_large_icon))
-                .setContentTitle("已自动记一笔账")
-                .setContentText("$who · $amountText · 点按查看")
+                .setContentTitle(plan.title)
+                .setContentText(plan.body)
                 .setContentIntent(contentIntent)
                 .setAutoCancel(true)
                 .setPriority(NotificationCompat.PRIORITY_DEFAULT)
                 .build()
-            manager.notify(RECORD_NOTIFY_BASE_ID + recordNotifySeq.getAndIncrement(), notification)
+            // 固定单槽：后一条覆盖前一条。**不要**改回自增 id —— 那正是刷屏的根因。
+            manager.notify(RECORD_NOTIFY_ID, notification)
         }
     }
 
@@ -582,8 +617,15 @@ class AppContainer(context: Context) {
          */
         private const val KEY_NOTIFY_ON_RECORD = "notify_on_record"
 
-        /** 提醒通知 id 起始值，避免与其它通知 id 冲突。 */
-        private const val RECORD_NOTIFY_BASE_ID = 10_000
+        /**
+         * 「记账提醒」的**固定单槽**通知 id。
+         *
+         * 固定 ⇒ 后一条覆盖前一条 ⇒ 通知栏最多一条。
+         * 以前是 `BASE_ID + 自增序号`（每条占一个槽位），于是一次消费被多来源识别成 N 条流水时
+         * 就弹出 N 条一模一样的「已自动记一笔账」（用户报障：小账本堆了 6 条）。
+         * 单槽是这套文案的前提：标题里**不能**出现笔数，否则"已自动记账 N 笔"会随覆盖而失真。
+         */
+        private const val RECORD_NOTIFY_ID = 10_000
 
         /**
          * 放弃加密后的告知。措辞如实：库文件本身不加密，但通知/短信原文仍经 Keystore 密封存储。
